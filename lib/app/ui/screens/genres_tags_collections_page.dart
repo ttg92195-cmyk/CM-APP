@@ -20,16 +20,53 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
   final ApiService _apiService = ApiService();
   late TabController _tabController;
 
-  List<TagAndGenres> _genres = [];
-  List<TagAndGenres> _tags = [];
-  List<String> _collections = [];
+  List<TagAndGenres> _apiGenres = [];
+  List<TagAndGenres> _apiTags = [];
   bool _isLoading = true;
+
+  // Hardcoded data matching screenshots
+  final List<String> _movieGenres = [
+    'Action', 'Adventure', 'Animation', 'Comedy', 'Crime',
+    'Documentary', 'Drama', 'Family', 'Fantasy', 'History',
+    'Horror', 'Music', 'Mystery', 'Revenge', 'Romance',
+    'Science Fiction', 'Thriller', 'TV Movie', 'War', 'Western',
+  ];
+
+  final List<String> _seriesGenres = [
+    'Action & Adventure', 'Animation', 'Comedy',
+  ];
+
+  final List<String> _movieTags = [
+    '4K', 'Animation', 'Anime', 'Bollywood', 'C Drama',
+    'Donghua', 'Featured Movies', 'K Drama', 'Reality Show',
+    'Thai Drama', 'Trending',
+  ];
+
+  final List<String> _seriesTags = [
+    '4K', 'Animation', 'Anime', 'Bollywood', 'C Drama',
+    'Donghua', 'Featured Movies', 'K Drama', 'Reality Show',
+    'Thai Drama', 'Trending',
+  ];
+
+  final List<String> _movieCollections = [
+    '007', 'A24 Movies', 'American Pie', 'Batman',
+    'CHRISTMAS MOVIES', 'DCEU', 'Detective Chinatown',
+    'Dragon Gate Posthouse', 'Fast and Furious',
+    'Final Destination', 'Harry Potter',
+    'Marvel Cinematic Universe - MCU', "Ocean's Collection",
+    'Queen Of Kung Fu', 'Quentin Tarantino', 'Saw Collection',
+    'Scooby-Doo', 'Studio Ghibli',
+  ];
+
+  final List<String> _seriesCollections = [
+    'Sit-com', 'Sports Documentaries',
+  ];
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
-    _loadData();
+    _loadApiData();
   }
 
   @override
@@ -38,8 +75,7 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
     super.dispose();
   }
 
-  Future<void> _loadData() async {
-    setState(() => _isLoading = true);
+  Future<void> _loadApiData() async {
     try {
       final results = await Future.wait([
         _apiService.getMovieGenres(),
@@ -47,22 +83,8 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
       ]);
       if (mounted) {
         setState(() {
-          _genres = results[0] as List<TagAndGenres>;
-          _tags = results[1] as List<TagAndGenres>;
-          _collections = [
-            'Marvel Cinematic Universe',
-            'DC Extended Universe',
-            'Harry Potter',
-            'Fast and Furious',
-            'James Bond 007',
-            'Star Wars',
-            'Lord of the Rings',
-            'Mission Impossible',
-            'Jurassic Park',
-            'Toy Story',
-            'Studio Ghibli',
-            'A24 Movies',
-          ];
+          _apiGenres = results[0] as List<TagAndGenres>;
+          _apiTags = results[1] as List<TagAndGenres>;
           _isLoading = false;
         });
       }
@@ -93,193 +115,242 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
           : TabBarView(
               controller: _tabController,
               children: [
-                _buildGenreGrid(appConfig, theme),
-                _buildTagGrid(appConfig, theme),
-                _buildCollectionGrid(appConfig, theme),
+                _buildGenresTab(appConfig, theme),
+                _buildTagsTab(appConfig, theme),
+                _buildCollectionsTab(appConfig, theme),
               ],
             ),
     );
   }
 
-  Widget _buildGenreGrid(AppConfig appConfig, ThemeData theme) {
-    if (_genres.isEmpty) {
-      return Center(child: Text(appConfig.translate('no_results')));
-    }
-    return GridView.builder(
+  // ==================== GENRES TAB ====================
+  Widget _buildGenresTab(AppConfig appConfig, ThemeData theme) {
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Movies Section
+          _buildSectionTitle(theme, 'Movies'),
+          const SizedBox(height: 8),
+          _buildNeonGrid(theme, _movieGenres, isGenre: true, isTag: false),
+
+          const SizedBox(height: 24),
+
+          // Series Section
+          _buildSectionTitle(theme, 'Series'),
+          const SizedBox(height: 8),
+          _buildNeonGrid(theme, _seriesGenres, isGenre: true, isTag: false),
+        ],
+      ),
+    );
+  }
+
+  // ==================== TAGS TAB ====================
+  Widget _buildTagsTab(AppConfig appConfig, ThemeData theme) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Movies Section
+          _buildSectionTitle(theme, 'Movies'),
+          const SizedBox(height: 8),
+          _buildNeonGrid(theme, _movieTags, isGenre: false, isTag: true),
+
+          const SizedBox(height: 24),
+
+          // Series Section
+          _buildSectionTitle(theme, 'Series'),
+          const SizedBox(height: 8),
+          _buildNeonGrid(theme, _seriesTags, isGenre: false, isTag: true),
+        ],
+      ),
+    );
+  }
+
+  // ==================== COLLECTIONS TAB ====================
+  Widget _buildCollectionsTab(AppConfig appConfig, ThemeData theme) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Movies Section
+          _buildSectionTitle(theme, 'Movies'),
+          const SizedBox(height: 8),
+          _buildNeonGrid(theme, _movieCollections, isGenre: false, isTag: false),
+
+          const SizedBox(height: 24),
+
+          // Series Section
+          _buildSectionTitle(theme, 'Series'),
+          const SizedBox(height: 8),
+          _buildNeonGrid(theme, _seriesCollections, isGenre: false, isTag: false),
+        ],
+      ),
+    );
+  }
+
+  // ==================== SHARED WIDGETS ====================
+
+  Widget _buildSectionTitle(ThemeData theme, String title) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Text(
+        title,
+        style: theme.textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNeonGrid(ThemeData theme, List<String> items,
+      {required bool isGenre, required bool isTag}) {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 3,
         childAspectRatio: 2.2,
         crossAxisSpacing: 8,
         mainAxisSpacing: 8,
       ),
-      itemCount: _genres.length,
+      itemCount: items.length,
       itemBuilder: (context, index) {
-        final genre = _genres[index];
-        return InkWell(
+        final item = items[index];
+        return _NeonGlowButton(
+          title: item,
+          isSolid: !isGenre && !isTag, // Collections = solid teal
           onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => _FilterResultPage(
-                  title: genre.name,
-                  fetchFn: (page) =>
-                      _apiService.getMoviesByGenre(genre.id, page: page),
-                ),
-              ),
-            );
-          },
-          borderRadius: BorderRadius.circular(8),
-          child: Container(
-            decoration: BoxDecoration(
-              border: Border.all(
-                  color: const Color(0xFF00897B), width: 1.5),
-              borderRadius: BorderRadius.circular(8),
-              color: theme.brightness == Brightness.dark
-                  ? const Color(0xFF1A1A1A)
-                  : const Color(0xFFF5F5F5),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  genre.name,
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                if (genre.moviesCount != null)
-                  Text(
-                    '${genre.moviesCount}',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: Colors.white54,
-                      fontSize: 10,
+            // Try to find matching API item for navigation
+            if (isGenre) {
+              final match = _apiGenres.where((g) => g.name.toLowerCase() == item.toLowerCase()).toList();
+              if (match.isNotEmpty) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => _FilterResultPage(
+                      title: item,
+                      fetchFn: (page) =>
+                          _apiService.getMoviesByGenre(match.first.id, page: page),
                     ),
                   ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildTagGrid(AppConfig appConfig, ThemeData theme) {
-    if (_tags.isEmpty) {
-      return Center(child: Text(appConfig.translate('no_results')));
-    }
-    return GridView.builder(
-      padding: const EdgeInsets.all(12),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        childAspectRatio: 2.2,
-        crossAxisSpacing: 8,
-        mainAxisSpacing: 8,
-      ),
-      itemCount: _tags.length,
-      itemBuilder: (context, index) {
-        final tag = _tags[index];
-        return InkWell(
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => _FilterResultPage(
-                  title: tag.name,
-                  fetchFn: (page) =>
-                      _apiService.getMoviesByTag(tag.id, page: page),
-                ),
-              ),
-            );
-          },
-          borderRadius: BorderRadius.circular(8),
-          child: Container(
-            decoration: BoxDecoration(
-              border: Border.all(
-                  color: const Color(0xFF00897B), width: 1.5),
-              borderRadius: BorderRadius.circular(8),
-              color: theme.brightness == Brightness.dark
-                  ? const Color(0xFF1A1A1A)
-                  : const Color(0xFFF5F5F5),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  tag.name,
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                if (tag.moviesCount != null)
-                  Text(
-                    '${tag.moviesCount}',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: Colors.white54,
-                      fontSize: 10,
+                );
+              }
+            } else if (isTag) {
+              final match = _apiTags.where((t) => t.name.toLowerCase() == item.toLowerCase()).toList();
+              if (match.isNotEmpty) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => _FilterResultPage(
+                      title: item,
+                      fetchFn: (page) =>
+                          _apiService.getMoviesByTag(match.first.id, page: page),
                     ),
                   ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildCollectionGrid(AppConfig appConfig, ThemeData theme) {
-    if (_collections.isEmpty) {
-      return Center(child: Text(appConfig.translate('no_results')));
-    }
-    return GridView.builder(
-      padding: const EdgeInsets.all(12),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        childAspectRatio: 2.2,
-        crossAxisSpacing: 8,
-        mainAxisSpacing: 8,
-      ),
-      itemCount: _collections.length,
-      itemBuilder: (context, index) {
-        final collection = _collections[index];
-        return InkWell(
-          borderRadius: BorderRadius.circular(8),
-          child: Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFF00897B),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  collection,
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
+                );
+              }
+            }
+          },
         );
       },
     );
   }
 }
 
-// Reuse _FilterResultPage from library_page.dart
+// ==================== NEON GLOW BUTTON ====================
+class _NeonGlowButton extends StatefulWidget {
+  final String title;
+  final bool isSolid;
+  final VoidCallback? onTap;
+
+  const _NeonGlowButton({
+    required this.title,
+    this.isSolid = false,
+    this.onTap,
+  });
+
+  @override
+  State<_NeonGlowButton> createState() => _NeonGlowButtonState();
+}
+
+class _NeonGlowButtonState extends State<_NeonGlowButton> {
+  bool _isHovering = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _isHovering = true),
+      onTapUp: (_) => setState(() => _isHovering = false),
+      onTapCancel: () => setState(() => _isHovering = false),
+      onTap: widget.onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        decoration: BoxDecoration(
+          color: widget.isSolid
+              ? const Color(0xFF00897B)
+              : const Color(0xFF1A1A1A),
+          borderRadius: BorderRadius.circular(10),
+          border: widget.isSolid
+              ? null
+              : Border.all(
+                  color: _isHovering
+                      ? const Color(0xFF00E5FF)
+                      : const Color(0xFF00897B),
+                  width: 1.5,
+                ),
+          boxShadow: _isHovering
+              ? [
+                  BoxShadow(
+                    color: const Color(0xFF00E5FF).withOpacity(0.4),
+                    blurRadius: 12,
+                    spreadRadius: 1,
+                  ),
+                ]
+              : widget.isSolid
+                  ? [
+                      BoxShadow(
+                        color: const Color(0xFF00897B).withOpacity(0.3),
+                        blurRadius: 6,
+                        spreadRadius: 0,
+                      ),
+                    ]
+                  : null,
+        ),
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            child: Text(
+              widget.title,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                shadows: _isHovering
+                    ? [
+                        Shadow(
+                          color: const Color(0xFF00E5FF).withOpacity(0.8),
+                          blurRadius: 8,
+                        ),
+                      ]
+                    : null,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ==================== FILTER RESULT PAGE ====================
 class _FilterResultPage extends StatefulWidget {
   final String title;
   final Future<Map<String, dynamic>> Function(int page) fetchFn;

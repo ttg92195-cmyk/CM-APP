@@ -4,6 +4,13 @@ import 'package:provider/provider.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/ui/home/home_page.dart';
 
+// Neon Blue accent color
+const Color kNeonBlue = Color(0xFF00E5FF);
+const Color kNeonTeal = Color(0xFF00897B);
+const Color kDarkBg = Color(0xFF0A0A0A);
+const Color kDarkSurface = Color(0xFF121212);
+const Color kDarkCard = Color(0xFF1E1E1E);
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setSystemUIOverlayStyle(
@@ -45,16 +52,21 @@ class CMMoviesApp extends StatelessWidget {
     final base = ThemeData.dark(useMaterial3: true);
     return base.copyWith(
       colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFFE50914),
+        seedColor: kNeonBlue,
         brightness: Brightness.dark,
-        primary: const Color(0xFFE50914),
-        secondary: const Color(0xFFFFB703),
-        surface: const Color(0xFF121212),
+        primary: kNeonBlue,
+        secondary: kNeonTeal,
+        surface: kDarkSurface,
         onSurface: Colors.white,
+        primaryContainer: const Color(0xFF003640),
+        onPrimaryContainer: kNeonBlue,
+        secondaryContainer: const Color(0xFF00382E),
+        onSecondaryContainer: kNeonTeal,
+        surfaceContainerHighest: const Color(0xFF1A1A2E),
       ),
-      scaffoldBackgroundColor: const Color(0xFF0A0A0A),
+      scaffoldBackgroundColor: kDarkBg,
       appBarTheme: const AppBarTheme(
-        backgroundColor: Color(0xFF121212),
+        backgroundColor: kDarkSurface,
         elevation: 0,
         centerTitle: true,
         titleTextStyle: TextStyle(
@@ -65,32 +77,32 @@ class CMMoviesApp extends StatelessWidget {
         iconTheme: IconThemeData(color: Colors.white),
       ),
       cardTheme: CardTheme(
-        color: const Color(0xFF1E1E1E),
+        color: kDarkCard,
         elevation: 2,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
         ),
       ),
       navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: const Color(0xFF121212),
-        indicatorColor: const Color(0xFFE50914).withOpacity(0.3),
+        backgroundColor: kDarkSurface,
+        indicatorColor: kNeonBlue.withOpacity(0.15),
         iconTheme: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) {
-            return const IconThemeData(color: Color(0xFFE50914));
+            return const IconThemeData(color: kNeonBlue);
           }
           return const IconThemeData(color: Colors.grey);
         }),
         labelTextStyle: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) {
             return const TextStyle(
-              color: Color(0xFFE50914),
-              fontSize: 12,
+              color: kNeonBlue,
+              fontSize: 11,
               fontWeight: FontWeight.w600,
             );
           }
           return const TextStyle(
             color: Colors.grey,
-            fontSize: 12,
+            fontSize: 11,
           );
         }),
       ),
@@ -102,15 +114,80 @@ class CMMoviesApp extends StatelessWidget {
         ),
       ),
       tabBarTheme: const TabBarTheme(
-        labelColor: Color(0xFFE50914),
+        labelColor: kNeonBlue,
         unselectedLabelColor: Colors.grey,
-        indicatorColor: Color(0xFFE50914),
+        indicatorColor: kNeonBlue,
       ),
       bottomSheetTheme: const BottomSheetThemeData(
-        backgroundColor: Color(0xFF1E1E1E),
+        backgroundColor: kDarkCard,
       ),
       dialogTheme: const DialogTheme(
-        backgroundColor: Color(0xFF1E1E1E),
+        backgroundColor: kDarkCard,
+      ),
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return kNeonBlue;
+          }
+          return Colors.grey;
+        }),
+        trackColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return kNeonBlue.withOpacity(0.4);
+          }
+          return Colors.grey.withOpacity(0.3);
+        }),
+      ),
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
+        backgroundColor: kNeonBlue.withOpacity(0.15),
+        foregroundColor: kNeonBlue,
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: kNeonBlue,
+          foregroundColor: Colors.black,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: kNeonBlue,
+          side: const BorderSide(color: kNeonBlue),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: kNeonBlue,
+        ),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: const Color(0xFF1A1A2E),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: kNeonBlue.withOpacity(0.3)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.white24),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: kNeonBlue, width: 1.5),
+        ),
+        labelStyle: const TextStyle(color: Colors.white70),
+      ),
+      dividerTheme: DividerThemeData(
+        color: Colors.white12,
+      ),
+      listTileTheme: const ListTileThemeData(
+        textColor: Colors.white,
+        iconColor: Colors.white70,
       ),
     );
   }
@@ -119,10 +196,10 @@ class CMMoviesApp extends StatelessWidget {
     final base = ThemeData.light(useMaterial3: true);
     return base.copyWith(
       colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFFE50914),
+        seedColor: kNeonBlue,
         brightness: Brightness.light,
-        primary: const Color(0xFFE50914),
-        secondary: const Color(0xFFFFB703),
+        primary: kNeonTeal,
+        secondary: kNeonBlue,
       ),
       scaffoldBackgroundColor: const Color(0xFFF5F5F5),
       appBarTheme: const AppBarTheme(
@@ -145,17 +222,17 @@ class CMMoviesApp extends StatelessWidget {
       ),
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: Colors.white,
-        indicatorColor: const Color(0xFFE50914).withOpacity(0.15),
+        indicatorColor: kNeonBlue.withOpacity(0.15),
         iconTheme: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) {
-            return const IconThemeData(color: Color(0xFFE50914));
+            return const IconThemeData(color: kNeonTeal);
           }
           return const IconThemeData(color: Colors.grey);
         }),
         labelTextStyle: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) {
             return const TextStyle(
-              color: Color(0xFFE50914),
+              color: kNeonTeal,
               fontSize: 12,
               fontWeight: FontWeight.w600,
             );
@@ -174,9 +251,9 @@ class CMMoviesApp extends StatelessWidget {
         ),
       ),
       tabBarTheme: const TabBarTheme(
-        labelColor: Color(0xFFE50914),
+        labelColor: kNeonTeal,
         unselectedLabelColor: Colors.grey,
-        indicatorColor: Color(0xFFE50914),
+        indicatorColor: kNeonTeal,
       ),
     );
   }

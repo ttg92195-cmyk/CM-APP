@@ -21,22 +21,49 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _currentIndex = 0;
 
-  final List<Widget> _pages = const [
+  // Bottom Nav pages (5 tabs)
+  final List<Widget> _bottomNavPages = const [
     HomeScreen(),
     MoviesPage(),
     SeriesPage(),
     MovieBookmarkScreen(),
-    GenresTagsCollectionsPage(),
-    DownloadPage(),
     SettingsPage(),
-    RegisterPage(),
   ];
 
-  void _navigateTo(int index) {
+  // All menu pages for drawer navigation
+  final List<Widget> _allPages = const [
+    HomeScreen(),         // 0
+    MoviesPage(),         // 1
+    SeriesPage(),         // 2
+    MovieBookmarkScreen(), // 3
+    GenresTagsCollectionsPage(), // 4
+    DownloadPage(),       // 5
+    SettingsPage(),       // 6
+    RegisterPage(),       // 7
+  ];
+
+  // Map drawer index to actual page
+  void _navigateDrawerTo(int drawerIndex) {
     Navigator.pop(context); // Close drawer
+    // Find matching bottom nav index or switch to drawer page
     setState(() {
-      _currentIndex = index;
+      _currentIndex = drawerIndex;
     });
+  }
+
+  // Get the current pages list based on mode
+  List<Widget> get _currentPages {
+    // If index < 5, show from bottom nav pages
+    // If index >= 5, show from all pages
+    if (_currentIndex < 5) {
+      return _bottomNavPages;
+    }
+    return _allPages;
+  }
+
+  int get _effectiveIndex {
+    if (_currentIndex < 5) return _currentIndex;
+    return _currentIndex;
   }
 
   @override
@@ -73,8 +100,83 @@ class _HomePageState extends State<HomePage> {
       ),
       drawer: _buildDrawer(appConfig, theme),
       body: IndexedStack(
-        index: _currentIndex,
-        children: _pages,
+        index: _currentIndex < 5 ? _currentIndex : _currentIndex,
+        children: _currentIndex < 5
+            ? _bottomNavPages
+            : _allPages.sublist(0, _currentIndex + 1),
+      ),
+      bottomNavigationBar: _buildBottomNav(appConfig, theme),
+    );
+  }
+
+  Widget _buildBottomNav(AppConfig appConfig, ThemeData theme) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF121212),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF00E5FF).withOpacity(0.15),
+            blurRadius: 8,
+            spreadRadius: 0,
+          ),
+        ],
+      ),
+      child: NavigationBar(
+        selectedIndex: _currentIndex < 5 ? _currentIndex : -1,
+        onDestinationSelected: (index) {
+          setState(() {
+            _currentIndex = index;
+          });
+        },
+        backgroundColor: const Color(0xFF121212),
+        indicatorColor: const Color(0xFF00E5FF).withOpacity(0.15),
+        height: 64,
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return const IconThemeData(color: Color(0xFF00E5FF));
+          }
+          return const IconThemeData(color: Colors.grey);
+        }),
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return const TextStyle(
+              color: Color(0xFF00E5FF),
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            );
+          }
+          return const TextStyle(
+            color: Colors.grey,
+            fontSize: 11,
+          );
+        }),
+        destinations: [
+          NavigationDestination(
+            icon: const Icon(Icons.home_outlined),
+            selectedIcon: const Icon(Icons.home),
+            label: appConfig.translate('home'),
+          ),
+          NavigationDestination(
+            icon: const Icon(Icons.movie_outlined),
+            selectedIcon: const Icon(Icons.movie),
+            label: appConfig.translate('movies'),
+          ),
+          NavigationDestination(
+            icon: const Icon(Icons.tv_outlined),
+            selectedIcon: const Icon(Icons.tv),
+            label: appConfig.translate('series'),
+          ),
+          NavigationDestination(
+            icon: const Icon(Icons.bookmark_outline),
+            selectedIcon: const Icon(Icons.bookmark),
+            label: appConfig.translate('bookmarks'),
+          ),
+          NavigationDestination(
+            icon: const Icon(Icons.settings_outlined),
+            selectedIcon: const Icon(Icons.settings),
+            label: appConfig.translate('settings'),
+          ),
+        ],
       ),
     );
   }
@@ -132,37 +234,60 @@ class _HomePageState extends State<HomePage> {
     ];
 
     return Drawer(
+      backgroundColor: const Color(0xFF121212),
       child: SafeArea(
         child: Column(
           children: [
-            // Drawer Header
+            // Drawer Header with neon accent
             Container(
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
               decoration: BoxDecoration(
-                color: theme.colorScheme.primaryContainer,
+                color: const Color(0xFF1A1A2E),
+                border: Border(
+                  bottom: BorderSide(
+                    color: const Color(0xFF00E5FF).withOpacity(0.3),
+                    width: 1,
+                  ),
+                ),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(
-                    Icons.play_circle_fill,
-                    size: 48,
-                    color: theme.colorScheme.primary,
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: const Color(0xFF00E5FF).withOpacity(0.15),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF00E5FF).withOpacity(0.3),
+                          blurRadius: 12,
+                          spreadRadius: 2,
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.play_circle_fill,
+                      size: 40,
+                      color: Color(0xFF00E5FF),
+                    ),
                   ),
                   const SizedBox(height: 12),
-                  Text(
-                    appConfig.translate('app_name'),
-                    style: theme.textTheme.headlineSmall?.copyWith(
+                  const Text(
+                    'CM Movies',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
                       fontWeight: FontWeight.bold,
-                      color: theme.colorScheme.onPrimaryContainer,
                     ),
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '${appConfig.translate("version")}: 1.0.0',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onPrimaryContainer.withOpacity(0.7),
+                    'Version 1.0.0',
+                    style: TextStyle(
+                      color: Colors.white54,
+                      fontSize: 12,
                     ),
                   ),
                 ],
@@ -172,35 +297,46 @@ class _HomePageState extends State<HomePage> {
             // Menu Items
             Expanded(
               child: ListView.builder(
-                padding: EdgeInsets.zero,
+                padding: const EdgeInsets.symmetric(vertical: 8),
                 itemCount: menuItems.length,
                 itemBuilder: (context, index) {
                   final item = menuItems[index];
                   final isSelected = _currentIndex == item.index;
-                  return ListTile(
-                    leading: Icon(
-                      isSelected ? item.activeIcon : item.icon,
-                      color: isSelected
-                          ? theme.colorScheme.primary
-                          : theme.colorScheme.onSurface.withOpacity(0.7),
-                    ),
-                    title: Text(
-                      item.title,
-                      style: TextStyle(
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    child: ListTile(
+                      leading: Icon(
+                        isSelected ? item.activeIcon : item.icon,
                         color: isSelected
-                            ? theme.colorScheme.primary
-                            : theme.colorScheme.onSurface,
-                        fontWeight:
-                            isSelected ? FontWeight.bold : FontWeight.normal,
+                            ? const Color(0xFF00E5FF)
+                            : Colors.white70,
+                        size: 22,
                       ),
+                      title: Text(
+                        item.title,
+                        style: TextStyle(
+                          color: isSelected
+                              ? const Color(0xFF00E5FF)
+                              : Colors.white,
+                          fontWeight:
+                              isSelected ? FontWeight.bold : FontWeight.normal,
+                          fontSize: 14,
+                        ),
+                      ),
+                      selected: isSelected,
+                      selectedTileColor:
+                          const Color(0xFF00E5FF).withOpacity(0.1),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        side: isSelected
+                            ? BorderSide(
+                                color: const Color(0xFF00E5FF).withOpacity(0.3),
+                                width: 1,
+                              )
+                            : BorderSide.none,
+                      ),
+                      onTap: () => _navigateDrawerTo(item.index),
                     ),
-                    selected: isSelected,
-                    selectedTileColor:
-                        theme.colorScheme.primaryContainer.withOpacity(0.3),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    onTap: () => _navigateTo(item.index),
                   );
                 },
               ),
@@ -211,8 +347,9 @@ class _HomePageState extends State<HomePage> {
               padding: const EdgeInsets.all(16),
               child: Text(
                 'CM Movies v1.0.0',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurface.withOpacity(0.4),
+                style: TextStyle(
+                  color: Colors.white24,
+                  fontSize: 11,
                 ),
               ),
             ),
