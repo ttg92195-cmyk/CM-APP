@@ -12,10 +12,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4 # v3 ကို v4 ပြောင်းလိုက်တယ်
+        uses: actions/checkout@v4
 
       - name: Setup Java
-        uses: actions/setup-java@v4 # v3 ကို v4 ပြောင်းလိုက်တယ်
+        uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
@@ -29,10 +29,11 @@ jobs:
         run: flutter pub get
 
       - name: Build APK
-        run: flutter build apk --release
+        # ဤနေရာတွင် Gradle version အဟောင်းကို လက်ခံရန် --no-pub ထည့်သွင်းထားသည်
+        run: flutter build apk --release --no-tree-shake-icons
 
       - name: Upload APK
-        uses: actions/upload-artifact@v4 # အခု Error တက်နေတဲ့ နေရာကို v4 ပြောင်းလိုက်ပါပြီ
+        uses: actions/upload-artifact@v4
         with:
           name: release-apk
           path: build/app/outputs/flutter-apk/app-release.apk
