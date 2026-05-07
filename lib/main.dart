@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/ui/home/home_page.dart';
+import 'firebase_options.dart';
 
 // Netflix-style Red accent color
 const Color kNetflixRed = Color(0xFFE50914);
@@ -11,8 +13,14 @@ const Color kDarkBg = Color(0xFF0A0A0A);
 const Color kDarkSurface = Color(0xFF121212);
 const Color kDarkCard = Color(0xFF1E1E1E);
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize Firebase
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
