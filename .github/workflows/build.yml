@@ -12,10 +12,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # v3 ကို v4 ပြောင်းလိုက်တယ်
 
       - name: Setup Java
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4 # v3 ကို v4 ပြောင်းလိုက်တယ်
         with:
           distribution: 'zulu'
           java-version: '17'
@@ -24,7 +24,6 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-          # သင့် project က flutter 3.24.5 ဝန်းကျင်သုံးထားတာမို့ stable ပဲ ထားလိုက်ပါမယ်
 
       - name: Get dependencies
         run: flutter pub get
@@ -33,7 +32,7 @@ jobs:
         run: flutter build apk --release
 
       - name: Upload APK
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4 # အခု Error တက်နေတဲ့ နေရာကို v4 ပြောင်းလိုက်ပါပြီ
         with:
           name: release-apk
           path: build/app/outputs/flutter-apk/app-release.apk
