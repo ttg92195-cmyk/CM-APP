@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
+import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/models/tag_and_genres.dart';
 import 'package:cm_movies/app/core/services/api_service.dart';
-import 'package:cm_movies/app/ui/home/library_page.dart';
+import 'package:cm_movies/app/ui/components/movie_card.dart';
+import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
 
 class GenresTagsCollectionsPage extends StatefulWidget {
   const GenresTagsCollectionsPage({super.key});
@@ -292,7 +294,7 @@ class _FilterResultPage extends StatefulWidget {
 }
 
 class _FilterResultPageState extends State<_FilterResultPage> {
-  List<dynamic> _movies = [];
+  List<Movie> _movies = [];
   int _currentPage = 1;
   int _lastPage = 1;
   bool _isLoading = true;
@@ -310,7 +312,7 @@ class _FilterResultPageState extends State<_FilterResultPage> {
       final result = await widget.fetchFn(1);
       if (mounted) {
         setState(() {
-          _movies = result['movies'] as List;
+          _movies = (result['movies'] as List).cast<Movie>();
           _currentPage = result['current_page'] as int;
           _lastPage = result['last_page'] as int;
           _isLoading = false;
@@ -328,7 +330,7 @@ class _FilterResultPageState extends State<_FilterResultPage> {
       final result = await widget.fetchFn(_currentPage + 1);
       if (mounted) {
         setState(() {
-          _movies.addAll(result['movies'] as List);
+          _movies.addAll((result['movies'] as List).cast<Movie>());
           _currentPage = result['current_page'] as int;
           _lastPage = result['last_page'] as int;
           _isLoadingMore = false;

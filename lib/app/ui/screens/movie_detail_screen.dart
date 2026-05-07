@@ -470,7 +470,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
-              Icons.download_disabled,
+              Icons.cloud_off,
               size: 64,
               color: theme.colorScheme.onSurface.withOpacity(0.3),
             ),

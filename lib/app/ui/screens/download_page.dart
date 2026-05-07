@@ -82,7 +82,7 @@ class _DownloadPageState extends State<DownloadPage> {
                   Icon(
                     appConfig.downloadEnabled
                         ? Icons.download_done_rounded
-                        : Icons.download_disabled,
+                        : Icons.cloud_off,
                     size: 64,
                     color: appConfig.downloadEnabled
                         ? Colors.green
