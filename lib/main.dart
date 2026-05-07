@@ -4,9 +4,9 @@ import 'package:provider/provider.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/ui/home/home_page.dart';
 
-// Neon Blue accent color
-const Color kNeonBlue = Color(0xFF00E5FF);
-const Color kNeonTeal = Color(0xFF00897B);
+// Netflix-style Red accent color
+const Color kNetflixRed = Color(0xFFE50914);
+const Color kNetflixDarkRed = Color(0xFFB81D24);
 const Color kDarkBg = Color(0xFF0A0A0A);
 const Color kDarkSurface = Color(0xFF121212);
 const Color kDarkCard = Color(0xFF1E1E1E);
@@ -52,16 +52,16 @@ class CMMoviesApp extends StatelessWidget {
     final base = ThemeData.dark(useMaterial3: true);
     return base.copyWith(
       colorScheme: ColorScheme.fromSeed(
-        seedColor: kNeonBlue,
+        seedColor: kNetflixRed,
         brightness: Brightness.dark,
-        primary: kNeonBlue,
-        secondary: kNeonTeal,
+        primary: kNetflixRed,
+        secondary: kNetflixDarkRed,
         surface: kDarkSurface,
         onSurface: Colors.white,
-        primaryContainer: const Color(0xFF003640),
-        onPrimaryContainer: kNeonBlue,
-        secondaryContainer: const Color(0xFF00382E),
-        onSecondaryContainer: kNeonTeal,
+        primaryContainer: const Color(0xFF4A0E14),
+        onPrimaryContainer: Colors.red.shade200,
+        secondaryContainer: const Color(0xFF3A0A10),
+        onSecondaryContainer: Colors.red.shade200,
         surfaceContainerHighest: const Color(0xFF1A1A2E),
       ),
       scaffoldBackgroundColor: kDarkBg,
@@ -85,26 +85,7 @@ class CMMoviesApp extends StatelessWidget {
       ),
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: kDarkSurface,
-        indicatorColor: kNeonBlue.withOpacity(0.15),
-        iconTheme: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) {
-            return const IconThemeData(color: kNeonBlue);
-          }
-          return const IconThemeData(color: Colors.grey);
-        }),
-        labelTextStyle: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) {
-            return const TextStyle(
-              color: kNeonBlue,
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-            );
-          }
-          return const TextStyle(
-            color: Colors.grey,
-            fontSize: 11,
-          );
-        }),
+        indicatorColor: kNetflixRed.withOpacity(0.15),
       ),
       chipTheme: ChipThemeData(
         backgroundColor: const Color(0xFF2A2A2A),
@@ -114,9 +95,9 @@ class CMMoviesApp extends StatelessWidget {
         ),
       ),
       tabBarTheme: const TabBarTheme(
-        labelColor: kNeonBlue,
+        labelColor: kNetflixRed,
         unselectedLabelColor: Colors.grey,
-        indicatorColor: kNeonBlue,
+        indicatorColor: kNetflixRed,
       ),
       bottomSheetTheme: const BottomSheetThemeData(
         backgroundColor: kDarkCard,
@@ -127,25 +108,25 @@ class CMMoviesApp extends StatelessWidget {
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) {
-            return kNeonBlue;
+            return kNetflixRed;
           }
           return Colors.grey;
         }),
         trackColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) {
-            return kNeonBlue.withOpacity(0.4);
+            return kNetflixRed.withOpacity(0.4);
           }
           return Colors.grey.withOpacity(0.3);
         }),
       ),
       floatingActionButtonTheme: FloatingActionButtonThemeData(
-        backgroundColor: kNeonBlue.withOpacity(0.15),
-        foregroundColor: kNeonBlue,
+        backgroundColor: kNetflixRed.withOpacity(0.15),
+        foregroundColor: kNetflixRed,
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: kNeonBlue,
-          foregroundColor: Colors.black,
+          backgroundColor: kNetflixRed,
+          foregroundColor: Colors.white,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
@@ -153,8 +134,8 @@ class CMMoviesApp extends StatelessWidget {
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          foregroundColor: kNeonBlue,
-          side: const BorderSide(color: kNeonBlue),
+          foregroundColor: kNetflixRed,
+          side: const BorderSide(color: kNetflixRed),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
@@ -162,7 +143,7 @@ class CMMoviesApp extends StatelessWidget {
       ),
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
-          foregroundColor: kNeonBlue,
+          foregroundColor: kNetflixRed,
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
@@ -170,7 +151,7 @@ class CMMoviesApp extends StatelessWidget {
         fillColor: const Color(0xFF1A1A2E),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: kNeonBlue.withOpacity(0.3)),
+          borderSide: BorderSide(color: kNetflixRed.withOpacity(0.3)),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
@@ -178,7 +159,7 @@ class CMMoviesApp extends StatelessWidget {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: kNeonBlue, width: 1.5),
+          borderSide: const BorderSide(color: kNetflixRed, width: 1.5),
         ),
         labelStyle: const TextStyle(color: Colors.white70),
       ),
@@ -196,10 +177,17 @@ class CMMoviesApp extends StatelessWidget {
     final base = ThemeData.light(useMaterial3: true);
     return base.copyWith(
       colorScheme: ColorScheme.fromSeed(
-        seedColor: kNeonBlue,
+        seedColor: kNetflixRed,
         brightness: Brightness.light,
-        primary: kNeonTeal,
-        secondary: kNeonBlue,
+        primary: kNetflixRed,
+        secondary: kNetflixDarkRed,
+        surface: Colors.white,
+        onSurface: Colors.black87,
+        primaryContainer: const Color(0xFFFFDAD6),
+        onPrimaryContainer: const Color(0xFF410001),
+        secondaryContainer: const Color(0xFFFFDAD6),
+        onSecondaryContainer: const Color(0xFF410001),
+        surfaceContainerHighest: Colors.grey.shade100,
       ),
       scaffoldBackgroundColor: const Color(0xFFF5F5F5),
       appBarTheme: const AppBarTheme(
@@ -222,26 +210,7 @@ class CMMoviesApp extends StatelessWidget {
       ),
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: Colors.white,
-        indicatorColor: kNeonBlue.withOpacity(0.15),
-        iconTheme: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) {
-            return const IconThemeData(color: kNeonTeal);
-          }
-          return const IconThemeData(color: Colors.grey);
-        }),
-        labelTextStyle: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) {
-            return const TextStyle(
-              color: kNeonTeal,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            );
-          }
-          return const TextStyle(
-            color: Colors.grey,
-            fontSize: 12,
-          );
-        }),
+        indicatorColor: kNetflixRed.withOpacity(0.12),
       ),
       chipTheme: ChipThemeData(
         backgroundColor: Colors.grey.shade200,
@@ -251,9 +220,71 @@ class CMMoviesApp extends StatelessWidget {
         ),
       ),
       tabBarTheme: const TabBarTheme(
-        labelColor: kNeonTeal,
+        labelColor: kNetflixRed,
         unselectedLabelColor: Colors.grey,
-        indicatorColor: kNeonTeal,
+        indicatorColor: kNetflixRed,
+      ),
+      bottomSheetTheme: const BottomSheetThemeData(
+        backgroundColor: Colors.white,
+      ),
+      dialogTheme: const DialogTheme(
+        backgroundColor: Colors.white,
+      ),
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return kNetflixRed;
+          }
+          return Colors.grey;
+        }),
+        trackColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return kNetflixRed.withOpacity(0.4);
+          }
+          return Colors.grey.withOpacity(0.3);
+        }),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: kNetflixRed,
+          foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: kNetflixRed,
+          side: const BorderSide(color: kNetflixRed),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: Colors.grey.shade100,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.grey.shade300),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.grey.shade300),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: kNetflixRed, width: 1.5),
+        ),
+        labelStyle: TextStyle(color: Colors.grey.shade700),
+      ),
+      dividerTheme: DividerThemeData(
+        color: Colors.grey.shade200,
+      ),
+      listTileTheme: const ListTileThemeData(
+        textColor: Colors.black87,
+        iconColor: Colors.black54,
       ),
     );
   }

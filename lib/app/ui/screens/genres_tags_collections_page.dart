@@ -130,14 +130,10 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Movies Section
           _buildSectionTitle(theme, 'Movies'),
           const SizedBox(height: 8),
           _buildNeonGrid(theme, _movieGenres, isGenre: true, isTag: false),
-
           const SizedBox(height: 24),
-
-          // Series Section
           _buildSectionTitle(theme, 'Series'),
           const SizedBox(height: 8),
           _buildNeonGrid(theme, _seriesGenres, isGenre: true, isTag: false),
@@ -153,14 +149,10 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Movies Section
           _buildSectionTitle(theme, 'Movies'),
           const SizedBox(height: 8),
           _buildNeonGrid(theme, _movieTags, isGenre: false, isTag: true),
-
           const SizedBox(height: 24),
-
-          // Series Section
           _buildSectionTitle(theme, 'Series'),
           const SizedBox(height: 8),
           _buildNeonGrid(theme, _seriesTags, isGenre: false, isTag: true),
@@ -176,14 +168,10 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Movies Section
           _buildSectionTitle(theme, 'Movies'),
           const SizedBox(height: 8),
           _buildNeonGrid(theme, _movieCollections, isGenre: false, isTag: false),
-
           const SizedBox(height: 24),
-
-          // Series Section
           _buildSectionTitle(theme, 'Series'),
           const SizedBox(height: 8),
           _buildNeonGrid(theme, _seriesCollections, isGenre: false, isTag: false),
@@ -195,13 +183,14 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
   // ==================== SHARED WIDGETS ====================
 
   Widget _buildSectionTitle(ThemeData theme, String title) {
+    final isDark = theme.brightness == Brightness.dark;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4),
       child: Text(
         title,
         style: theme.textTheme.titleMedium?.copyWith(
           fontWeight: FontWeight.bold,
-          color: Colors.white,
+          color: isDark ? Colors.white : Colors.black87,
         ),
       ),
     );
@@ -223,16 +212,15 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
         final item = items[index];
         return _NeonGlowButton(
           title: item,
-          isSolid: !isGenre && !isTag, // Collections = solid teal
+          isSolid: !isGenre && !isTag, // Collections = solid red
           onTap: () {
-            // Try to find matching API item for navigation
             if (isGenre) {
               final match = _apiGenres.where((g) => g.name.toLowerCase() == item.toLowerCase()).toList();
               if (match.isNotEmpty) {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => _FilterResultPage(
+                    builder: (_) => FilterResultPage(
                       title: item,
                       fetchFn: (page) =>
                           _apiService.getMoviesByGenre(match.first.id, page: page),
@@ -246,7 +234,7 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => _FilterResultPage(
+                    builder: (_) => FilterResultPage(
                       title: item,
                       fetchFn: (page) =>
                           _apiService.getMoviesByTag(match.first.id, page: page),
@@ -262,7 +250,7 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
   }
 }
 
-// ==================== NEON GLOW BUTTON ====================
+// ==================== NEON GLOW BUTTON (Netflix Red) ====================
 class _NeonGlowButton extends StatefulWidget {
   final String title;
   final bool isSolid;
@@ -283,6 +271,8 @@ class _NeonGlowButtonState extends State<_NeonGlowButton> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return GestureDetector(
       onTapDown: (_) => setState(() => _isHovering = true),
       onTapUp: (_) => setState(() => _isHovering = false),
@@ -292,21 +282,25 @@ class _NeonGlowButtonState extends State<_NeonGlowButton> {
         duration: const Duration(milliseconds: 150),
         decoration: BoxDecoration(
           color: widget.isSolid
-              ? const Color(0xFF00897B)
-              : const Color(0xFF1A1A1A),
+              ? const Color(0xFFE50914)
+              : isDark
+                  ? const Color(0xFF1A1A1A)
+                  : Colors.grey.shade100,
           borderRadius: BorderRadius.circular(10),
           border: widget.isSolid
               ? null
               : Border.all(
                   color: _isHovering
-                      ? const Color(0xFF00E5FF)
-                      : const Color(0xFF00897B),
+                      ? const Color(0xFFE50914)
+                      : isDark
+                          ? const Color(0xFFB81D24)
+                          : Colors.grey.shade400,
                   width: 1.5,
                 ),
           boxShadow: _isHovering
               ? [
                   BoxShadow(
-                    color: const Color(0xFF00E5FF).withOpacity(0.4),
+                    color: const Color(0xFFE50914).withOpacity(0.4),
                     blurRadius: 12,
                     spreadRadius: 1,
                   ),
@@ -314,7 +308,7 @@ class _NeonGlowButtonState extends State<_NeonGlowButton> {
               : widget.isSolid
                   ? [
                       BoxShadow(
-                        color: const Color(0xFF00897B).withOpacity(0.3),
+                        color: const Color(0xFFE50914).withOpacity(0.3),
                         blurRadius: 6,
                         spreadRadius: 0,
                       ),
@@ -328,13 +322,17 @@ class _NeonGlowButtonState extends State<_NeonGlowButton> {
               widget.title,
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: Colors.white,
+                color: widget.isSolid
+                    ? Colors.white
+                    : isDark
+                        ? Colors.white
+                        : Colors.black87,
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
                 shadows: _isHovering
                     ? [
                         Shadow(
-                          color: const Color(0xFF00E5FF).withOpacity(0.8),
+                          color: const Color(0xFFE50914).withOpacity(0.8),
                           blurRadius: 8,
                         ),
                       ]
@@ -350,24 +348,26 @@ class _NeonGlowButtonState extends State<_NeonGlowButton> {
   }
 }
 
-// ==================== FILTER RESULT PAGE ====================
-class _FilterResultPage extends StatefulWidget {
+// ==================== FILTER RESULT PAGE (public for home_screen) ====================
+class FilterResultPage extends StatefulWidget {
   final String title;
   final Future<Map<String, dynamic>> Function(int page) fetchFn;
 
-  const _FilterResultPage({
+  const FilterResultPage({
+    super.key,
     required this.title,
     required this.fetchFn,
   });
 
   @override
-  State<_FilterResultPage> createState() => _FilterResultPageState();
+  State<FilterResultPage> createState() => _FilterResultPageState();
 }
 
-class _FilterResultPageState extends State<_FilterResultPage> {
+class _FilterResultPageState extends State<FilterResultPage> {
   List<Movie> _movies = [];
   int _currentPage = 1;
   int _lastPage = 1;
+  int _total = 0;
   bool _isLoading = true;
   bool _isLoadingMore = false;
 
@@ -386,6 +386,7 @@ class _FilterResultPageState extends State<_FilterResultPage> {
           _movies = (result['movies'] as List).cast<Movie>();
           _currentPage = result['current_page'] as int;
           _lastPage = result['last_page'] as int;
+          _total = result['total'] as int;
           _isLoading = false;
         });
       }
@@ -404,6 +405,7 @@ class _FilterResultPageState extends State<_FilterResultPage> {
           _movies.addAll((result['movies'] as List).cast<Movie>());
           _currentPage = result['current_page'] as int;
           _lastPage = result['last_page'] as int;
+          _total = result['total'] as int;
           _isLoadingMore = false;
         });
       }

@@ -1,15 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
+import 'package:cm_movies/app/ui/screens/profile_page.dart';
 
-class RegisterPage extends StatefulWidget {
-  const RegisterPage({super.key});
+class LoginPage extends StatefulWidget {
+  const LoginPage({super.key});
 
   @override
-  State<RegisterPage> createState() => _RegisterPageState();
+  State<LoginPage> createState() => _LoginPageState();
 }
 
-class _RegisterPageState extends State<RegisterPage>
+class _LoginPageState extends State<LoginPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final _loginFormKey = GlobalKey<FormState>();
@@ -23,10 +24,7 @@ class _RegisterPageState extends State<RegisterPage>
   bool _obscureRegPassword = true;
   bool _obscureRegConfirmPassword = true;
   bool _isLoggingIn = false;
-
-  // Admin credentials
-  static const String _adminUsername = 'Chitminzaw';
-  static const String _adminPassword = 'Chitmin7';
+  bool _isRegistering = false;
 
   @override
   void initState() {
@@ -49,18 +47,17 @@ class _RegisterPageState extends State<RegisterPage>
     if (!_loginFormKey.currentState!.validate()) return;
 
     setState(() => _isLoggingIn = true);
-
-    // Simulate network delay
-    await Future.delayed(const Duration(seconds: 1));
+    await Future.delayed(const Duration(milliseconds: 500));
 
     final username = _usernameController.text.trim();
     final password = _passwordController.text.trim();
+    final appConfig = Provider.of<AppConfig>(context, listen: false);
 
-    if (username == _adminUsername && password == _adminPassword) {
-      final appConfig = Provider.of<AppConfig>(context, listen: false);
-      await appConfig.setAdminLoggedIn(true);
+    final success = await appConfig.loginUser(username, password);
 
-      if (mounted) {
+    if (mounted) {
+      setState(() => _isLoggingIn = false);
+      if (success) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(appConfig.translate('login_success')),
@@ -69,18 +66,19 @@ class _RegisterPageState extends State<RegisterPage>
         );
         _usernameController.clear();
         _passwordController.clear();
-        setState(() => _isLoggingIn = false);
-      }
-    } else {
-      if (mounted) {
-        final appConfig = Provider.of<AppConfig>(context, listen: false);
+
+        // Navigate to profile page
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const ProfilePage()),
+        );
+      } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(appConfig.translate('login_failed')),
             backgroundColor: Colors.redAccent,
           ),
         );
-        setState(() => _isLoggingIn = false);
       }
     }
   }
@@ -88,28 +86,41 @@ class _RegisterPageState extends State<RegisterPage>
   Future<void> _handleRegister() async {
     if (!_registerFormKey.currentState!.validate()) return;
 
-    final appConfig = Provider.of<AppConfig>(context, listen: false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(appConfig.translate('register_success')),
-        backgroundColor: Colors.green,
-      ),
-    );
-    _regUsernameController.clear();
-    _regPasswordController.clear();
-    _regConfirmPasswordController.clear();
-  }
+    setState(() => _isRegistering = true);
+    await Future.delayed(const Duration(milliseconds: 500));
 
-  Future<void> _handleLogout() async {
+    final username = _regUsernameController.text.trim();
+    final password = _regPasswordController.text.trim();
     final appConfig = Provider.of<AppConfig>(context, listen: false);
-    await appConfig.setAdminLoggedIn(false);
+
+    final success = await appConfig.registerUser(username, password);
+
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(appConfig.translate('logout')),
-          backgroundColor: Colors.orange,
-        ),
-      );
+      setState(() => _isRegistering = false);
+      if (success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(appConfig.translate('register_success')),
+            backgroundColor: Colors.green,
+          ),
+        );
+        _regUsernameController.clear();
+        _regPasswordController.clear();
+        _regConfirmPasswordController.clear();
+
+        // Auto login - navigate to profile
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const ProfilePage()),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(appConfig.translate('register_failed')),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
     }
   }
 
@@ -120,13 +131,13 @@ class _RegisterPageState extends State<RegisterPage>
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(appConfig.translate('register')),
+        title: Text(appConfig.translate('login')),
         bottom: TabBar(
           controller: _tabController,
           tabs: [
             Tab(
-              icon: const Icon(Icons.admin_panel_settings),
-              text: appConfig.translate('admin_login'),
+              icon: const Icon(Icons.login),
+              text: appConfig.translate('login'),
             ),
             Tab(
               icon: const Icon(Icons.person_add),
@@ -138,19 +149,14 @@ class _RegisterPageState extends State<RegisterPage>
       body: TabBarView(
         controller: _tabController,
         children: [
-          _buildAdminLoginTab(appConfig, theme),
+          _buildLoginTab(appConfig, theme),
           _buildRegisterTab(appConfig, theme),
         ],
       ),
     );
   }
 
-  Widget _buildAdminLoginTab(AppConfig appConfig, ThemeData theme) {
-    // If already logged in, show admin panel
-    if (appConfig.adminLoggedIn) {
-      return _buildAdminPanel(appConfig, theme);
-    }
-
+  Widget _buildLoginTab(AppConfig appConfig, ThemeData theme) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Form(
@@ -165,19 +171,19 @@ class _RegisterPageState extends State<RegisterPage>
                 width: 80,
                 height: 80,
                 decoration: BoxDecoration(
-                  color: theme.colorScheme.primaryContainer,
+                  color: const Color(0xFFE50914).withOpacity(0.15),
                   shape: BoxShape.circle,
                 ),
-                child: Icon(
-                  Icons.admin_panel_settings,
+                child: const Icon(
+                  Icons.login_rounded,
                   size: 40,
-                  color: theme.colorScheme.primary,
+                  color: Color(0xFFE50914),
                 ),
               ),
             ),
             const SizedBox(height: 24),
             Text(
-              appConfig.translate('admin_login'),
+              appConfig.translate('login'),
               textAlign: TextAlign.center,
               style: theme.textTheme.titleLarge?.copyWith(
                 fontWeight: FontWeight.bold,
@@ -185,7 +191,7 @@ class _RegisterPageState extends State<RegisterPage>
             ),
             const SizedBox(height: 8),
             Text(
-              'Login to manage your app settings',
+              'Login to your account',
               textAlign: TextAlign.center,
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurface.withOpacity(0.6),
@@ -221,7 +227,8 @@ class _RegisterPageState extends State<RegisterPage>
                 prefixIcon: const Icon(Icons.lock_outline),
                 suffixIcon: IconButton(
                   icon: Icon(
-                      _obscurePassword ? Icons.visibility_off : Icons.visibility),
+                    _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                  ),
                   onPressed: () {
                     setState(() => _obscurePassword = !_obscurePassword);
                   },
@@ -243,6 +250,7 @@ class _RegisterPageState extends State<RegisterPage>
             FilledButton(
               onPressed: _isLoggingIn ? null : _handleLogin,
               style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFE50914),
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -259,114 +267,18 @@ class _RegisterPageState extends State<RegisterPage>
                     )
                   : Text(appConfig.translate('login')),
             ),
+
+            const SizedBox(height: 16),
+
+            // Switch to register
+            TextButton(
+              onPressed: () {
+                _tabController.animateTo(1);
+              },
+              child: Text(appConfig.translate('dont_have_account')),
+            ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildAdminPanel(AppConfig appConfig, ThemeData theme) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Admin badge
-          Center(
-            child: Column(
-              children: [
-                Container(
-                  width: 80,
-                  height: 80,
-                  decoration: BoxDecoration(
-                    color: Colors.green.withOpacity(0.2),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.verified_user,
-                    size: 40,
-                    color: Colors.green,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'Welcome, $_adminUsername',
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Admin Panel',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.colorScheme.onSurface.withOpacity(0.6),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-
-          // Admin controls
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'App Controls',
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  SwitchListTile(
-                    title: Text(appConfig.translate('download_toggle')),
-                    subtitle: Text(appConfig.translate('download_toggle_desc')),
-                    value: appConfig.downloadEnabled,
-                    onChanged: (val) {
-                      appConfig.setDownloadEnabled(val);
-                    },
-                    secondary: const Icon(Icons.download),
-                  ),
-                  const Divider(),
-                  SwitchListTile(
-                    title: Text(appConfig.translate('dark_mode')),
-                    value: appConfig.isDarkMode,
-                    onChanged: (val) {
-                      appConfig.setThemeMode(
-                          val ? ThemeMode.dark : ThemeMode.light);
-                    },
-                    secondary: Icon(
-                      appConfig.isDarkMode
-                          ? Icons.dark_mode
-                          : Icons.light_mode,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 20),
-
-          // Logout button
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: _handleLogout,
-              icon: const Icon(Icons.logout),
-              label: Text(appConfig.translate('logout')),
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                foregroundColor: Colors.redAccent,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -386,19 +298,19 @@ class _RegisterPageState extends State<RegisterPage>
                 width: 80,
                 height: 80,
                 decoration: BoxDecoration(
-                  color: theme.colorScheme.secondaryContainer,
+                  color: const Color(0xFFE50914).withOpacity(0.15),
                   shape: BoxShape.circle,
                 ),
-                child: Icon(
+                child: const Icon(
                   Icons.person_add,
                   size: 40,
-                  color: theme.colorScheme.onSecondaryContainer,
+                  color: Color(0xFFE50914),
                 ),
               ),
             ),
             const SizedBox(height: 24),
             Text(
-              appConfig.translate('register'),
+              appConfig.translate('create_account'),
               textAlign: TextAlign.center,
               style: theme.textTheme.titleLarge?.copyWith(
                 fontWeight: FontWeight.bold,
@@ -406,7 +318,7 @@ class _RegisterPageState extends State<RegisterPage>
             ),
             const SizedBox(height: 8),
             Text(
-              'Create a new account',
+              'Create a new account to get started',
               textAlign: TextAlign.center,
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurface.withOpacity(0.6),
@@ -472,7 +384,7 @@ class _RegisterPageState extends State<RegisterPage>
               controller: _regConfirmPasswordController,
               obscureText: _obscureRegConfirmPassword,
               decoration: InputDecoration(
-                labelText: 'Confirm Password',
+                labelText: appConfig.translate('confirm_password'),
                 prefixIcon: const Icon(Icons.lock_outline),
                 suffixIcon: IconButton(
                   icon: Icon(_obscureRegConfirmPassword
@@ -501,14 +413,34 @@ class _RegisterPageState extends State<RegisterPage>
 
             // Register button
             FilledButton(
-              onPressed: _handleRegister,
+              onPressed: _isRegistering ? null : _handleRegister,
               style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFE50914),
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              child: Text(appConfig.translate('register')),
+              child: _isRegistering
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Text(appConfig.translate('register')),
+            ),
+
+            const SizedBox(height: 16),
+
+            // Switch to login
+            TextButton(
+              onPressed: () {
+                _tabController.animateTo(0);
+              },
+              child: Text(appConfig.translate('already_have_account')),
             ),
           ],
         ),

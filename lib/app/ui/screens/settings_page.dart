@@ -109,10 +109,264 @@ class SettingsPage extends StatelessWidget {
               );
             },
           ),
+
+          const Divider(),
+
+          // Admin Login Section
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Text(
+              appConfig.translate('admin_login'),
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+
+          if (appConfig.isCurrentUserAdmin)
+            // Admin Panel
+            Card(
+              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: Colors.green.withOpacity(0.2),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.verified_user,
+                            color: Colors.green,
+                            size: 24,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Admin',
+                                style: theme.textTheme.bodyLarge?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                'Logged in as Chitminzaw',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurface.withOpacity(0.6),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    SwitchListTile(
+                      title: Text(appConfig.translate('download_toggle')),
+                      subtitle: Text(appConfig.translate('download_toggle_desc')),
+                      value: appConfig.downloadEnabled,
+                      onChanged: (val) {
+                        appConfig.setDownloadEnabled(val);
+                      },
+                      secondary: const Icon(Icons.download),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () async {
+                          await appConfig.logoutUser();
+                        },
+                        icon: const Icon(Icons.logout, size: 18),
+                        label: Text(appConfig.translate('logout')),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.redAccent,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            // Admin Login Form
+            _AdminLoginForm(),
         ],
       ),
     );
   }
+}
+
+// Admin Login Form Widget
+class _AdminLoginForm extends StatefulWidget {
+  @override
+  State<_AdminLoginForm> createState() => _AdminLoginFormState();
+}
+
+class _AdminLoginFormState extends State<_AdminLoginForm> {
+  final _usernameController = TextEditingController();
+  final _passwordController = TextEditingController();
+  bool _obscurePassword = true;
+  bool _isLoggingIn = false;
+
+  @override
+  void dispose() {
+    _usernameController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleAdminLogin() async {
+    final username = _usernameController.text.trim();
+    final password = _passwordController.text.trim();
+
+    if (username.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter username and password'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isLoggingIn = true);
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    final appConfig = Provider.of<AppConfig>(context, listen: false);
+    final success = await appConfig.loginUser(username, password);
+
+    if (mounted) {
+      setState(() => _isLoggingIn = false);
+      if (success && appConfig.isCurrentUserAdmin) {
+        _usernameController.clear();
+        _passwordController.clear();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(appConfig.translate('login_success')),
+            backgroundColor: Colors.green,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(appConfig.translate('login_failed')),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.admin_panel_settings_outlined,
+                  color: theme.colorScheme.primary,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Admin Login',
+                  style: theme.textTheme.bodyLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _usernameController,
+              decoration: InputDecoration(
+                labelText: 'Username',
+                prefixIcon: const Icon(Icons.person_outline, size: 20),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(vertical: 10),
+              ),
+              style: const TextStyle(fontSize: 14),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _passwordController,
+              obscureText: _obscurePassword,
+              decoration: InputDecoration(
+                labelText: 'Password',
+                prefixIcon: const Icon(Icons.lock_outline, size: 20),
+                suffixIcon: IconButton(
+                  icon: Icon(
+                    _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                    size: 20,
+                  ),
+                  onPressed: () {
+                    setState(() => _obscurePassword = !_obscurePassword);
+                  },
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(vertical: 10),
+              ),
+              style: const TextStyle(fontSize: 14),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: _isLoggingIn ? null : _handleAdminLogin,
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFE50914),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: _isLoggingIn
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : Text(
+                        appConfig.translate('login'),
+                        style: const TextStyle(fontSize: 14),
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  AppConfig get appConfig => Provider.of<AppConfig>(context, listen: false);
 }
 
 class _AboutCMMoviesPage extends StatelessWidget {
@@ -133,7 +387,6 @@ class _AboutCMMoviesPage extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             const SizedBox(height: 20),
-            // App Icon
             Icon(
               Icons.play_circle_fill,
               size: 80,
@@ -154,7 +407,6 @@ class _AboutCMMoviesPage extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 32),
-            // About text
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(20),
@@ -170,34 +422,13 @@ class _AboutCMMoviesPage extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 24),
-            // Feature highlights
-            _buildFeatureCard(
-              theme,
-              Icons.movie_filter,
-              'Browse & Discover',
-              'Explore trending movies and TV series',
-            ),
+            _buildFeatureCard(theme, Icons.movie_filter, 'Browse & Discover', 'Explore trending movies and TV series'),
             const SizedBox(height: 12),
-            _buildFeatureCard(
-              theme,
-              Icons.search,
-              'Smart Search',
-              'Find movies by title, genre, or tag',
-            ),
+            _buildFeatureCard(theme, Icons.search, 'Smart Search', 'Find movies by title, genre, or tag'),
             const SizedBox(height: 12),
-            _buildFeatureCard(
-              theme,
-              Icons.bookmark,
-              'Bookmarks',
-              'Save your favorite movies for later',
-            ),
+            _buildFeatureCard(theme, Icons.bookmark, 'Bookmarks', 'Save your favorite movies for later'),
             const SizedBox(height: 12),
-            _buildFeatureCard(
-              theme,
-              Icons.language,
-              'Multi-Language',
-              'Supports Myanmar and English',
-            ),
+            _buildFeatureCard(theme, Icons.language, 'Multi-Language', 'Supports Myanmar and English'),
             const SizedBox(height: 40),
           ],
         ),
@@ -205,8 +436,7 @@ class _AboutCMMoviesPage extends StatelessWidget {
     );
   }
 
-  Widget _buildFeatureCard(
-      ThemeData theme, IconData icon, String title, String subtitle) {
+  Widget _buildFeatureCard(ThemeData theme, IconData icon, String title, String subtitle) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
@@ -222,18 +452,8 @@ class _AboutCMMoviesPage extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  title,
-                  style: theme.textTheme.bodyLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                Text(
-                  subtitle,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurface.withOpacity(0.6),
-                  ),
-                ),
+                Text(title, style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold)),
+                Text(subtitle, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurface.withOpacity(0.6))),
               ],
             ),
           ),
@@ -260,35 +480,18 @@ class _PrivacyPolicyPage extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header
             Center(
               child: Column(
                 children: [
-                  Icon(
-                    Icons.privacy_tip_rounded,
-                    size: 48,
-                    color: theme.colorScheme.primary,
-                  ),
+                  Icon(Icons.privacy_tip_rounded, size: 48, color: theme.colorScheme.primary),
                   const SizedBox(height: 12),
-                  Text(
-                    appConfig.translate('privacy_policy'),
-                    style: theme.textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  Text(appConfig.translate('privacy_policy'), style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 4),
-                  Text(
-                    'Last updated: 2026',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurface.withOpacity(0.5),
-                    ),
-                  ),
+                  Text('Last updated: 2026', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurface.withOpacity(0.5))),
                 ],
               ),
             ),
             const SizedBox(height: 24),
-
-            // Privacy Policy Text
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(20),
@@ -298,26 +501,17 @@ class _PrivacyPolicyPage extends StatelessWidget {
               ),
               child: Text(
                 appConfig.translate('privacy_policy_text'),
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  height: 1.8,
-                ),
+                style: theme.textTheme.bodyMedium?.copyWith(height: 1.8),
               ),
             ),
             const SizedBox(height: 24),
-
-            // Contact info
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Contact',
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                    Text('Contact', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
                     ListTile(
                       leading: const Icon(Icons.language),

@@ -8,7 +8,8 @@ import 'package:cm_movies/app/ui/screens/movie_bookmark_screen.dart';
 import 'package:cm_movies/app/ui/screens/genres_tags_collections_page.dart';
 import 'package:cm_movies/app/ui/screens/download_page.dart';
 import 'package:cm_movies/app/ui/screens/settings_page.dart';
-import 'package:cm_movies/app/ui/screens/register_page.dart';
+import 'package:cm_movies/app/ui/screens/login_page.dart';
+import 'package:cm_movies/app/ui/screens/profile_page.dart';
 import 'package:cm_movies/app/ui/screens/search_screen.dart';
 
 class HomePage extends StatefulWidget {
@@ -30,42 +31,6 @@ class _HomePageState extends State<HomePage> {
     SettingsPage(),
   ];
 
-  // All menu pages for drawer navigation
-  final List<Widget> _allPages = const [
-    HomeScreen(),         // 0
-    MoviesPage(),         // 1
-    SeriesPage(),         // 2
-    MovieBookmarkScreen(), // 3
-    GenresTagsCollectionsPage(), // 4
-    DownloadPage(),       // 5
-    SettingsPage(),       // 6
-    RegisterPage(),       // 7
-  ];
-
-  // Map drawer index to actual page
-  void _navigateDrawerTo(int drawerIndex) {
-    Navigator.pop(context); // Close drawer
-    // Find matching bottom nav index or switch to drawer page
-    setState(() {
-      _currentIndex = drawerIndex;
-    });
-  }
-
-  // Get the current pages list based on mode
-  List<Widget> get _currentPages {
-    // If index < 5, show from bottom nav pages
-    // If index >= 5, show from all pages
-    if (_currentIndex < 5) {
-      return _bottomNavPages;
-    }
-    return _allPages;
-  }
-
-  int get _effectiveIndex {
-    if (_currentIndex < 5) return _currentIndex;
-    return _currentIndex;
-  }
-
   @override
   Widget build(BuildContext context) {
     final appConfig = Provider.of<AppConfig>(context);
@@ -83,12 +48,13 @@ class _HomePageState extends State<HomePage> {
           appConfig.translate('app_name'),
           style: theme.textTheme.titleLarge?.copyWith(
             fontWeight: FontWeight.bold,
+            color: theme.colorScheme.onSurface,
           ),
         ),
         centerTitle: true,
         actions: [
           IconButton(
-            icon: const Icon(Icons.search),
+            icon: Icon(Icons.search, color: theme.colorScheme.onSurface),
             onPressed: () {
               Navigator.push(
                 context,
@@ -100,61 +66,61 @@ class _HomePageState extends State<HomePage> {
       ),
       drawer: _buildDrawer(appConfig, theme),
       body: IndexedStack(
-        index: _currentIndex < 5 ? _currentIndex : _currentIndex,
-        children: _currentIndex < 5
-            ? _bottomNavPages
-            : _allPages.sublist(0, _currentIndex + 1),
+        index: _currentIndex,
+        children: _bottomNavPages,
       ),
       bottomNavigationBar: _buildBottomNav(appConfig, theme),
     );
   }
 
   Widget _buildBottomNav(AppConfig appConfig, ThemeData theme) {
+    final isDark = theme.brightness == Brightness.dark;
+
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF121212),
+        color: isDark ? const Color(0xFF121212) : Colors.white,
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF00E5FF).withOpacity(0.15),
+            color: const Color(0xFFE50914).withOpacity(0.1),
             blurRadius: 8,
             spreadRadius: 0,
           ),
         ],
       ),
       child: NavigationBar(
-        selectedIndex: _currentIndex < 5 ? _currentIndex : -1,
+        selectedIndex: _currentIndex,
         onDestinationSelected: (index) {
           setState(() {
             _currentIndex = index;
           });
         },
-        backgroundColor: const Color(0xFF121212),
-        indicatorColor: const Color(0xFF00E5FF).withOpacity(0.15),
+        backgroundColor: isDark ? const Color(0xFF121212) : Colors.white,
+        indicatorColor: const Color(0xFFE50914).withOpacity(0.12),
         height: 64,
         destinations: [
           NavigationDestination(
-            icon: const Icon(Icons.home_outlined, color: Colors.grey),
-            selectedIcon: const Icon(Icons.home, color: Color(0xFF00E5FF)),
+            icon: Icon(Icons.home_outlined, color: isDark ? Colors.grey : Colors.grey.shade600),
+            selectedIcon: const Icon(Icons.home, color: Color(0xFFE50914)),
             label: appConfig.translate('home'),
           ),
           NavigationDestination(
-            icon: const Icon(Icons.movie_outlined, color: Colors.grey),
-            selectedIcon: const Icon(Icons.movie, color: Color(0xFF00E5FF)),
+            icon: Icon(Icons.movie_outlined, color: isDark ? Colors.grey : Colors.grey.shade600),
+            selectedIcon: const Icon(Icons.movie, color: Color(0xFFE50914)),
             label: appConfig.translate('movies'),
           ),
           NavigationDestination(
-            icon: const Icon(Icons.tv_outlined, color: Colors.grey),
-            selectedIcon: const Icon(Icons.tv, color: Color(0xFF00E5FF)),
+            icon: Icon(Icons.tv_outlined, color: isDark ? Colors.grey : Colors.grey.shade600),
+            selectedIcon: const Icon(Icons.tv, color: Color(0xFFE50914)),
             label: appConfig.translate('series'),
           ),
           NavigationDestination(
-            icon: const Icon(Icons.bookmark_outline, color: Colors.grey),
-            selectedIcon: const Icon(Icons.bookmark, color: Color(0xFF00E5FF)),
+            icon: Icon(Icons.bookmark_outline, color: isDark ? Colors.grey : Colors.grey.shade600),
+            selectedIcon: const Icon(Icons.bookmark, color: Color(0xFFE50914)),
             label: appConfig.translate('bookmarks'),
           ),
           NavigationDestination(
-            icon: const Icon(Icons.settings_outlined, color: Colors.grey),
-            selectedIcon: const Icon(Icons.settings, color: Color(0xFF00E5FF)),
+            icon: Icon(Icons.settings_outlined, color: isDark ? Colors.grey : Colors.grey.shade600),
+            selectedIcon: const Icon(Icons.settings, color: Color(0xFFE50914)),
             label: appConfig.translate('settings'),
           ),
         ],
@@ -163,71 +129,26 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildDrawer(AppConfig appConfig, ThemeData theme) {
-    final menuItems = [
-      _MenuItem(
-        icon: Icons.home_outlined,
-        activeIcon: Icons.home,
-        title: appConfig.translate('home'),
-        index: 0,
-      ),
-      _MenuItem(
-        icon: Icons.movie_outlined,
-        activeIcon: Icons.movie,
-        title: appConfig.translate('movies'),
-        index: 1,
-      ),
-      _MenuItem(
-        icon: Icons.tv_outlined,
-        activeIcon: Icons.tv,
-        title: appConfig.translate('series'),
-        index: 2,
-      ),
-      _MenuItem(
-        icon: Icons.bookmark_outline,
-        activeIcon: Icons.bookmark,
-        title: appConfig.translate('bookmarks'),
-        index: 3,
-      ),
-      _MenuItem(
-        icon: Icons.category_outlined,
-        activeIcon: Icons.category,
-        title: appConfig.translate('genres_tags_collections'),
-        index: 4,
-      ),
-      _MenuItem(
-        icon: Icons.download_outlined,
-        activeIcon: Icons.download,
-        title: appConfig.translate('downloads'),
-        index: 5,
-      ),
-      _MenuItem(
-        icon: Icons.settings_outlined,
-        activeIcon: Icons.settings,
-        title: appConfig.translate('settings'),
-        index: 6,
-      ),
-      _MenuItem(
-        icon: Icons.person_outline,
-        activeIcon: Icons.person,
-        title: appConfig.translate('register'),
-        index: 7,
-      ),
-    ];
+    final isDark = theme.brightness == Brightness.dark;
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final subTextColor = isDark ? Colors.white54 : Colors.black54;
+    final bgDrawer = isDark ? const Color(0xFF121212) : Colors.white;
+    final bgHeader = isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade100;
 
     return Drawer(
-      backgroundColor: const Color(0xFF121212),
+      backgroundColor: bgDrawer,
       child: SafeArea(
         child: Column(
           children: [
-            // Drawer Header with neon accent
+            // Drawer Header
             Container(
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
               decoration: BoxDecoration(
-                color: const Color(0xFF1A1A2E),
+                color: bgHeader,
                 border: Border(
                   bottom: BorderSide(
-                    color: const Color(0xFF00E5FF).withOpacity(0.3),
+                    color: const Color(0xFFE50914).withOpacity(0.3),
                     width: 1,
                   ),
                 ),
@@ -239,10 +160,10 @@ class _HomePageState extends State<HomePage> {
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: const Color(0xFF00E5FF).withOpacity(0.15),
+                      color: const Color(0xFFE50914).withOpacity(0.15),
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFF00E5FF).withOpacity(0.3),
+                          color: const Color(0xFFE50914).withOpacity(0.3),
                           blurRadius: 12,
                           spreadRadius: 2,
                         ),
@@ -251,14 +172,14 @@ class _HomePageState extends State<HomePage> {
                     child: const Icon(
                       Icons.play_circle_fill,
                       size: 40,
-                      color: Color(0xFF00E5FF),
+                      color: Color(0xFFE50914),
                     ),
                   ),
                   const SizedBox(height: 12),
-                  const Text(
+                  Text(
                     'CM Movies',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: textColor,
                       fontSize: 22,
                       fontWeight: FontWeight.bold,
                     ),
@@ -267,7 +188,7 @@ class _HomePageState extends State<HomePage> {
                   Text(
                     'Version 1.0.0',
                     style: TextStyle(
-                      color: Colors.white54,
+                      color: subTextColor,
                       fontSize: 12,
                     ),
                   ),
@@ -275,51 +196,94 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
 
-            // Menu Items
+            // Menu Items - Only non-bottom-nav items
             Expanded(
-              child: ListView.builder(
+              child: ListView(
                 padding: const EdgeInsets.symmetric(vertical: 8),
-                itemCount: menuItems.length,
-                itemBuilder: (context, index) {
-                  final item = menuItems[index];
-                  final isSelected = _currentIndex == item.index;
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    child: ListTile(
-                      leading: Icon(
-                        isSelected ? item.activeIcon : item.icon,
-                        color: isSelected
-                            ? const Color(0xFF00E5FF)
-                            : Colors.white70,
-                        size: 22,
-                      ),
-                      title: Text(
-                        item.title,
-                        style: TextStyle(
-                          color: isSelected
-                              ? const Color(0xFF00E5FF)
-                              : Colors.white,
-                          fontWeight:
-                              isSelected ? FontWeight.bold : FontWeight.normal,
-                          fontSize: 14,
-                        ),
-                      ),
-                      selected: isSelected,
-                      selectedTileColor:
-                          const Color(0xFF00E5FF).withOpacity(0.1),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        side: isSelected
-                            ? BorderSide(
-                                color: const Color(0xFF00E5FF).withOpacity(0.3),
-                                width: 1,
-                              )
-                            : BorderSide.none,
-                      ),
-                      onTap: () => _navigateDrawerTo(item.index),
+                children: [
+                  // Genres/Tags/Collections
+                  _buildDrawerItem(
+                    icon: Icons.category_outlined,
+                    activeIcon: Icons.category,
+                    title: appConfig.translate('genres_tags_collections'),
+                    isDark: isDark,
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const GenresTagsCollectionsPage()),
+                      );
+                    },
+                  ),
+
+                  // Downloads
+                  _buildDrawerItem(
+                    icon: Icons.download_outlined,
+                    activeIcon: Icons.download,
+                    title: appConfig.translate('downloads'),
+                    isDark: isDark,
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const DownloadPage()),
+                      );
+                    },
+                  ),
+
+                  const Divider(height: 24),
+
+                  // Profile (if logged in)
+                  if (appConfig.isLoggedIn)
+                    _buildDrawerItem(
+                      icon: Icons.person_outline,
+                      activeIcon: Icons.person,
+                      title: appConfig.translate('profile'),
+                      isDark: isDark,
+                      onTap: () {
+                        Navigator.pop(context);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const ProfilePage()),
+                        );
+                      },
                     ),
-                  );
-                },
+
+                  // Login / Logout
+                  if (appConfig.isLoggedIn)
+                    _buildDrawerItem(
+                      icon: Icons.logout,
+                      activeIcon: Icons.logout,
+                      title: appConfig.translate('logout'),
+                      isDark: isDark,
+                      onTap: () async {
+                        Navigator.pop(context);
+                        await appConfig.logoutUser();
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(appConfig.translate('logout')),
+                              backgroundColor: Colors.orange,
+                            ),
+                          );
+                        }
+                      },
+                    )
+                  else
+                    _buildDrawerItem(
+                      icon: Icons.login,
+                      activeIcon: Icons.login,
+                      title: appConfig.translate('login'),
+                      isDark: isDark,
+                      onTap: () {
+                        Navigator.pop(context);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const LoginPage()),
+                        );
+                      },
+                    ),
+                ],
               ),
             ),
 
@@ -329,7 +293,7 @@ class _HomePageState extends State<HomePage> {
               child: Text(
                 'CM Movies v1.0.0',
                 style: TextStyle(
-                  color: Colors.white24,
+                  color: subTextColor,
                   fontSize: 11,
                 ),
               ),
@@ -339,18 +303,38 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
-}
 
-class _MenuItem {
-  final IconData icon;
-  final IconData activeIcon;
-  final String title;
-  final int index;
-
-  _MenuItem({
-    required this.icon,
-    required this.activeIcon,
-    required this.title,
-    required this.index,
-  });
+  Widget _buildDrawerItem({
+    required IconData icon,
+    required IconData activeIcon,
+    required String title,
+    required bool isDark,
+    required VoidCallback onTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      child: ListTile(
+        leading: Icon(
+          icon,
+          color: isDark ? Colors.white70 : Colors.black54,
+          size: 22,
+        ),
+        title: Text(
+          title,
+          style: TextStyle(
+            color: isDark ? Colors.white : Colors.black87,
+            fontSize: 14,
+          ),
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+          side: BorderSide(
+            color: const Color(0xFFE50914).withOpacity(0.1),
+            width: 1,
+          ),
+        ),
+        onTap: onTap,
+      ),
+    );
+  }
 }
