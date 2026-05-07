@@ -131,49 +131,30 @@ class _HomePageState extends State<HomePage> {
         backgroundColor: const Color(0xFF121212),
         indicatorColor: const Color(0xFF00E5FF).withOpacity(0.15),
         height: 64,
-        iconTheme: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) {
-            return const IconThemeData(color: Color(0xFF00E5FF));
-          }
-          return const IconThemeData(color: Colors.grey);
-        }),
-        labelTextStyle: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) {
-            return const TextStyle(
-              color: Color(0xFF00E5FF),
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-            );
-          }
-          return const TextStyle(
-            color: Colors.grey,
-            fontSize: 11,
-          );
-        }),
         destinations: [
           NavigationDestination(
-            icon: const Icon(Icons.home_outlined),
-            selectedIcon: const Icon(Icons.home),
+            icon: const Icon(Icons.home_outlined, color: Colors.grey),
+            selectedIcon: const Icon(Icons.home, color: Color(0xFF00E5FF)),
             label: appConfig.translate('home'),
           ),
           NavigationDestination(
-            icon: const Icon(Icons.movie_outlined),
-            selectedIcon: const Icon(Icons.movie),
+            icon: const Icon(Icons.movie_outlined, color: Colors.grey),
+            selectedIcon: const Icon(Icons.movie, color: Color(0xFF00E5FF)),
             label: appConfig.translate('movies'),
           ),
           NavigationDestination(
-            icon: const Icon(Icons.tv_outlined),
-            selectedIcon: const Icon(Icons.tv),
+            icon: const Icon(Icons.tv_outlined, color: Colors.grey),
+            selectedIcon: const Icon(Icons.tv, color: Color(0xFF00E5FF)),
             label: appConfig.translate('series'),
           ),
           NavigationDestination(
-            icon: const Icon(Icons.bookmark_outline),
-            selectedIcon: const Icon(Icons.bookmark),
+            icon: const Icon(Icons.bookmark_outline, color: Colors.grey),
+            selectedIcon: const Icon(Icons.bookmark, color: Color(0xFF00E5FF)),
             label: appConfig.translate('bookmarks'),
           ),
           NavigationDestination(
-            icon: const Icon(Icons.settings_outlined),
-            selectedIcon: const Icon(Icons.settings),
+            icon: const Icon(Icons.settings_outlined, color: Colors.grey),
+            selectedIcon: const Icon(Icons.settings, color: Color(0xFF00E5FF)),
             label: appConfig.translate('settings'),
           ),
         ],
