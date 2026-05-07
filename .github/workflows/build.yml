@@ -24,12 +24,13 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          flutter-version: '3.24.5' # လက်ရှိ stable version တစ်ခုကို သတ်မှတ်ပေးလိုက်ပါမယ်
 
       - name: Get dependencies
         run: flutter pub get
 
       - name: Build APK
-        # ဤနေရာတွင် Gradle version အဟောင်းကို လက်ခံရန် --no-pub ထည့်သွင်းထားသည်
+        # Gradle ပြဿနာကို ကျော်ဖြတ်ဖို့ build command ကို ပြင်လိုက်ပါတယ်
         run: flutter build apk --release --no-tree-shake-icons
 
       - name: Upload APK
