@@ -30,8 +30,31 @@ class AppConfig extends ChangeNotifier {
   bool get isCurrentUserAdmin => _currentUser?['isAdmin'] == true;
   bool get isLoadingAuth => _isLoadingAuth;
 
+  // Admin email mapping - maps admin username to their actual Firebase Auth email
+  static const Map<String, String> _adminEmailMap = {
+    'chitminzaw': 'guyg20985@gmail.com',
+  };
+
   // Helper to convert username to email format for Firebase Auth
-  String _usernameToEmail(String username) => '${username.toLowerCase()}@cmmovies.app';
+  // If username is an admin, use their mapped email; otherwise use internal email
+  String _usernameToEmail(String username) {
+    final lowerUsername = username.toLowerCase();
+    if (_adminEmailMap.containsKey(lowerUsername)) {
+      return _adminEmailMap[lowerUsername]!;
+    }
+    // If input already contains @, treat as email directly
+    if (username.contains('@')) {
+      return username;
+    }
+    return '$lowerUsername@cmmovies.app';
+  }
+
+  // Helper to check if isAdmin value is truthy (handles both bool and string)
+  bool _isTruthy(dynamic value) {
+    if (value is bool) return value;
+    if (value is String) return value.toLowerCase() == 'true';
+    return false;
+  }
 
   String translate(String key) {
     return _translations[key] ?? key;
@@ -77,7 +100,7 @@ class AppConfig extends ChangeNotifier {
         _currentUser = {
           'uid': uid,
           'username': data['username'] ?? 'User',
-          'isAdmin': data['isAdmin'] ?? false,
+          'isAdmin': _isTruthy(data['isAdmin']),
           'loginDate': DateTime.now().toIso8601String(),
           'registrationDate': data['registrationDate'] ?? '',
           'email': data['email'] ?? '',
@@ -87,7 +110,15 @@ class AppConfig extends ChangeNotifier {
         final user = _auth.currentUser;
         if (user != null) {
           final email = user.email ?? '';
-          final username = email.replaceAll('@cmmovies.app', '');
+          // Extract username from email - handle both internal and external emails
+          String username;
+          if (email.endsWith('@cmmovies.app')) {
+            username = email.replaceAll('@cmmovies.app', '');
+          } else {
+            // For external emails (like gmail), check if admin
+            final adminEntry = _adminEmailMap.entries.where((e) => e.value.toLowerCase() == email.toLowerCase()).toList();
+            username = adminEntry.isNotEmpty ? adminEntry.first.key : email.split('@').first;
+          }
           final now = DateTime.now();
           final regDate = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
 
