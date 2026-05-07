@@ -2,9 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/ui/home/home_screen.dart';
-import 'package:cm_movies/app/ui/home/library_page.dart';
-import 'package:cm_movies/app/ui/screens/search_screen.dart';
+import 'package:cm_movies/app/ui/screens/movies_page.dart';
+import 'package:cm_movies/app/ui/screens/series_page.dart';
 import 'package:cm_movies/app/ui/screens/movie_bookmark_screen.dart';
+import 'package:cm_movies/app/ui/screens/genres_tags_collections_page.dart';
+import 'package:cm_movies/app/ui/screens/download_page.dart';
+import 'package:cm_movies/app/ui/screens/settings_page.dart';
+import 'package:cm_movies/app/ui/screens/register_page.dart';
+import 'package:cm_movies/app/ui/screens/search_screen.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -18,148 +23,216 @@ class _HomePageState extends State<HomePage> {
 
   final List<Widget> _pages = const [
     HomeScreen(),
-    LibraryPage(),
-    SearchScreen(),
+    MoviesPage(),
+    SeriesPage(),
     MovieBookmarkScreen(),
-    _SettingsPage(),
+    GenresTagsCollectionsPage(),
+    DownloadPage(),
+    SettingsPage(),
+    RegisterPage(),
   ];
 
-  @override
-  Widget build(BuildContext context) {
-    final appConfig = Provider.of<AppConfig>(context);
-    return Scaffold(
-      body: IndexedStack(
-        index: _currentIndex,
-        children: _pages,
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
-        onDestinationSelected: (index) {
-          setState(() {
-            _currentIndex = index;
-          });
-        },
-        backgroundColor: Theme.of(context).colorScheme.surface,
-        indicatorColor: Theme.of(context).colorScheme.primaryContainer,
-        destinations: [
-          NavigationDestination(
-            icon: const Icon(Icons.home_outlined),
-            selectedIcon: const Icon(Icons.home),
-            label: appConfig.translate('home'),
-          ),
-          NavigationDestination(
-            icon: const Icon(Icons.movie_outlined),
-            selectedIcon: const Icon(Icons.movie),
-            label: appConfig.translate('movies'),
-          ),
-          NavigationDestination(
-            icon: const Icon(Icons.search_outlined),
-            selectedIcon: const Icon(Icons.search),
-            label: appConfig.translate('search'),
-          ),
-          NavigationDestination(
-            icon: const Icon(Icons.bookmark_outline),
-            selectedIcon: const Icon(Icons.bookmark),
-            label: appConfig.translate('bookmarks'),
-          ),
-          NavigationDestination(
-            icon: const Icon(Icons.settings_outlined),
-            selectedIcon: const Icon(Icons.settings),
-            label: appConfig.translate('settings'),
-          ),
-        ],
-      ),
-    );
+  void _navigateTo(int index) {
+    Navigator.pop(context); // Close drawer
+    setState(() {
+      _currentIndex = index;
+    });
   }
-}
-
-class _SettingsPage extends StatelessWidget {
-  const _SettingsPage();
 
   @override
   Widget build(BuildContext context) {
     final appConfig = Provider.of<AppConfig>(context);
     final theme = Theme.of(context);
+
     return Scaffold(
       appBar: AppBar(
-        title: Text(appConfig.translate('settings')),
-      ),
-      body: ListView(
-        children: [
-          // Theme Section
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Text(
-              appConfig.translate('theme'),
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
+        leading: Builder(
+          builder: (context) => IconButton(
+            icon: const Icon(Icons.menu),
+            onPressed: () => Scaffold.of(context).openDrawer(),
           ),
-          SwitchListTile(
-            secondary: Icon(
-              appConfig.isDarkMode ? Icons.dark_mode : Icons.light_mode,
-            ),
-            title: Text(appConfig.translate('dark_mode')),
-            value: appConfig.isDarkMode,
-            onChanged: (val) {
-              appConfig.setThemeMode(val ? ThemeMode.dark : ThemeMode.light);
+        ),
+        title: Text(
+          appConfig.translate('app_name'),
+          style: theme.textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.search),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SearchScreen()),
+              );
             },
-          ),
-          const Divider(),
-
-          // Language Section
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Text(
-              appConfig.translate('language'),
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          RadioListTile<String>(
-            title: const Text('မြန်မာ'),
-            subtitle: const Text('Myanmar'),
-            value: 'my',
-            groupValue: appConfig.languageCode,
-            onChanged: (val) {
-              if (val != null) appConfig.setLanguage(val);
-            },
-          ),
-          RadioListTile<String>(
-            title: const Text('English'),
-            subtitle: const Text('English'),
-            value: 'en',
-            groupValue: appConfig.languageCode,
-            onChanged: (val) {
-              if (val != null) appConfig.setLanguage(val);
-            },
-          ),
-          const Divider(),
-
-          // About Section
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Text(
-              appConfig.translate('about_app'),
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          ListTile(
-            leading: const Icon(Icons.info_outline),
-            title: Text(appConfig.translate('app_name')),
-            subtitle: Text('${appConfig.translate('version')}: 1.0.0'),
-          ),
-          ListTile(
-            leading: const Icon(Icons.tv),
-            title: const Text('HomieTV'),
-            subtitle: const Text('www.homietv.com'),
           ),
         ],
       ),
+      drawer: _buildDrawer(appConfig, theme),
+      body: IndexedStack(
+        index: _currentIndex,
+        children: _pages,
+      ),
     );
   }
+
+  Widget _buildDrawer(AppConfig appConfig, ThemeData theme) {
+    final menuItems = [
+      _MenuItem(
+        icon: Icons.home_outlined,
+        activeIcon: Icons.home,
+        title: appConfig.translate('home'),
+        index: 0,
+      ),
+      _MenuItem(
+        icon: Icons.movie_outlined,
+        activeIcon: Icons.movie,
+        title: appConfig.translate('movies'),
+        index: 1,
+      ),
+      _MenuItem(
+        icon: Icons.tv_outlined,
+        activeIcon: Icons.tv,
+        title: appConfig.translate('series'),
+        index: 2,
+      ),
+      _MenuItem(
+        icon: Icons.bookmark_outline,
+        activeIcon: Icons.bookmark,
+        title: appConfig.translate('bookmarks'),
+        index: 3,
+      ),
+      _MenuItem(
+        icon: Icons.category_outlined,
+        activeIcon: Icons.category,
+        title: appConfig.translate('genres_tags_collections'),
+        index: 4,
+      ),
+      _MenuItem(
+        icon: Icons.download_outlined,
+        activeIcon: Icons.download,
+        title: appConfig.translate('downloads'),
+        index: 5,
+      ),
+      _MenuItem(
+        icon: Icons.settings_outlined,
+        activeIcon: Icons.settings,
+        title: appConfig.translate('settings'),
+        index: 6,
+      ),
+      _MenuItem(
+        icon: Icons.person_outline,
+        activeIcon: Icons.person,
+        title: appConfig.translate('register'),
+        index: 7,
+      ),
+    ];
+
+    return Drawer(
+      child: SafeArea(
+        child: Column(
+          children: [
+            // Drawer Header
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primaryContainer,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.play_circle_fill,
+                    size: 48,
+                    color: theme.colorScheme.primary,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    appConfig.translate('app_name'),
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: theme.colorScheme.onPrimaryContainer,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${appConfig.translate("version")}: 1.0.0',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onPrimaryContainer.withOpacity(0.7),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Menu Items
+            Expanded(
+              child: ListView.builder(
+                padding: EdgeInsets.zero,
+                itemCount: menuItems.length,
+                itemBuilder: (context, index) {
+                  final item = menuItems[index];
+                  final isSelected = _currentIndex == item.index;
+                  return ListTile(
+                    leading: Icon(
+                      isSelected ? item.activeIcon : item.icon,
+                      color: isSelected
+                          ? theme.colorScheme.primary
+                          : theme.colorScheme.onSurface.withOpacity(0.7),
+                    ),
+                    title: Text(
+                      item.title,
+                      style: TextStyle(
+                        color: isSelected
+                            ? theme.colorScheme.primary
+                            : theme.colorScheme.onSurface,
+                        fontWeight:
+                            isSelected ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                    selected: isSelected,
+                    selectedTileColor:
+                        theme.colorScheme.primaryContainer.withOpacity(0.3),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    onTap: () => _navigateTo(item.index),
+                  );
+                },
+              ),
+            ),
+
+            // Footer
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                'CM Movies v1.0.0',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurface.withOpacity(0.4),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MenuItem {
+  final IconData icon;
+  final IconData activeIcon;
+  final String title;
+  final int index;
+
+  _MenuItem({
+    required this.icon,
+    required this.activeIcon,
+    required this.title,
+    required this.index,
+  });
 }

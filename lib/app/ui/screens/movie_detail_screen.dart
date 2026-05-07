@@ -463,6 +463,40 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
 
   Widget _buildDownloadTab(
       MovieDetail detail, AppConfig appConfig, ThemeData theme) {
+    // Check if downloads are disabled
+    if (!appConfig.downloadEnabled) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.download_disabled,
+              size: 64,
+              color: theme.colorScheme.onSurface.withOpacity(0.3),
+            ),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Text(
+                appConfig.translate('download_disabled_msg'),
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyLarge?.copyWith(
+                  color: theme.colorScheme.onSurface.withOpacity(0.5),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: () {
+                appConfig.setDownloadEnabled(true);
+              },
+              icon: const Icon(Icons.download_rounded),
+              label: Text(appConfig.translate('download_toggle')),
+            ),
+          ],
+        ),
+      );
+    }
     if (detail.downloadLinks.isEmpty) {
       return Center(
         child: Text(
