@@ -192,7 +192,7 @@ class _SearchScreenState extends State<SearchScreen> {
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 Icon(
-                                  Icons.movie_search_outlined,
+                                  Icons.movie_filter_outlined,
                                   size: 64,
                                   color:
                                       theme.colorScheme.onSurface.withOpacity(0.3),
