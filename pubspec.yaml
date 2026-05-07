@@ -1,0 +1,22 @@
+name: cm_movies
+description: CM Movies App
+version: 1.0.0
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.1.0
+  provider: ^6.1.1
+  shared_preferences: ^2.2.2
+  cached_network_image: ^3.3.0
+  flutter_html: ^3.0.0-beta.2
+  url_launcher: ^6.2.2
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/lang/
+    - assets/

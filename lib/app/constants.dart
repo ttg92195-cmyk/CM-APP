@@ -1,0 +1,10 @@
+const String hostUrl = 'https://www.homietv.com';
+const String apiMovieUrl = '$hostUrl/api/movies';
+const String apiMovieTagsUrl = '$hostUrl/api/movie-tags';
+const String apiMovieGenresUrl = '$hostUrl/api/movie-genres';
+const String apiTvShowUrl = '$hostUrl/api/tv-shows';
+const String apiSearchUrl = '$hostUrl/api/search?keyword';
+const String apiMovieTrendingUrl = '$hostUrl/api/trending/movies';
+const String apiTvShowTrendingUrl = '$hostUrl/api/trending/tv-shows';
+const String apiMovieYearsUrl = '$hostUrl/api/movie-years';
+const String apiMovieByYearUrl = '$hostUrl/api/movies-by-year';
