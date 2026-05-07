@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
+import 'package:cm_movies/app/core/services/bookmark_service.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
@@ -158,7 +159,7 @@ class SettingsPage extends StatelessWidget {
                                 ),
                               ),
                               Text(
-                                'Logged in as Chitminzaw',
+                                'Logged in as ${appConfig.currentUsername ?? "Admin"}',
                                 style: theme.textTheme.bodySmall?.copyWith(
                                   color: theme.colorScheme.onSurface.withOpacity(0.6),
                                 ),
@@ -206,7 +207,7 @@ class SettingsPage extends StatelessWidget {
   }
 }
 
-// Admin Login Form Widget
+// Admin Login Form Widget - Now uses Firebase Auth
 class _AdminLoginForm extends StatefulWidget {
   @override
   State<_AdminLoginForm> createState() => _AdminLoginFormState();
@@ -240,7 +241,6 @@ class _AdminLoginFormState extends State<_AdminLoginForm> {
     }
 
     setState(() => _isLoggingIn = true);
-    await Future.delayed(const Duration(milliseconds: 500));
 
     final appConfig = Provider.of<AppConfig>(context, listen: false);
     final success = await appConfig.loginUser(username, password);
@@ -248,6 +248,10 @@ class _AdminLoginFormState extends State<_AdminLoginForm> {
     if (mounted) {
       setState(() => _isLoggingIn = false);
       if (success && appConfig.isCurrentUserAdmin) {
+        // Merge local bookmarks to cloud
+        final bookmarkService = BookmarkService();
+        await bookmarkService.mergeLocalBookmarksToCloud();
+
         _usernameController.clear();
         _passwordController.clear();
         ScaffoldMessenger.of(context).showSnackBar(
@@ -270,7 +274,6 @@ class _AdminLoginFormState extends State<_AdminLoginForm> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -427,6 +430,8 @@ class _AboutCMMoviesPage extends StatelessWidget {
             _buildFeatureCard(theme, Icons.search, 'Smart Search', 'Find movies by title, genre, or tag'),
             const SizedBox(height: 12),
             _buildFeatureCard(theme, Icons.bookmark, 'Bookmarks', 'Save your favorite movies for later'),
+            const SizedBox(height: 12),
+            _buildFeatureCard(theme, Icons.cloud_done, 'Cloud Sync', 'Sync bookmarks across devices with Firebase'),
             const SizedBox(height: 12),
             _buildFeatureCard(theme, Icons.language, 'Multi-Language', 'Supports Myanmar and English'),
             const SizedBox(height: 40),

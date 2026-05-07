@@ -1,72 +1,120 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class AppConfig extends ChangeNotifier {
   static const String _themeKey = 'app_theme';
   static const String _langKey = 'app_language';
   static const String _downloadEnabledKey = 'download_enabled';
-  static const String _adminLoggedInKey = 'admin_logged_in';
-  static const String _registeredUsersKey = 'registered_users';
-  static const String _currentUserKey = 'current_user';
+
+  // Firebase instances
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   ThemeMode _themeMode = ThemeMode.dark;
   String _languageCode = 'my';
   Map<String, String> _translations = {};
   bool _downloadEnabled = true;
-  bool _adminLoggedIn = false;
-  List<Map<String, String>> _registeredUsers = [];
-  Map<String, dynamic>? _currentUser; // {username, isAdmin, loginDate, registrationDate}
+  Map<String, dynamic>? _currentUser;
+  bool _isLoadingAuth = true;
 
   ThemeMode get themeMode => _themeMode;
   String get languageCode => _languageCode;
   bool get isDarkMode => _themeMode == ThemeMode.dark;
   bool get downloadEnabled => _downloadEnabled;
-  bool get adminLoggedIn => _adminLoggedIn;
-  List<Map<String, String>> get registeredUsers => _registeredUsers;
   Map<String, dynamic>? get currentUser => _currentUser;
   bool get isLoggedIn => _currentUser != null;
   String? get currentUsername => _currentUser?['username'] as String?;
   bool get isCurrentUserAdmin => _currentUser?['isAdmin'] == true;
+  bool get isLoadingAuth => _isLoadingAuth;
+
+  // Helper to convert username to email format for Firebase Auth
+  String _usernameToEmail(String username) => '${username.toLowerCase()}@cmmovies.app';
 
   String translate(String key) {
     return _translations[key] ?? key;
   }
 
   AppConfig() {
-    _loadConfig();
+    _initAuth();
   }
 
-  Future<void> _loadConfig() async {
+  Future<void> _initAuth() async {
+    // Load local preferences first
+    await _loadLocalConfig();
+
+    // Listen to Firebase Auth state changes
+    _auth.authStateChanges().listen((User? user) async {
+      if (user != null) {
+        // User is signed in - load profile from Firestore
+        await _loadUserProfile(user.uid);
+      } else {
+        // User is signed out
+        _currentUser = null;
+        _isLoadingAuth = false;
+        notifyListeners();
+      }
+    });
+  }
+
+  Future<void> _loadLocalConfig() async {
     final prefs = await SharedPreferences.getInstance();
     final themeIndex = prefs.getInt(_themeKey) ?? ThemeMode.dark.index;
     _themeMode = ThemeMode.values[themeIndex];
     _languageCode = prefs.getString(_langKey) ?? 'my';
     _downloadEnabled = prefs.getBool(_downloadEnabledKey) ?? true;
-    _adminLoggedIn = prefs.getBool(_adminLoggedInKey) ?? false;
-
-    // Load registered users
-    final usersJson = prefs.getString(_registeredUsersKey);
-    if (usersJson != null) {
-      try {
-        final decoded = json.decode(usersJson) as List;
-        _registeredUsers = decoded.map((u) => Map<String, String>.from(u as Map)).toList();
-      } catch (_) {
-        _registeredUsers = [];
-      }
-    }
-
-    // Load current user
-    final currentUserJson = prefs.getString(_currentUserKey);
-    if (currentUserJson != null) {
-      try {
-        _currentUser = json.decode(currentUserJson) as Map<String, dynamic>;
-      } catch (_) {
-        _currentUser = null;
-      }
-    }
-
     await _loadTranslations();
+    notifyListeners();
+  }
+
+  Future<void> _loadUserProfile(String uid) async {
+    try {
+      final doc = await _firestore.collection('users').doc(uid).get();
+      if (doc.exists) {
+        final data = doc.data()!;
+        _currentUser = {
+          'uid': uid,
+          'username': data['username'] ?? 'User',
+          'isAdmin': data['isAdmin'] ?? false,
+          'loginDate': DateTime.now().toIso8601String(),
+          'registrationDate': data['registrationDate'] ?? '',
+          'email': data['email'] ?? '',
+        };
+      } else {
+        // Firestore doc doesn't exist yet, create from Firebase Auth user
+        final user = _auth.currentUser;
+        if (user != null) {
+          final email = user.email ?? '';
+          final username = email.replaceAll('@cmmovies.app', '');
+          final now = DateTime.now();
+          final regDate = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+
+          _currentUser = {
+            'uid': uid,
+            'username': username,
+            'isAdmin': false,
+            'loginDate': now.toIso8601String(),
+            'registrationDate': regDate,
+            'email': email,
+          };
+
+          // Create Firestore doc
+          await _firestore.collection('users').doc(uid).set({
+            'username': username,
+            'email': email,
+            'isAdmin': false,
+            'registrationDate': regDate,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading user profile: $e');
+      _currentUser = null;
+    }
+    _isLoadingAuth = false;
     notifyListeners();
   }
 
@@ -96,100 +144,89 @@ class AppConfig extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setAdminLoggedIn(bool loggedIn) async {
-    _adminLoggedIn = loggedIn;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_adminLoggedInKey, loggedIn);
-    if (loggedIn) {
-      _currentUser = {
-        'username': 'Chitminzaw',
-        'isAdmin': true,
-        'loginDate': DateTime.now().toIso8601String(),
-        'registrationDate': 'Admin',
-      };
-      await prefs.setString(_currentUserKey, json.encode(_currentUser));
-    } else {
-      _currentUser = null;
-      await prefs.remove(_currentUserKey);
-    }
-    notifyListeners();
-  }
+  // ========== Firebase Auth Methods ==========
 
-  // Register a new user
+  // Register a new user with Firebase Auth
   Future<bool> registerUser(String username, String password) async {
-    // Check if username already exists
-    final exists = _registeredUsers.any((u) => u['username']?.toLowerCase() == username.toLowerCase());
-    if (exists) return false;
+    try {
+      final email = _usernameToEmail(username);
 
-    final now = DateTime.now();
-    final regDate = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      // Create user in Firebase Auth
+      final userCredential = await _auth.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
 
-    _registeredUsers.add({
-      'username': username,
-      'password': password,
-      'registrationDate': regDate,
-    });
+      final user = userCredential.user;
+      if (user == null) return false;
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_registeredUsersKey, json.encode(_registeredUsers));
+      final now = DateTime.now();
+      final regDate = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
 
-    // Auto login after registration
-    _currentUser = {
-      'username': username,
-      'isAdmin': false,
-      'loginDate': now.toIso8601String(),
-      'registrationDate': regDate,
-    };
-    await prefs.setString(_currentUserKey, json.encode(_currentUser));
+      // Create user profile in Firestore
+      await _firestore.collection('users').doc(user.uid).set({
+        'username': username,
+        'email': email,
+        'isAdmin': false,
+        'registrationDate': regDate,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
 
-    notifyListeners();
-    return true;
-  }
-
-  // Login user (regular or admin)
-  Future<bool> loginUser(String username, String password) async {
-    // Check admin credentials
-    if (username == 'Chitminzaw' && password == 'Chitmin7') {
-      _adminLoggedIn = true;
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(_adminLoggedInKey, true);
+      // Update current user
       _currentUser = {
-        'username': 'Chitminzaw',
-        'isAdmin': true,
-        'loginDate': DateTime.now().toIso8601String(),
-        'registrationDate': 'Admin',
+        'uid': user.uid,
+        'username': username,
+        'isAdmin': false,
+        'loginDate': now.toIso8601String(),
+        'registrationDate': regDate,
+        'email': email,
       };
-      await prefs.setString(_currentUserKey, json.encode(_currentUser));
+
       notifyListeners();
       return true;
+    } on FirebaseAuthException catch (e) {
+      debugPrint('Register error: ${e.code} - ${e.message}');
+      return false;
+    } catch (e) {
+      debugPrint('Register error: $e');
+      return false;
     }
+  }
 
-    // Check registered users
-    final match = _registeredUsers.where(
-      (u) => u['username'] == username && u['password'] == password,
-    ).toList();
+  // Login user with Firebase Auth (regular or admin)
+  Future<bool> loginUser(String username, String password) async {
+    try {
+      final email = _usernameToEmail(username);
 
-    if (match.isEmpty) return false;
+      // Sign in with Firebase Auth
+      final userCredential = await _auth.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
 
-    _currentUser = {
-      'username': match.first['username'],
-      'isAdmin': false,
-      'loginDate': DateTime.now().toIso8601String(),
-      'registrationDate': match.first['registrationDate'] ?? '',
-    };
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_currentUserKey, json.encode(_currentUser));
-    notifyListeners();
-    return true;
+      final user = userCredential.user;
+      if (user == null) return false;
+
+      // Load user profile from Firestore
+      await _loadUserProfile(user.uid);
+      return _currentUser != null;
+    } on FirebaseAuthException catch (e) {
+      debugPrint('Login error: ${e.code} - ${e.message}');
+      return false;
+    } catch (e) {
+      debugPrint('Login error: $e');
+      return false;
+    }
   }
 
   // Logout
   Future<void> logoutUser() async {
-    _adminLoggedIn = false;
+    try {
+      await _auth.signOut();
+    } catch (e) {
+      debugPrint('Logout error: $e');
+    }
     _currentUser = null;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_adminLoggedInKey, false);
-    await prefs.remove(_currentUserKey);
     notifyListeners();
   }
 
@@ -197,26 +234,51 @@ class AppConfig extends ChangeNotifier {
   Future<bool> changePassword(String oldPassword, String newPassword) async {
     if (_currentUser == null) return false;
 
-    final username = _currentUser!['username'] as String;
-    final isAdmin = _currentUser!['isAdmin'] as bool;
+    try {
+      final user = _auth.currentUser;
+      if (user == null || user.email == null) return false;
 
-    if (isAdmin) {
-      // Admin password change
-      if (oldPassword != 'Chitmin7') return false;
-      return true; // Admin password is hardcoded, can't really change
+      // Re-authenticate user with old password
+      final credential = EmailAuthProvider.credential(
+        email: user.email!,
+        password: oldPassword,
+      );
+      await user.reauthenticateWithCredential(credential);
+
+      // Update password
+      await user.updatePassword(newPassword);
+      return true;
+    } on FirebaseAuthException catch (e) {
+      debugPrint('Change password error: ${e.code} - ${e.message}');
+      return false;
+    } catch (e) {
+      debugPrint('Change password error: $e');
+      return false;
     }
+  }
 
-    // Regular user password change
-    final userIndex = _registeredUsers.indexWhere(
-      (u) => u['username'] == username && u['password'] == oldPassword,
-    );
-    if (userIndex == -1) return false;
-
-    _registeredUsers[userIndex]['password'] = newPassword;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_registeredUsersKey, json.encode(_registeredUsers));
-    notifyListeners();
-    return true;
+  // Get specific FirebaseAuthException error message
+  String getAuthErrorMessage(String code) {
+    switch (code) {
+      case 'user-not-found':
+        return translate('login_failed');
+      case 'wrong-password':
+        return translate('login_failed');
+      case 'email-already-in-use':
+        return translate('register_failed');
+      case 'weak-password':
+        return 'Password is too weak (at least 6 characters)';
+      case 'invalid-email':
+        return 'Invalid username';
+      case 'user-disabled':
+        return 'This account has been disabled';
+      case 'too-many-requests':
+        return 'Too many attempts. Please try again later';
+      case 'network-request-failed':
+        return 'Network error. Please check your connection';
+      default:
+        return translate('login_failed');
+    }
   }
 
   void toggleTheme() {

@@ -18,6 +18,7 @@ class _ProfilePageState extends State<ProfilePage> {
   bool _obscureOld = true;
   bool _obscureNew = true;
   bool _obscureConfirm = true;
+  bool _isChangingPwd = false;
 
   @override
   void dispose() {
@@ -30,6 +31,7 @@ class _ProfilePageState extends State<ProfilePage> {
   Future<void> _handleChangePassword() async {
     if (!_formKey.currentState!.validate()) return;
 
+    setState(() => _isChangingPwd = true);
     final appConfig = Provider.of<AppConfig>(context, listen: false);
     final success = await appConfig.changePassword(
       _oldPasswordController.text.trim(),
@@ -37,6 +39,7 @@ class _ProfilePageState extends State<ProfilePage> {
     );
 
     if (mounted) {
+      setState(() => _isChangingPwd = false);
       if (success) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -63,6 +66,16 @@ class _ProfilePageState extends State<ProfilePage> {
   Widget build(BuildContext context) {
     final appConfig = Provider.of<AppConfig>(context);
     final theme = Theme.of(context);
+
+    // If still loading auth state
+    if (appConfig.isLoadingAuth) {
+      return Scaffold(
+        appBar: AppBar(
+          title: Text(appConfig.translate('profile')),
+        ),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
 
     // If not logged in, redirect to login
     if (!appConfig.isLoggedIn) {
@@ -95,18 +108,6 @@ class _ProfilePageState extends State<ProfilePage> {
     final username = appConfig.currentUsername ?? 'User';
     final isAdmin = appConfig.isCurrentUserAdmin;
     final regDate = appConfig.currentUser?['registrationDate'] as String? ?? '';
-    final loginDate = appConfig.currentUser?['loginDate'] as String? ?? '';
-
-    // Format the login date nicely
-    String formattedLoginDate = '';
-    if (loginDate.isNotEmpty) {
-      try {
-        final dt = DateTime.parse(loginDate);
-        formattedLoginDate = '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
-      } catch (_) {
-        formattedLoginDate = loginDate;
-      }
-    }
 
     return Scaffold(
       appBar: AppBar(
@@ -244,23 +245,24 @@ class _ProfilePageState extends State<ProfilePage> {
 
             const SizedBox(height: 8),
 
-            // Last Login Date
+            // Cloud Sync Status
             Card(
               child: ListTile(
                 leading: Icon(
-                  Icons.access_time,
-                  color: theme.colorScheme.primary,
+                  Icons.cloud_done_outlined,
+                  color: Colors.green,
                 ),
                 title: Text(
-                  'Last Login',
+                  'Cloud Sync',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurface.withOpacity(0.6),
                   ),
                 ),
                 subtitle: Text(
-                  formattedLoginDate.isNotEmpty ? formattedLoginDate : 'N/A',
+                  'Bookmarks synced to cloud',
                   style: theme.textTheme.bodyLarge?.copyWith(
                     fontWeight: FontWeight.w600,
+                    color: Colors.green,
                   ),
                 ),
               ),
@@ -417,7 +419,7 @@ class _ProfilePageState extends State<ProfilePage> {
                             const SizedBox(width: 12),
                             Expanded(
                               child: FilledButton(
-                                onPressed: _handleChangePassword,
+                                onPressed: _isChangingPwd ? null : _handleChangePassword,
                                 style: FilledButton.styleFrom(
                                   backgroundColor: const Color(0xFFE50914),
                                   padding: const EdgeInsets.symmetric(vertical: 12),
@@ -425,7 +427,16 @@ class _ProfilePageState extends State<ProfilePage> {
                                     borderRadius: BorderRadius.circular(12),
                                   ),
                                 ),
-                                child: Text(appConfig.translate('change_password')),
+                                child: _isChangingPwd
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : Text(appConfig.translate('change_password')),
                               ),
                             ),
                           ],

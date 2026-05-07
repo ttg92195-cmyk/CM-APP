@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
+import 'package:cm_movies/app/core/services/bookmark_service.dart';
 import 'package:cm_movies/app/ui/screens/profile_page.dart';
 
 class LoginPage extends StatefulWidget {
@@ -25,6 +27,8 @@ class _LoginPageState extends State<LoginPage>
   bool _obscureRegConfirmPassword = true;
   bool _isLoggingIn = false;
   bool _isRegistering = false;
+  String? _loginError;
+  String? _registerError;
 
   @override
   void initState() {
@@ -46,8 +50,10 @@ class _LoginPageState extends State<LoginPage>
   Future<void> _handleLogin() async {
     if (!_loginFormKey.currentState!.validate()) return;
 
-    setState(() => _isLoggingIn = true);
-    await Future.delayed(const Duration(milliseconds: 500));
+    setState(() {
+      _isLoggingIn = true;
+      _loginError = null;
+    });
 
     final username = _usernameController.text.trim();
     final password = _passwordController.text.trim();
@@ -58,6 +64,10 @@ class _LoginPageState extends State<LoginPage>
     if (mounted) {
       setState(() => _isLoggingIn = false);
       if (success) {
+        // Merge local bookmarks to cloud after login
+        final bookmarkService = BookmarkService();
+        await bookmarkService.mergeLocalBookmarksToCloud();
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(appConfig.translate('login_success')),
@@ -73,6 +83,9 @@ class _LoginPageState extends State<LoginPage>
           MaterialPageRoute(builder: (_) => const ProfilePage()),
         );
       } else {
+        setState(() {
+          _loginError = appConfig.translate('login_failed');
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(appConfig.translate('login_failed')),
@@ -86,37 +99,57 @@ class _LoginPageState extends State<LoginPage>
   Future<void> _handleRegister() async {
     if (!_registerFormKey.currentState!.validate()) return;
 
-    setState(() => _isRegistering = true);
-    await Future.delayed(const Duration(milliseconds: 500));
+    setState(() {
+      _isRegistering = true;
+      _registerError = null;
+    });
 
     final username = _regUsernameController.text.trim();
     final password = _regPasswordController.text.trim();
     final appConfig = Provider.of<AppConfig>(context, listen: false);
 
-    final success = await appConfig.registerUser(username, password);
+    try {
+      final success = await appConfig.registerUser(username, password);
 
-    if (mounted) {
-      setState(() => _isRegistering = false);
-      if (success) {
+      if (mounted) {
+        setState(() => _isRegistering = false);
+        if (success) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(appConfig.translate('register_success')),
+              backgroundColor: Colors.green,
+            ),
+          );
+          _regUsernameController.clear();
+          _regPasswordController.clear();
+          _regConfirmPasswordController.clear();
+
+          // Auto login - navigate to profile
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => const ProfilePage()),
+          );
+        } else {
+          setState(() {
+            _registerError = appConfig.translate('register_failed');
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(appConfig.translate('register_failed')),
+              backgroundColor: Colors.redAccent,
+            ),
+          );
+        }
+      }
+    } on FirebaseAuthException catch (e) {
+      if (mounted) {
+        setState(() {
+          _isRegistering = false;
+          _registerError = appConfig.getAuthErrorMessage(e.code);
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(appConfig.translate('register_success')),
-            backgroundColor: Colors.green,
-          ),
-        );
-        _regUsernameController.clear();
-        _regPasswordController.clear();
-        _regConfirmPasswordController.clear();
-
-        // Auto login - navigate to profile
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const ProfilePage()),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(appConfig.translate('register_failed')),
+            content: Text(appConfig.getAuthErrorMessage(e.code)),
             backgroundColor: Colors.redAccent,
           ),
         );
@@ -198,6 +231,30 @@ class _LoginPageState extends State<LoginPage>
               ),
             ),
             const SizedBox(height: 32),
+
+            // Error message
+            if (_loginError != null)
+              Container(
+                padding: const EdgeInsets.all(12),
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.redAccent.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.redAccent.withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.error_outline, color: Colors.redAccent, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _loginError!,
+                        style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
 
             // Username field
             TextFormField(
@@ -326,6 +383,30 @@ class _LoginPageState extends State<LoginPage>
             ),
             const SizedBox(height: 32),
 
+            // Error message
+            if (_registerError != null)
+              Container(
+                padding: const EdgeInsets.all(12),
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.redAccent.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.redAccent.withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.error_outline, color: Colors.redAccent, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _registerError!,
+                        style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
             // Username
             TextFormField(
               controller: _regUsernameController,
@@ -342,6 +423,10 @@ class _LoginPageState extends State<LoginPage>
                 }
                 if (val.trim().length < 3) {
                   return 'Username must be at least 3 characters';
+                }
+                // Check for invalid characters that would break email format
+                if (val.contains('@') || val.contains(' ')) {
+                  return 'Username cannot contain @ or spaces';
                 }
                 return null;
               },
