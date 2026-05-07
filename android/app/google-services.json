@@ -1,26 +1,21 @@
 {
   "project_info": {
-    "project_number": "YOUR_PROJECT_NUMBER",
-    "project_id": "YOUR_PROJECT_ID",
-    "storage_bucket": "YOUR_PROJECT_ID.appspot.com"
+    "project_number": "1027168275411",
+    "project_id": "cm-movies-fe7d4",
+    "storage_bucket": "cm-movies-fe7d4.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:YOUR_PROJECT_NUMBER:android:YOUR_APP_ID",
+        "mobilesdk_app_id": "1:1027168275411:android:eca3a631b66f0c972f3d26",
         "android_client_info": {
           "package_name": "than.pre.cm"
         }
       },
-      "oauth_client": [
-        {
-          "client_id": "YOUR_CLIENT_ID",
-          "client_type": 3
-        }
-      ],
+      "oauth_client": [],
       "api_key": [
         {
-          "current_key": "YOUR_API_KEY"
+          "current_key": "AIzaSyCYTCj8UBoaEj-LH_R3NjrW5S5GJC87oMo"
         }
       ],
       "services": {
