@@ -489,7 +489,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                           color: chipBgColor,
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
-                            color: isDark ? Colors.white18 : Colors.grey.shade400,
+                            color: isDark ? Colors.white12 : Colors.grey.shade400,
                             width: 0.5,
                           ),
                         ),
