@@ -521,20 +521,26 @@ class _AddMoviePageState extends State<AddMoviePage> {
                                   const SizedBox(height: 8),
                                   TextField(
                                     controller: qualityController,
-                                    decoration: const InputDecoration(labelText: 'Quality'),
-                                    hintText: 'e.g. BluRay, WEB-DL',
+                                    decoration: const InputDecoration(
+                                      labelText: 'Quality',
+                                      hintText: 'e.g. BluRay, WEB-DL',
+                                    ),
                                   ),
                                   const SizedBox(height: 8),
                                   TextField(
                                     controller: resController,
-                                    decoration: const InputDecoration(labelText: 'Resolution'),
-                                    hintText: 'e.g. 1080p, 4K',
+                                    decoration: const InputDecoration(
+                                      labelText: 'Resolution',
+                                      hintText: 'e.g. 1080p, 4K',
+                                    ),
                                   ),
                                   const SizedBox(height: 8),
                                   TextField(
                                     controller: sizeController,
-                                    decoration: const InputDecoration(labelText: 'Size'),
-                                    hintText: 'e.g. 1.5 GB',
+                                    decoration: const InputDecoration(
+                                      labelText: 'Size',
+                                      hintText: 'e.g. 1.5 GB',
+                                    ),
                                   ),
                                 ],
                               ),
