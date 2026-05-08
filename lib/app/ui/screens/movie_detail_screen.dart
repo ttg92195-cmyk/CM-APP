@@ -8,7 +8,6 @@ import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/core/services/bookmark_service.dart';
 import 'package:cm_movies/app/core/services/recent_service.dart';
-import 'package:cm_movies/app/ui/home/trending_movie_component.dart' show MovieCardSkeleton;
 
 class MovieDetailScreen extends StatefulWidget {
   final String slug;
@@ -50,11 +49,8 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
           slug: detail.slug,
           year: detail.year,
           poster: detail.poster,
-          rating: detail.rating,
-          resolution: detail.resolution,
           type: detail.type,
           isTrending: detail.isTrending,
-          categories: detail.categories,
         );
         await _recentService.addRecent(movie);
         final bookmarked = await _bookmarkService.isBookmarked(detail.id);
@@ -88,11 +84,8 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
       slug: _movieDetail!.slug,
       year: _movieDetail!.year,
       poster: _movieDetail!.poster,
-      rating: _movieDetail!.rating,
-      resolution: _movieDetail!.resolution,
       type: _movieDetail!.type,
       isTrending: _movieDetail!.isTrending,
-      categories: _movieDetail!.categories,
     );
     await _bookmarkService.toggleBookmark(movie);
     final bookmarked = await _bookmarkService.isBookmarked(_movieDetail!.id);
@@ -120,6 +113,27 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
     }
   }
 
+  // Glassmorphism icon button for back/bookmark
+  Widget _buildGlassIconButton({
+    required IconData icon,
+    required VoidCallback onPressed,
+    Color? iconColor,
+    double size = 24,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.35),
+        shape: BoxShape.circle,
+      ),
+      child: IconButton(
+        icon: Icon(icon, color: iconColor ?? Colors.white, size: size),
+        onPressed: onPressed,
+        padding: const EdgeInsets.all(8),
+        constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+      ),
+    );
+  }
+
   void _showDownloadModal() {
     if (_movieDetail == null) return;
     final detail = _movieDetail!;
@@ -140,51 +154,57 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
         expand: false,
         builder: (_, scrollController) => Column(
           children: [
+            // Handle
             Container(
               margin: const EdgeInsets.symmetric(vertical: 8),
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: Colors.grey.shade400,
+                color: isDark ? Colors.grey.shade600 : Colors.grey.shade400,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
+            // Title
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
               child: Row(
                 children: [
-                  const Icon(Icons.download_rounded, color: Color(0xFFF5C518)),
+                  Icon(Icons.download_rounded, color: isDark ? const Color(0xFFF5C518) : const Color(0xFFD4A817)),
                   const SizedBox(width: 8),
                   Text(
                     'All Download Links',
-                    style: theme.textTheme.titleLarge?.copyWith(
+                    style: TextStyle(
                       fontWeight: FontWeight.bold,
+                      fontSize: 20,
+                      color: isDark ? Colors.white : Colors.black87,
                     ),
                   ),
                 ],
               ),
             ),
-            const Divider(height: 1),
+            Divider(height: 1, color: isDark ? Colors.white12 : Colors.grey.shade300),
+            // Table header
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              color: isDark ? Colors.white10 : Colors.grey.shade100,
+              color: isDark ? Colors.white10 : Colors.grey.shade200,
               child: Row(
                 children: [
-                  _tableCell('No', 40, isHeader: true),
-                  _tableCell('Server', 80, isHeader: true),
-                  _tableCell('Quality', 70, isHeader: true),
-                  _tableCell('Size', 70, isHeader: true),
-                  _tableCell('Link', 80, isHeader: true),
+                  _tableCell('No', 40, isHeader: true, isDark: isDark),
+                  _tableCell('Server', 80, isHeader: true, isDark: isDark),
+                  _tableCell('Quality', 70, isHeader: true, isDark: isDark),
+                  _tableCell('Size', 70, isHeader: true, isDark: isDark),
+                  _tableCell('Link', 80, isHeader: true, isDark: isDark),
                 ],
               ),
             ),
+            // Table rows
             Expanded(
               child: detail.downloadLinks.isEmpty
                   ? Center(
                       child: Text(
                         'No download links available',
                         style: TextStyle(
-                          color: theme.colorScheme.onSurface.withOpacity(0.5),
+                          color: isDark ? Colors.white54 : Colors.black45,
                         ),
                       ),
                     )
@@ -204,10 +224,10 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                           ),
                           child: Row(
                             children: [
-                              _tableCell('${index + 1}', 40),
-                              _tableCell(link.serverName, 80),
-                              _tableCell(link.quality ?? '-', 70),
-                              _tableCell(link.size ?? '-', 70),
+                              _tableCell('${index + 1}', 40, isDark: isDark),
+                              _tableCell(link.serverName, 80, isDark: isDark),
+                              _tableCell(link.quality ?? '-', 70, isDark: isDark),
+                              _tableCell(link.size ?? '-', 70, isDark: isDark),
                               SizedBox(
                                 width: 80,
                                 child: link.url.isNotEmpty
@@ -218,15 +238,15 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                                           minimumSize: Size.zero,
                                           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                         ),
-                                        child: const Text(
+                                        child: Text(
                                           'Open',
                                           style: TextStyle(
-                                            color: Color(0xFFF5C518),
+                                            color: isDark ? const Color(0xFFF5C518) : const Color(0xFFD4A817),
                                             fontSize: 12,
                                           ),
                                         ),
                                       )
-                                    : const Text('-', style: TextStyle(fontSize: 12)),
+                                    : Text('-', style: TextStyle(fontSize: 12, color: isDark ? Colors.white54 : Colors.black45)),
                               ),
                             ],
                           ),
@@ -265,7 +285,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: Colors.grey.shade400,
+                color: isDark ? Colors.grey.shade600 : Colors.grey.shade400,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -273,28 +293,30 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
               child: Row(
                 children: [
-                  const Icon(Icons.play_circle_filled, color: Color(0xFFF5C518)),
+                  Icon(Icons.play_circle_filled, color: isDark ? const Color(0xFFF5C518) : const Color(0xFFD4A817)),
                   const SizedBox(width: 8),
                   Text(
                     'Watch Online',
-                    style: theme.textTheme.titleLarge?.copyWith(
+                    style: TextStyle(
                       fontWeight: FontWeight.bold,
+                      fontSize: 20,
+                      color: isDark ? Colors.white : Colors.black87,
                     ),
                   ),
                 ],
               ),
             ),
-            const Divider(height: 1),
+            Divider(height: 1, color: isDark ? Colors.white12 : Colors.grey.shade300),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              color: isDark ? Colors.white10 : Colors.grey.shade100,
+              color: isDark ? Colors.white10 : Colors.grey.shade200,
               child: Row(
                 children: [
-                  _tableCell('No', 40, isHeader: true),
-                  _tableCell('Server', 80, isHeader: true),
-                  _tableCell('Quality', 70, isHeader: true),
-                  _tableCell('Size', 70, isHeader: true),
-                  _tableCell('Link', 80, isHeader: true),
+                  _tableCell('No', 40, isHeader: true, isDark: isDark),
+                  _tableCell('Server', 80, isHeader: true, isDark: isDark),
+                  _tableCell('Quality', 70, isHeader: true, isDark: isDark),
+                  _tableCell('Size', 70, isHeader: true, isDark: isDark),
+                  _tableCell('Link', 80, isHeader: true, isDark: isDark),
                 ],
               ),
             ),
@@ -304,7 +326,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                       child: Text(
                         'No watch links available',
                         style: TextStyle(
-                          color: theme.colorScheme.onSurface.withOpacity(0.5),
+                          color: isDark ? Colors.white54 : Colors.black45,
                         ),
                       ),
                     )
@@ -324,10 +346,10 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                           ),
                           child: Row(
                             children: [
-                              _tableCell('${index + 1}', 40),
-                              _tableCell(link.serverName, 80),
-                              _tableCell(link.quality ?? '-', 70),
-                              _tableCell(link.size ?? '-', 70),
+                              _tableCell('${index + 1}', 40, isDark: isDark),
+                              _tableCell(link.serverName, 80, isDark: isDark),
+                              _tableCell(link.quality ?? '-', 70, isDark: isDark),
+                              _tableCell(link.size ?? '-', 70, isDark: isDark),
                               SizedBox(
                                 width: 80,
                                 child: link.url.isNotEmpty
@@ -338,15 +360,15 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                                           minimumSize: Size.zero,
                                           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                         ),
-                                        child: const Text(
+                                        child: Text(
                                           'Watch',
                                           style: TextStyle(
-                                            color: Color(0xFFF5C518),
+                                            color: isDark ? const Color(0xFFF5C518) : const Color(0xFFD4A817),
                                             fontSize: 12,
                                           ),
                                         ),
                                       )
-                                    : const Text('-', style: TextStyle(fontSize: 12)),
+                                    : Text('-', style: TextStyle(fontSize: 12, color: isDark ? Colors.white54 : Colors.black45)),
                               ),
                             ],
                           ),
@@ -360,7 +382,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
     );
   }
 
-  Widget _tableCell(String text, double width, {bool isHeader = false}) {
+  Widget _tableCell(String text, double width, {bool isHeader = false, bool isDark = true}) {
     return SizedBox(
       width: width,
       child: Text(
@@ -368,7 +390,9 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
         style: TextStyle(
           fontSize: 12,
           fontWeight: isHeader ? FontWeight.bold : FontWeight.normal,
-          color: isHeader ? null : (Theme.of(context).brightness == Brightness.dark ? Colors.white70 : Colors.black87),
+          color: isHeader
+              ? (isDark ? Colors.white : Colors.black87)
+              : (isDark ? Colors.white70 : Colors.black87),
         ),
         overflow: TextOverflow.ellipsis,
       ),
@@ -382,7 +406,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
 
     return Scaffold(
       body: _isLoading
-          ? _buildSkeletonDetail()
+          ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(
                   child: Column(
@@ -403,102 +427,28 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
     );
   }
 
-  Widget _buildSkeletonDetail() {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final baseColor = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE0E0E0);
-
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Backdrop skeleton
-          Container(
-            height: 250,
-            width: double.infinity,
-            color: baseColor,
-          ),
-          const SizedBox(height: 16),
-          // Info row skeleton
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 100,
-                  height: 150,
-                  decoration: BoxDecoration(
-                    color: baseColor,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(height: 20, width: 180, color: baseColor),
-                      const SizedBox(height: 8),
-                      Container(height: 14, width: 120, color: baseColor),
-                      const SizedBox(height: 12),
-                      Container(height: 28, width: 200, color: baseColor),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          // Action buttons skeleton
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                Expanded(child: Container(height: 44, color: baseColor)),
-                const SizedBox(width: 12),
-                Expanded(child: Container(height: 44, color: baseColor)),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-          // Synopsis skeleton
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(height: 16, width: 80, color: baseColor),
-                const SizedBox(height: 8),
-                Container(height: 14, width: double.infinity, color: baseColor),
-                const SizedBox(height: 6),
-                Container(height: 14, width: double.infinity, color: baseColor),
-                const SizedBox(height: 6),
-                Container(height: 14, width: 200, color: baseColor),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildDetail(AppConfig appConfig, ThemeData theme) {
     if (_movieDetail == null) return const SizedBox.shrink();
     final detail = _movieDetail!;
     final isDark = theme.brightness == Brightness.dark;
+
+    // Adaptive colors
+    final sectionHeaderColor = isDark ? const Color(0xFFF5C518) : const Color(0xFFB8960F);
+    final bodyTextColor = isDark ? Colors.white70 : Colors.black87;
+    final chipBgColor = isDark ? Colors.white12 : const Color(0xFFE8E8E8);
+    final chipTextColor = isDark ? Colors.white70 : const Color(0xFF333333);
 
     return Scaffold(
       body: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ===== 1. HEADER SECTION (Backdrop + Controls) =====
+            // ===== Poster Backdrop Section =====
             Stack(
               children: [
-                // Backdrop image
+                // Backdrop image (or poster as fallback)
                 SizedBox(
-                  height: 280,
+                  height: 300,
                   width: double.infinity,
                   child: (detail.fullBackdropUrl.isNotEmpty
                           ? CachedNetworkImage(
@@ -509,21 +459,21 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                                       ? CachedNetworkImage(imageUrl: detail.fullPosterUrl, fit: BoxFit.cover)
                                       : Container(
                                           color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade300,
-                                          child: const Icon(Icons.movie, size: 64, color: Colors.white24),
+                                          child: Icon(Icons.movie, size: 64, color: isDark ? Colors.white24 : Colors.black12),
                                         ),
                             )
                           : detail.fullPosterUrl.isNotEmpty
                               ? CachedNetworkImage(imageUrl: detail.fullPosterUrl, fit: BoxFit.cover)
                               : Container(
                                   color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade300,
-                                  child: const Icon(Icons.movie, size: 64, color: Colors.white24),
+                                  child: Icon(Icons.movie, size: 64, color: isDark ? Colors.white24 : Colors.black12),
                                 )
                       ),
                 ),
 
-                // Dark gradient overlay
+                // Gradient overlay - stronger gradient to ensure text readability
                 Container(
-                  height: 280,
+                  height: 300,
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
                       begin: Alignment.topCenter,
@@ -531,227 +481,139 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                       colors: [
                         Colors.black.withOpacity(0.2),
                         Colors.black.withOpacity(0.5),
-                        Colors.black.withOpacity(0.98),
+                        Colors.black.withOpacity(0.95),
                       ],
                     ),
                   ),
                 ),
 
-                // Navigation: Back + Bookmark
+                // Back button and bookmark - with glassmorphism
                 Positioned(
                   top: 0,
                   left: 0,
                   right: 0,
                   child: SafeArea(
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.arrow_back, color: Colors.white, size: 24),
-                          onPressed: () => Navigator.pop(context),
-                        ),
-                        IconButton(
-                          icon: Icon(
-                            _isBookmarked ? Icons.bookmark : Icons.bookmark_outline,
-                            color: _isBookmarked ? Colors.amber : Colors.white,
-                            size: 24,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          _buildGlassIconButton(
+                            icon: Icons.arrow_back,
+                            onPressed: () => Navigator.pop(context),
                           ),
-                          onPressed: _toggleBookmark,
-                        ),
-                      ],
+                          _buildGlassIconButton(
+                            icon: _isBookmarked ? Icons.bookmark : Icons.bookmark_outline,
+                            onPressed: _toggleBookmark,
+                            iconColor: _isBookmarked ? Colors.amber : Colors.white,
+                          ),
+                        ],
+                      ),
                     ),
+                  ),
+                ),
+
+                // Movie info overlay at bottom
+                Positioned(
+                  left: 16,
+                  right: 16,
+                  bottom: 16,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        detail.title,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          shadows: [Shadow(offset: Offset(0, 1), blurRadius: 4, color: Colors.black87)],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      // Rating + Year + Duration + Type badge
+                      Row(
+                        children: [
+                          if (detail.rating != null && detail.rating!.isNotEmpty)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: Colors.black54,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.star, size: 14, color: Colors.amber),
+                                  const SizedBox(width: 3),
+                                  Text(
+                                    detail.rating!,
+                                    style: const TextStyle(color: Colors.amber, fontSize: 13, fontWeight: FontWeight.w600),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          if (detail.rating != null && detail.rating!.isNotEmpty)
+                            const SizedBox(width: 10),
+                          if (detail.year != null && detail.year!.isNotEmpty)
+                            Text(detail.year!, style: const TextStyle(color: Colors.white70, fontSize: 14)),
+                          if (detail.year != null && detail.year!.isNotEmpty)
+                            const SizedBox(width: 10),
+                          if (detail.duration != null && detail.duration!.isNotEmpty)
+                            Text('${detail.duration} min', style: const TextStyle(color: Colors.white70, fontSize: 14)),
+                          if (detail.duration != null && detail.duration!.isNotEmpty)
+                            const SizedBox(width: 10),
+                          if (detail.type != null)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE50914).withOpacity(0.85),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                detail.type == 'series' ? 'Series' : 'Movie',
+                                style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      if (detail.categories.isNotEmpty)
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 4,
+                          children: detail.categories.take(4).map((cat) => Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.white24,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: Colors.white38, width: 0.5),
+                            ),
+                            child: Text(cat, style: const TextStyle(color: Colors.white, fontSize: 11)),
+                          )).toList(),
+                        ),
+                    ],
                   ),
                 ),
               ],
             ),
 
-            // ===== 2. INFO SECTION (Hero Row with Poster + Details) =====
-            Transform.translate(
-              offset: const Offset(0, -60),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    // Small Poster with rounded corners
-                    Container(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(10),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.5),
-                            blurRadius: 12,
-                            spreadRadius: 2,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(10),
-                        child: SizedBox(
-                          width: 110,
-                          height: 165,
-                          child: detail.fullPosterUrl.isNotEmpty
-                              ? CachedNetworkImage(
-                                  imageUrl: detail.fullPosterUrl,
-                                  fit: BoxFit.cover,
-                                  errorWidget: (context, url, error) => Container(
-                                    color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade300,
-                                    child: const Icon(Icons.movie, size: 40, color: Colors.white24),
-                                  ),
-                                )
-                              : Container(
-                                  color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade300,
-                                  child: const Icon(Icons.movie, size: 40, color: Colors.white24),
-                                ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    // Title + MetaData
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Title
-                          Text(
-                            detail.title,
-                            style: const TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                              height: 1.3,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 8),
-                          // Rating + Year + Duration (dot-separated)
-                          Row(
-                            children: [
-                              if (detail.rating != null && detail.rating!.isNotEmpty) ...[
-                                const Icon(Icons.star, size: 16, color: Colors.amber),
-                                const SizedBox(width: 3),
-                                Text(
-                                  detail.rating!,
-                                  style: const TextStyle(color: Colors.amber, fontSize: 14, fontWeight: FontWeight.w600),
-                                ),
-                                const SizedBox(width: 6),
-                                Text('.', style: TextStyle(color: Colors.white54, fontSize: 18)),
-                                const SizedBox(width: 6),
-                              ],
-                              if (detail.year != null && detail.year!.isNotEmpty) ...[
-                                Text(detail.year!, style: const TextStyle(color: Colors.white70, fontSize: 14)),
-                                const SizedBox(width: 6),
-                                Text('.', style: TextStyle(color: Colors.white54, fontSize: 18)),
-                                const SizedBox(width: 6),
-                              ],
-                              if (detail.duration != null && detail.duration!.isNotEmpty) ...[
-                                Text('${detail.duration} min', style: const TextStyle(color: Colors.white70, fontSize: 14)),
-                              ],
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          // Resolution badge + Type badge
-                          Row(
-                            children: [
-                              if (detail.resolution != null && detail.resolution!.isNotEmpty)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                  decoration: BoxDecoration(
-                                    color: detail.resolution!.toUpperCase().contains('4K')
-                                        ? const Color(0xFFE50914)
-                                        : Colors.white24,
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text(
-                                    detail.resolution!,
-                                    style: TextStyle(
-                                      color: detail.resolution!.toUpperCase().contains('4K')
-                                          ? Colors.white
-                                          : Colors.white70,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              if (detail.resolution != null && detail.resolution!.isNotEmpty)
-                                const SizedBox(width: 6),
-                              if (detail.type != null)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFE50914).withOpacity(0.8),
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text(
-                                    detail.type == 'series' ? 'Series' : 'Movie',
-                                    style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-            // Category Tags (Genre chips)
-            if (detail.categories.isNotEmpty)
-              Transform.translate(
-                offset: const Offset(0, -50),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Wrap(
-                    spacing: 6,
-                    runSpacing: 4,
-                    children: detail.categories.map((cat) => Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: isDark ? Colors.white12 : Colors.black.withOpacity(0.08),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: const Color(0xFFE50914).withOpacity(0.3),
-                          width: 1,
-                        ),
-                      ),
-                      child: Text(
-                        cat,
-                        style: TextStyle(
-                          color: isDark ? Colors.white : Colors.black87,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    )).toList(),
-                  ),
-                ),
-              ),
-
-            // Adjust spacing after the hero section
-            SizedBox(height: detail.categories.isNotEmpty ? -34 : -44),
-
-            const SizedBox(height: 16),
-
-            // ===== 3. ACTION BUTTONS =====
+            // ===== Action Buttons =====
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
               child: Row(
                 children: [
                   Expanded(
                     child: ElevatedButton.icon(
                       onPressed: detail.downloadLinks.isNotEmpty ? _showWatchModal : null,
-                      icon: const Icon(Icons.play_arrow, size: 22),
+                      icon: const Icon(Icons.play_arrow, size: 20),
                       label: const Text('Watch Now'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFFF5C518),
                         foregroundColor: Colors.black,
-                        disabledBackgroundColor: Colors.grey.shade700,
-                        disabledForegroundColor: Colors.grey.shade400,
-                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        disabledBackgroundColor: isDark ? Colors.grey.shade700 : Colors.grey.shade400,
+                        disabledForegroundColor: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                         textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                       ),
@@ -761,14 +623,14 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                   Expanded(
                     child: ElevatedButton.icon(
                       onPressed: detail.downloadLinks.isNotEmpty ? _showDownloadModal : null,
-                      icon: const Icon(Icons.download, size: 22),
+                      icon: const Icon(Icons.download, size: 20),
                       label: const Text('Download'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFFF5C518),
                         foregroundColor: Colors.black,
-                        disabledBackgroundColor: Colors.grey.shade700,
-                        disabledForegroundColor: Colors.grey.shade400,
-                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        disabledBackgroundColor: isDark ? Colors.grey.shade700 : Colors.grey.shade400,
+                        disabledForegroundColor: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                         textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                       ),
@@ -778,47 +640,44 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
               ),
             ),
 
-            // Tags row
+            // Tags row - improved contrast for light mode
             if (detail.tags.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                 child: Wrap(
                   spacing: 6,
                   runSpacing: 4,
-                  children: detail.tags.map((tag) => Container(
+                  children: detail.tags.take(6).map((tag) => Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                      color: isDark ? Colors.white12 : Colors.grey.shade200,
+                      color: chipBgColor,
                       borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: isDark ? Colors.white24 : Colors.grey.shade400,
+                        width: 0.5,
+                      ),
                     ),
-                    child: Text(tag, style: TextStyle(color: isDark ? Colors.white70 : Colors.black54, fontSize: 11)),
+                    child: Text(tag, style: TextStyle(color: chipTextColor, fontSize: 11)),
                   )).toList(),
                 ),
               ),
 
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
 
-            // ===== 4. CONTENT SECTION (Synopsis with View More / View Less) =====
+            // ===== Synopsis Section =====
             if (detail.overview != null && detail.overview!.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Synopsis',
-                      style: const TextStyle(
-                        color: Color(0xFFF5C518),
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                    Text('Synopsis', style: TextStyle(color: sectionHeaderColor, fontSize: 16, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
                     LayoutBuilder(
                       builder: (context, constraints) {
                         final textSpan = TextSpan(
                           text: detail.overview!,
-                          style: TextStyle(fontSize: 14, height: 1.7, color: isDark ? Colors.white70 : Colors.black87),
+                          style: TextStyle(fontSize: 14, height: 1.6, color: bodyTextColor),
                         );
                         final textPainter = TextPainter(
                           text: textSpan,
@@ -835,7 +694,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                               detail.overview!,
                               maxLines: _synopsisExpanded ? null : 3,
                               overflow: _synopsisExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
-                              style: TextStyle(fontSize: 14, height: 1.7, color: isDark ? Colors.white70 : Colors.black87),
+                              style: TextStyle(fontSize: 14, height: 1.6, color: bodyTextColor),
                             ),
                             if (isOverflow)
                               GestureDetector(
@@ -843,12 +702,11 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                                 child: Padding(
                                   padding: const EdgeInsets.only(top: 6),
                                   child: Text(
-                                    _synopsisExpanded ? 'View Less' : 'View More',
-                                    style: const TextStyle(
-                                      color: Color(0xFFF5C518),
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                      decoration: TextDecoration.underline,
+                                    _synopsisExpanded ? 'read less' : '...read more',
+                                    style: TextStyle(
+                                      color: sectionHeaderColor,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
                                     ),
                                   ),
                                 ),
@@ -861,7 +719,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                 ),
               ),
 
-            const SizedBox(height: 24),
+            const SizedBox(height: 20),
 
             // ===== Directors Section =====
             if (detail.directors.isNotEmpty)
@@ -870,7 +728,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Director', style: const TextStyle(color: Color(0xFFF5C518), fontSize: 16, fontWeight: FontWeight.bold)),
+                    Text('Director', style: TextStyle(color: sectionHeaderColor, fontSize: 16, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
@@ -878,8 +736,12 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                       children: detail.directors.map((d) => Container(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                         decoration: BoxDecoration(
-                          color: isDark ? Colors.white12 : Colors.grey.shade200,
+                          color: chipBgColor,
                           borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: isDark ? Colors.white18 : Colors.grey.shade400,
+                            width: 0.5,
+                          ),
                         ),
                         child: Text(d, style: TextStyle(color: isDark ? Colors.white : Colors.black87, fontSize: 13)),
                       )).toList(),
@@ -897,7 +759,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Cast', style: const TextStyle(color: Color(0xFFF5C518), fontSize: 16, fontWeight: FontWeight.bold)),
+                    Text('Cast', style: TextStyle(color: sectionHeaderColor, fontSize: 16, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),
                     SizedBox(
                       height: 100,
@@ -957,7 +819,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                                     style: TextStyle(
                                       fontSize: 11,
                                       fontWeight: FontWeight.w500,
-                                      color: isDark ? Colors.white70 : Colors.black87,
+                                      color: bodyTextColor,
                                     ),
                                   ),
                                 ),
@@ -980,12 +842,13 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Download', style: const TextStyle(color: Color(0xFFF5C518), fontSize: 16, fontWeight: FontWeight.bold)),
+                    Text('Download', style: TextStyle(color: sectionHeaderColor, fontSize: 16, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
                     ...detail.downloadLinks.map((link) => Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Card(
                         margin: EdgeInsets.zero,
+                        color: isDark ? null : Colors.white,
                         child: InkWell(
                           onTap: link.url.isNotEmpty ? () => _launchUrl(link.url) : null,
                           borderRadius: BorderRadius.circular(12),
@@ -993,32 +856,32 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                             padding: const EdgeInsets.all(12),
                             child: Row(
                               children: [
-                                Icon(Icons.download_rounded, color: theme.colorScheme.primary, size: 28),
+                                Icon(Icons.download_rounded, color: isDark ? theme.colorScheme.primary : const Color(0xFFB8960F), size: 28),
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Text(link.serverName, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+                                      Text(link.serverName, style: TextStyle(fontWeight: FontWeight.w600, color: isDark ? Colors.white : Colors.black87)),
                                       const SizedBox(height: 4),
                                       Row(
                                         children: [
                                           if (link.quality != null) ...[
-                                            _buildInfoChip('Quality', link.quality!, theme),
+                                            _buildInfoChip('Quality', link.quality!, theme, isDark),
                                             const SizedBox(width: 8),
                                           ],
                                           if (link.resolution != null) ...[
-                                            _buildInfoChip('Resolution', link.resolution!, theme),
+                                            _buildInfoChip('Resolution', link.resolution!, theme, isDark),
                                             const SizedBox(width: 8),
                                           ],
                                           if (link.size != null)
-                                            _buildInfoChip('Size', link.size!, theme),
+                                            _buildInfoChip('Size', link.size!, theme, isDark),
                                         ],
                                       ),
                                     ],
                                   ),
                                 ),
-                                Icon(Icons.open_in_new, color: theme.colorScheme.primary, size: 20),
+                                Icon(Icons.open_in_new, color: isDark ? theme.colorScheme.primary : const Color(0xFFB8960F), size: 20),
                               ],
                             ),
                           ),
@@ -1036,17 +899,17 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
     );
   }
 
-  Widget _buildInfoChip(String label, String value, ThemeData theme) {
+  Widget _buildInfoChip(String label, String value, ThemeData theme, bool isDark) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
-        color: theme.colorScheme.primaryContainer,
+        color: isDark ? theme.colorScheme.primaryContainer : Colors.grey.shade200,
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
         '$label: $value',
-        style: theme.textTheme.labelSmall?.copyWith(
-          color: theme.colorScheme.onPrimaryContainer,
+        style: TextStyle(
+          color: isDark ? theme.colorScheme.onPrimaryContainer : Colors.black87,
           fontSize: 10,
         ),
       ),

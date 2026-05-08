@@ -111,6 +111,27 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
     }
   }
 
+  // Glassmorphism icon button for back/bookmark
+  Widget _buildGlassIconButton({
+    required IconData icon,
+    required VoidCallback onPressed,
+    Color? iconColor,
+    double size = 24,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.35),
+        shape: BoxShape.circle,
+      ),
+      child: IconButton(
+        icon: Icon(icon, color: iconColor ?? Colors.white, size: size),
+        onPressed: onPressed,
+        padding: const EdgeInsets.all(8),
+        constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+      ),
+    );
+  }
+
   void _showSeriesDownloadModal() {
     if (_seriesDetail == null) return;
     final detail = _seriesDetail!;
@@ -162,7 +183,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
 
     return Scaffold(
       body: _isLoading
-          ? _buildSkeletonDetail()
+          ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(
                   child: Column(
@@ -183,102 +204,27 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
     );
   }
 
-  Widget _buildSkeletonDetail() {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final baseColor = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE0E0E0);
-
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Backdrop skeleton
-          Container(
-            height: 250,
-            width: double.infinity,
-            color: baseColor,
-          ),
-          const SizedBox(height: 16),
-          // Info row skeleton
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 110,
-                  height: 165,
-                  decoration: BoxDecoration(
-                    color: baseColor,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(height: 20, width: 180, color: baseColor),
-                      const SizedBox(height: 8),
-                      Container(height: 14, width: 120, color: baseColor),
-                      const SizedBox(height: 12),
-                      Container(height: 28, width: 200, color: baseColor),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          // Action buttons skeleton
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                Expanded(child: Container(height: 44, color: baseColor)),
-                const SizedBox(width: 12),
-                Expanded(child: Container(height: 44, color: baseColor)),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-          // Synopsis skeleton
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(height: 16, width: 80, color: baseColor),
-                const SizedBox(height: 8),
-                Container(height: 14, width: double.infinity, color: baseColor),
-                const SizedBox(height: 6),
-                Container(height: 14, width: double.infinity, color: baseColor),
-                const SizedBox(height: 6),
-                Container(height: 14, width: 200, color: baseColor),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildDetail(AppConfig appConfig, ThemeData theme) {
     if (_seriesDetail == null) return const SizedBox.shrink();
     final detail = _seriesDetail!;
     final isDark = theme.brightness == Brightness.dark;
+
+    // Adaptive colors
+    final sectionHeaderColor = isDark ? const Color(0xFFF5C518) : const Color(0xFFB8960F);
+    final bodyTextColor = isDark ? Colors.white70 : Colors.black87;
+    final chipBgColor = isDark ? Colors.white12 : const Color(0xFFE8E8E8);
+    final chipTextColor = isDark ? Colors.white70 : const Color(0xFF333333);
 
     return Scaffold(
       body: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ===== 1. HEADER SECTION (Backdrop + Controls) =====
+            // ===== Poster Backdrop Section =====
             Stack(
               children: [
-                // Backdrop image
                 SizedBox(
-                  height: 280,
+                  height: 300,
                   width: double.infinity,
                   child: (detail.fullBackdropUrl.isNotEmpty
                           ? CachedNetworkImage(
@@ -289,21 +235,20 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                                       ? CachedNetworkImage(imageUrl: detail.fullPosterUrl, fit: BoxFit.cover)
                                       : Container(
                                           color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade300,
-                                          child: const Icon(Icons.tv, size: 64, color: Colors.white24),
+                                          child: Icon(Icons.tv, size: 64, color: isDark ? Colors.white24 : Colors.black12),
                                         ),
                             )
                           : detail.fullPosterUrl.isNotEmpty
                               ? CachedNetworkImage(imageUrl: detail.fullPosterUrl, fit: BoxFit.cover)
                               : Container(
                                   color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade300,
-                                  child: const Icon(Icons.tv, size: 64, color: Colors.white24),
+                                  child: Icon(Icons.tv, size: 64, color: isDark ? Colors.white24 : Colors.black12),
                                 )
                       ),
                 ),
-
-                // Dark gradient overlay
+                // Stronger gradient overlay for text readability
                 Container(
-                  height: 280,
+                  height: 300,
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
                       begin: Alignment.topCenter,
@@ -311,226 +256,119 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                       colors: [
                         Colors.black.withOpacity(0.2),
                         Colors.black.withOpacity(0.5),
-                        Colors.black.withOpacity(0.98),
+                        Colors.black.withOpacity(0.95),
                       ],
                     ),
                   ),
                 ),
-
-                // Navigation: Back + Bookmark
+                // Back button and bookmark - with glassmorphism
                 Positioned(
                   top: 0,
                   left: 0,
                   right: 0,
                   child: SafeArea(
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.arrow_back, color: Colors.white, size: 24),
-                          onPressed: () => Navigator.pop(context),
-                        ),
-                        IconButton(
-                          icon: Icon(
-                            _isBookmarked ? Icons.bookmark : Icons.bookmark_outline,
-                            color: _isBookmarked ? Colors.amber : Colors.white,
-                            size: 24,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          _buildGlassIconButton(
+                            icon: Icons.arrow_back,
+                            onPressed: () => Navigator.pop(context),
                           ),
-                          onPressed: _toggleBookmark,
-                        ),
-                      ],
+                          _buildGlassIconButton(
+                            icon: _isBookmarked ? Icons.bookmark : Icons.bookmark_outline,
+                            onPressed: _toggleBookmark,
+                            iconColor: _isBookmarked ? Colors.amber : Colors.white,
+                          ),
+                        ],
+                      ),
                     ),
+                  ),
+                ),
+                Positioned(
+                  left: 16,
+                  right: 16,
+                  bottom: 16,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        detail.title,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          shadows: [Shadow(offset: Offset(0, 1), blurRadius: 4, color: Colors.black87)],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          if (detail.rating != null && detail.rating!.isNotEmpty)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(12)),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.star, size: 14, color: Colors.amber),
+                                  const SizedBox(width: 3),
+                                  Text(detail.rating!, style: const TextStyle(color: Colors.amber, fontSize: 13, fontWeight: FontWeight.w600)),
+                                ],
+                              ),
+                            ),
+                          if (detail.rating != null && detail.rating!.isNotEmpty) const SizedBox(width: 10),
+                          if (detail.year != null && detail.year!.isNotEmpty)
+                            Text(detail.year!, style: const TextStyle(color: Colors.white70, fontSize: 14)),
+                          if (detail.year != null && detail.year!.isNotEmpty) const SizedBox(width: 10),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE50914).withOpacity(0.85),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Text('Series', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600)),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      if (detail.categories.isNotEmpty)
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 4,
+                          children: detail.categories.take(4).map((cat) => Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.white24,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: Colors.white38, width: 0.5),
+                            ),
+                            child: Text(cat, style: const TextStyle(color: Colors.white, fontSize: 11)),
+                          )).toList(),
+                        ),
+                    ],
                   ),
                 ),
               ],
             ),
 
-            // ===== 2. INFO SECTION (Hero Row with Poster + Details) =====
-            Transform.translate(
-              offset: const Offset(0, -60),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    // Small Poster with rounded corners
-                    Container(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(10),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.5),
-                            blurRadius: 12,
-                            spreadRadius: 2,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(10),
-                        child: SizedBox(
-                          width: 110,
-                          height: 165,
-                          child: detail.fullPosterUrl.isNotEmpty
-                              ? CachedNetworkImage(
-                                  imageUrl: detail.fullPosterUrl,
-                                  fit: BoxFit.cover,
-                                  errorWidget: (context, url, error) => Container(
-                                    color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade300,
-                                    child: const Icon(Icons.tv, size: 40, color: Colors.white24),
-                                  ),
-                                )
-                              : Container(
-                                  color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade300,
-                                  child: const Icon(Icons.tv, size: 40, color: Colors.white24),
-                                ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    // Title + MetaData
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Title
-                          Text(
-                            detail.title,
-                            style: const TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                              height: 1.3,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 8),
-                          // Rating + Year + Duration (dot-separated)
-                          Row(
-                            children: [
-                              if (detail.rating != null && detail.rating!.isNotEmpty) ...[
-                                const Icon(Icons.star, size: 16, color: Colors.amber),
-                                const SizedBox(width: 3),
-                                Text(
-                                  detail.rating!,
-                                  style: const TextStyle(color: Colors.amber, fontSize: 14, fontWeight: FontWeight.w600),
-                                ),
-                                const SizedBox(width: 6),
-                                Text('.', style: TextStyle(color: Colors.white54, fontSize: 18)),
-                                const SizedBox(width: 6),
-                              ],
-                              if (detail.year != null && detail.year!.isNotEmpty) ...[
-                                Text(detail.year!, style: const TextStyle(color: Colors.white70, fontSize: 14)),
-                                const SizedBox(width: 6),
-                                Text('.', style: TextStyle(color: Colors.white54, fontSize: 18)),
-                                const SizedBox(width: 6),
-                              ],
-                              if (detail.duration != null && detail.duration!.isNotEmpty) ...[
-                                Text('${detail.duration} min', style: const TextStyle(color: Colors.white70, fontSize: 14)),
-                              ],
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          // Resolution badge + Type badge
-                          Row(
-                            children: [
-                              if (detail.resolution != null && detail.resolution!.isNotEmpty)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                  decoration: BoxDecoration(
-                                    color: detail.resolution!.toUpperCase().contains('4K')
-                                        ? const Color(0xFFE50914)
-                                        : Colors.white24,
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text(
-                                    detail.resolution!,
-                                    style: TextStyle(
-                                      color: detail.resolution!.toUpperCase().contains('4K')
-                                          ? Colors.white
-                                          : Colors.white70,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              if (detail.resolution != null && detail.resolution!.isNotEmpty)
-                                const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFE50914).withOpacity(0.8),
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                child: const Text(
-                                  'Series',
-                                  style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-            // Category Tags (Genre chips) with capsule design
-            if (detail.categories.isNotEmpty)
-              Transform.translate(
-                offset: const Offset(0, -50),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Wrap(
-                    spacing: 6,
-                    runSpacing: 4,
-                    children: detail.categories.map((cat) => Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: isDark ? Colors.white12 : Colors.black.withOpacity(0.08),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: const Color(0xFFE50914).withOpacity(0.3),
-                          width: 1,
-                        ),
-                      ),
-                      child: Text(
-                        cat,
-                        style: TextStyle(
-                          color: isDark ? Colors.white : Colors.black87,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    )).toList(),
-                  ),
-                ),
-              ),
-
-            // Adjust spacing after the hero section
-            SizedBox(height: detail.categories.isNotEmpty ? -34 : -44),
-
-            const SizedBox(height: 16),
-
-            // ===== 3. ACTION BUTTONS =====
+            // ===== Action Buttons =====
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
               child: Row(
                 children: [
                   Expanded(
                     child: ElevatedButton.icon(
                       onPressed: detail.seasons.isNotEmpty || detail.downloadLinks.isNotEmpty ? _showSeriesWatchModal : null,
-                      icon: const Icon(Icons.play_arrow, size: 22),
+                      icon: const Icon(Icons.play_arrow, size: 20),
                       label: const Text('Watch Now'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFFF5C518),
                         foregroundColor: Colors.black,
-                        disabledBackgroundColor: Colors.grey.shade700,
-                        disabledForegroundColor: Colors.grey.shade400,
-                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        disabledBackgroundColor: isDark ? Colors.grey.shade700 : Colors.grey.shade400,
+                        disabledForegroundColor: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                         textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                       ),
@@ -540,14 +378,14 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                   Expanded(
                     child: ElevatedButton.icon(
                       onPressed: detail.seasons.isNotEmpty || detail.downloadLinks.isNotEmpty ? _showSeriesDownloadModal : null,
-                      icon: const Icon(Icons.download, size: 22),
+                      icon: const Icon(Icons.download, size: 20),
                       label: const Text('Download'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFFF5C518),
                         foregroundColor: Colors.black,
-                        disabledBackgroundColor: Colors.grey.shade700,
-                        disabledForegroundColor: Colors.grey.shade400,
-                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        disabledBackgroundColor: isDark ? Colors.grey.shade700 : Colors.grey.shade400,
+                        disabledForegroundColor: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                         textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                       ),
@@ -557,56 +395,48 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
               ),
             ),
 
-            // Tags row
+            // Tags row - improved contrast for light mode
             if (detail.tags.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                 child: Wrap(
                   spacing: 6,
                   runSpacing: 4,
-                  children: detail.tags.map((tag) => Container(
+                  children: detail.tags.take(6).map((tag) => Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                      color: isDark ? Colors.white12 : Colors.grey.shade200,
+                      color: chipBgColor,
                       borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: isDark ? Colors.white24 : Colors.grey.shade400,
+                        width: 0.5,
+                      ),
                     ),
-                    child: Text(tag, style: TextStyle(color: isDark ? Colors.white70 : Colors.black54, fontSize: 11)),
+                    child: Text(tag, style: TextStyle(color: chipTextColor, fontSize: 11)),
                   )).toList(),
                 ),
               ),
 
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
 
-            // ===== 4. CONTENT SECTION (Synopsis with View More / View Less) =====
+            // Synopsis
             if (detail.overview != null && detail.overview!.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Synopsis',
-                      style: const TextStyle(
-                        color: Color(0xFFF5C518),
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                    Text('Synopsis', style: TextStyle(color: sectionHeaderColor, fontSize: 16, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
                     LayoutBuilder(
                       builder: (context, constraints) {
                         final textSpan = TextSpan(
                           text: detail.overview!,
-                          style: TextStyle(fontSize: 14, height: 1.7, color: isDark ? Colors.white70 : Colors.black87),
+                          style: TextStyle(fontSize: 14, height: 1.6, color: bodyTextColor),
                         );
-                        final textPainter = TextPainter(
-                          text: textSpan,
-                          maxLines: 3,
-                          textDirection: TextDirection.ltr,
-                        );
+                        final textPainter = TextPainter(text: textSpan, maxLines: 3, textDirection: TextDirection.ltr);
                         textPainter.layout(maxWidth: constraints.maxWidth);
                         final isOverflow = textPainter.didExceedMaxLines;
-
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -614,7 +444,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                               detail.overview!,
                               maxLines: _synopsisExpanded ? null : 3,
                               overflow: _synopsisExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
-                              style: TextStyle(fontSize: 14, height: 1.7, color: isDark ? Colors.white70 : Colors.black87),
+                              style: TextStyle(fontSize: 14, height: 1.6, color: bodyTextColor),
                             ),
                             if (isOverflow)
                               GestureDetector(
@@ -622,12 +452,11 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                                 child: Padding(
                                   padding: const EdgeInsets.only(top: 6),
                                   child: Text(
-                                    _synopsisExpanded ? 'View Less' : 'View More',
-                                    style: const TextStyle(
-                                      color: Color(0xFFF5C518),
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                      decoration: TextDecoration.underline,
+                                    _synopsisExpanded ? 'read less' : '...read more',
+                                    style: TextStyle(
+                                      color: sectionHeaderColor,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
                                     ),
                                   ),
                                 ),
@@ -640,16 +469,16 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                 ),
               ),
 
-            const SizedBox(height: 24),
+            const SizedBox(height: 20),
 
-            // ===== Directors Section =====
+            // Directors
             if (detail.directors.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Director', style: const TextStyle(color: Color(0xFFF5C518), fontSize: 16, fontWeight: FontWeight.bold)),
+                    Text('Director', style: TextStyle(color: sectionHeaderColor, fontSize: 16, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
@@ -657,8 +486,12 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                       children: detail.directors.map((d) => Container(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                         decoration: BoxDecoration(
-                          color: isDark ? Colors.white12 : Colors.grey.shade200,
+                          color: chipBgColor,
                           borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: isDark ? Colors.white18 : Colors.grey.shade400,
+                            width: 0.5,
+                          ),
                         ),
                         child: Text(d, style: TextStyle(color: isDark ? Colors.white : Colors.black87, fontSize: 13)),
                       )).toList(),
@@ -669,14 +502,14 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
 
             if (detail.directors.isNotEmpty) const SizedBox(height: 20),
 
-            // ===== Cast Section =====
+            // Cast
             if (detail.casts.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Cast', style: const TextStyle(color: Color(0xFFF5C518), fontSize: 16, fontWeight: FontWeight.bold)),
+                    Text('Cast', style: TextStyle(color: sectionHeaderColor, fontSize: 16, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),
                     SizedBox(
                       height: 100,
@@ -695,46 +528,24 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                                   child: ClipOval(
                                     child: cast.fullProfileUrl.isNotEmpty
                                         ? CachedNetworkImage(
-                                            imageUrl: cast.fullProfileUrl,
-                                            fit: BoxFit.cover,
-                                            width: 64,
-                                            height: 64,
-                                            placeholder: (context, url) => const Center(
-                                              child: CircularProgressIndicator(strokeWidth: 2),
-                                            ),
+                                            imageUrl: cast.fullProfileUrl, fit: BoxFit.cover, width: 64, height: 64,
+                                            placeholder: (context, url) => const Center(child: CircularProgressIndicator(strokeWidth: 2)),
                                             errorWidget: (context, url, error) => Center(
-                                              child: Text(
-                                                cast.name.isNotEmpty ? cast.name[0].toUpperCase() : '?',
-                                                style: TextStyle(
-                                                  color: isDark ? Colors.white54 : Colors.black54,
-                                                  fontSize: 22,
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                              ),
+                                              child: Text(cast.name.isNotEmpty ? cast.name[0].toUpperCase() : '?',
+                                                style: TextStyle(color: isDark ? Colors.white54 : Colors.black54, fontSize: 22, fontWeight: FontWeight.bold)),
                                             ),
                                           )
                                         : Center(
-                                            child: Text(
-                                              cast.name.isNotEmpty ? cast.name[0].toUpperCase() : '?',
-                                              style: TextStyle(
-                                                color: isDark ? Colors.white54 : Colors.black54,
-                                                fontSize: 22,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
+                                            child: Text(cast.name.isNotEmpty ? cast.name[0].toUpperCase() : '?',
+                                              style: TextStyle(color: isDark ? Colors.white54 : Colors.black54, fontSize: 22, fontWeight: FontWeight.bold)),
                                           ),
                                   ),
                                 ),
                                 const SizedBox(height: 6),
                                 SizedBox(
                                   width: 72,
-                                  child: Text(
-                                    cast.name,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: isDark ? Colors.white70 : Colors.black87),
-                                  ),
+                                  child: Text(cast.name, maxLines: 2, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center,
+                                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: bodyTextColor)),
                                 ),
                               ],
                             ),
@@ -746,160 +557,12 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                 ),
               ),
 
-            // ===== Seasons Section =====
-            if (detail.seasons.isNotEmpty) ...[
-              const SizedBox(height: 20),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Seasons & Episodes', style: const TextStyle(color: Color(0xFFF5C518), fontSize: 16, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 12),
-                    ...detail.seasons.map((season) => _buildSeasonExpansion(season, isDark, theme)),
-                  ],
-                ),
-              ),
-            ],
+            // NOTE: "Seasons & Episodes" inline section REMOVED
+            // Season/Episode selection is now only available via Watch/Download modal bottom sheets
 
             const SizedBox(height: 40),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildSeasonExpansion(Season season, bool isDark, ThemeData theme) {
-    return ExpansionTile(
-      title: Text(season.name, style: const TextStyle(fontWeight: FontWeight.w600)),
-      tilePadding: EdgeInsets.zero,
-      children: season.episodes.map((episode) => ListTile(
-        dense: true,
-        contentPadding: EdgeInsets.zero,
-        leading: Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: const Color(0xFFE50914).withOpacity(0.15),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: const Icon(Icons.play_circle_outline, color: Color(0xFFE50914), size: 20),
-        ),
-        title: Text(episode.name, style: const TextStyle(fontSize: 13)),
-        subtitle: Text('${episode.downloadLinks.length} link(s)', style: TextStyle(fontSize: 11, color: isDark ? Colors.white38 : Colors.black38)),
-        trailing: episode.downloadLinks.isNotEmpty
-            ? IconButton(
-                icon: const Icon(Icons.download, size: 18, color: Color(0xFFF5C518)),
-                onPressed: () => _showEpisodeDownloadModal(episode, season.name),
-              )
-            : null,
-        onTap: () => _showEpisodeDownloadModal(episode, season.name),
-      )).toList(),
-    );
-  }
-
-  void _showEpisodeDownloadModal(Episode episode, String seasonName) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: isDark ? const Color(0xFF1A1A2E) : Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.6,
-        minChildSize: 0.3,
-        maxChildSize: 0.9,
-        expand: false,
-        builder: (_, scrollController) => Column(
-          children: [
-            Container(
-              margin: const EdgeInsets.symmetric(vertical: 8),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(color: Colors.grey.shade400, borderRadius: BorderRadius.circular(2)),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-              child: Text('$seasonName - ${episode.name}', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: Row(
-                children: [
-                  const Icon(Icons.download_rounded, color: Color(0xFFF5C518)),
-                  const SizedBox(width: 8),
-                  Text('All Download Links', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              color: isDark ? Colors.white10 : Colors.grey.shade100,
-              child: Row(
-                children: [
-                  _tableCell('No', 40, isHeader: true),
-                  _tableCell('Server', 80, isHeader: true),
-                  _tableCell('Quality', 70, isHeader: true),
-                  _tableCell('Size', 70, isHeader: true),
-                  _tableCell('Link', 80, isHeader: true),
-                ],
-              ),
-            ),
-            Expanded(
-              child: episode.downloadLinks.isEmpty
-                  ? Center(child: Text('No download links available', style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.5))))
-                  : ListView.builder(
-                      controller: scrollController,
-                      itemCount: episode.downloadLinks.length,
-                      itemBuilder: (_, index) {
-                        final link = episode.downloadLinks[index];
-                        return Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                          decoration: BoxDecoration(
-                            border: Border(bottom: BorderSide(color: isDark ? Colors.white10 : Colors.grey.shade200)),
-                          ),
-                          child: Row(
-                            children: [
-                              _tableCell('${index + 1}', 40),
-                              _tableCell(link.serverName, 80),
-                              _tableCell(link.quality ?? '-', 70),
-                              _tableCell(link.size ?? '-', 70),
-                              SizedBox(
-                                width: 80,
-                                child: link.url.isNotEmpty
-                                    ? TextButton(
-                                        onPressed: () => _launchUrl(link.url),
-                                        style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: Size.zero, tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                                        child: const Text('Open', style: TextStyle(color: Color(0xFFF5C518), fontSize: 12)),
-                                      )
-                                    : const Text('-', style: TextStyle(fontSize: 12)),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _tableCell(String text, double width, {bool isHeader = false}) {
-    return SizedBox(
-      width: width,
-      child: Text(
-        text,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: isHeader ? FontWeight.bold : FontWeight.normal,
-          color: isHeader ? null : (Theme.of(context).brightness == Brightness.dark ? Colors.white70 : Colors.black87),
-        ),
-        overflow: TextOverflow.ellipsis,
       ),
     );
   }
@@ -930,6 +593,7 @@ class _SeriesDownloadSheetState extends State<_SeriesDownloadSheet> {
   @override
   Widget build(BuildContext context) {
     final seasons = widget.detail.seasons;
+    final isDark = widget.isDark;
 
     return DraggableScrollableSheet(
       initialChildSize: 0.7,
@@ -942,21 +606,28 @@ class _SeriesDownloadSheetState extends State<_SeriesDownloadSheet> {
             margin: const EdgeInsets.symmetric(vertical: 8),
             width: 40,
             height: 4,
-            decoration: BoxDecoration(color: Colors.grey.shade400, borderRadius: BorderRadius.circular(2)),
+            decoration: BoxDecoration(
+              color: isDark ? Colors.grey.shade600 : Colors.grey.shade400,
+              borderRadius: BorderRadius.circular(2),
+            ),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
             child: Row(
               children: [
-                const Icon(Icons.download_rounded, color: Color(0xFFF5C518)),
+                Icon(Icons.download_rounded, color: isDark ? const Color(0xFFF5C518) : const Color(0xFFD4A817)),
                 const SizedBox(width: 8),
-                Text('All Download Links', style: widget.theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                Text('All Download Links', style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 20,
+                  color: isDark ? Colors.white : Colors.black87,
+                )),
               ],
             ),
           ),
-          const Divider(height: 1),
+          Divider(height: 1, color: isDark ? Colors.white12 : Colors.grey.shade300),
 
-          // Season selector
+          // Season selector - improved contrast
           if (seasons.isNotEmpty) ...[
             Container(
               height: 48,
@@ -977,19 +648,32 @@ class _SeriesDownloadSheetState extends State<_SeriesDownloadSheet> {
                           _selectedEpisodeIndex = null;
                         });
                       },
-                      selectedColor: const Color(0xFFE50914).withOpacity(0.3),
+                      selectedColor: isDark
+                          ? const Color(0xFFE50914).withOpacity(0.35)
+                          : const Color(0xFFE50914).withOpacity(0.15),
+                      backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
                       side: BorderSide(
-                        color: isSelected ? const Color(0xFFE50914) : Colors.grey.withOpacity(0.5),
+                        color: isSelected
+                            ? const Color(0xFFE50914)
+                            : (isDark ? Colors.white24 : Colors.grey.shade400),
+                        width: isSelected ? 1.5 : 1.0,
+                      ),
+                      labelStyle: TextStyle(
+                        color: isSelected
+                            ? (isDark ? Colors.white : Colors.black87)
+                            : (isDark ? Colors.white70 : Colors.black54),
+                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                        fontSize: 12,
                       ),
                     ),
                   );
                 },
               ),
             ),
-            const Divider(height: 1),
+            Divider(height: 1, color: isDark ? Colors.white12 : Colors.grey.shade300),
           ],
 
-          // Episode list
+          // Episode list - improved contrast
           if (_selectedSeasonIndex != null && seasons[_selectedSeasonIndex!].episodes.isNotEmpty) ...[
             Container(
               height: 44,
@@ -1008,16 +692,29 @@ class _SeriesDownloadSheetState extends State<_SeriesDownloadSheet> {
                       onSelected: (_) {
                         setState(() => _selectedEpisodeIndex = index);
                       },
-                      selectedColor: const Color(0xFFF5C518).withOpacity(0.3),
+                      selectedColor: isDark
+                          ? const Color(0xFFF5C518).withOpacity(0.35)
+                          : const Color(0xFFF5C518).withOpacity(0.15),
+                      backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
                       side: BorderSide(
-                        color: isSelected ? const Color(0xFFF5C518) : Colors.grey.withOpacity(0.5),
+                        color: isSelected
+                            ? const Color(0xFFF5C518)
+                            : (isDark ? Colors.white24 : Colors.grey.shade400),
+                        width: isSelected ? 1.5 : 1.0,
+                      ),
+                      labelStyle: TextStyle(
+                        color: isSelected
+                            ? (isDark ? Colors.white : Colors.black87)
+                            : (isDark ? Colors.white70 : Colors.black54),
+                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                        fontSize: 12,
                       ),
                     ),
                   );
                 },
               ),
             ),
-            const Divider(height: 1),
+            Divider(height: 1, color: isDark ? Colors.white12 : Colors.grey.shade300),
           ],
 
           // Download links table
@@ -1036,7 +733,7 @@ class _SeriesDownloadSheetState extends State<_SeriesDownloadSheet> {
                   _selectedSeasonIndex == null
                       ? 'Select a season'
                       : 'Select an episode',
-                  style: TextStyle(color: widget.theme.colorScheme.onSurface.withOpacity(0.5)),
+                  style: TextStyle(color: isDark ? Colors.white54 : Colors.black45),
                 ),
               ),
             ),
@@ -1046,24 +743,26 @@ class _SeriesDownloadSheetState extends State<_SeriesDownloadSheet> {
   }
 
   Widget _buildLinksTable(List<MovieDownloadLink> links, ScrollController controller) {
+    final isDark = widget.isDark;
+
     return Column(
       children: [
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          color: widget.isDark ? Colors.white10 : Colors.grey.shade100,
+          color: isDark ? Colors.white10 : Colors.grey.shade200,
           child: Row(
             children: [
-              _tableCell('No', 40, isHeader: true),
-              _tableCell('Server', 80, isHeader: true),
-              _tableCell('Quality', 70, isHeader: true),
-              _tableCell('Size', 70, isHeader: true),
-              _tableCell('Link', 80, isHeader: true),
+              _tableCell('No', 40, isHeader: true, isDark: isDark),
+              _tableCell('Server', 80, isHeader: true, isDark: isDark),
+              _tableCell('Quality', 70, isHeader: true, isDark: isDark),
+              _tableCell('Size', 70, isHeader: true, isDark: isDark),
+              _tableCell('Link', 80, isHeader: true, isDark: isDark),
             ],
           ),
         ),
         Expanded(
           child: links.isEmpty
-              ? Center(child: Text('No links', style: TextStyle(color: widget.theme.colorScheme.onSurface.withOpacity(0.5))))
+              ? Center(child: Text('No links', style: TextStyle(color: isDark ? Colors.white54 : Colors.black45)))
               : ListView.builder(
                   controller: controller,
                   itemCount: links.length,
@@ -1072,23 +771,23 @@ class _SeriesDownloadSheetState extends State<_SeriesDownloadSheet> {
                     return Container(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                       decoration: BoxDecoration(
-                        border: Border(bottom: BorderSide(color: widget.isDark ? Colors.white10 : Colors.grey.shade200)),
+                        border: Border(bottom: BorderSide(color: isDark ? Colors.white10 : Colors.grey.shade200)),
                       ),
                       child: Row(
                         children: [
-                          _tableCell('${index + 1}', 40),
-                          _tableCell(link.serverName, 80),
-                          _tableCell(link.quality ?? '-', 70),
-                          _tableCell(link.size ?? '-', 70),
+                          _tableCell('${index + 1}', 40, isDark: isDark),
+                          _tableCell(link.serverName, 80, isDark: isDark),
+                          _tableCell(link.quality ?? '-', 70, isDark: isDark),
+                          _tableCell(link.size ?? '-', 70, isDark: isDark),
                           SizedBox(
                             width: 80,
                             child: link.url.isNotEmpty
                                 ? TextButton(
                                     onPressed: () => widget.onLaunchUrl(link.url),
                                     style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: Size.zero, tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                                    child: const Text('Open', style: TextStyle(color: Color(0xFFF5C518), fontSize: 12)),
+                                    child: Text('Open', style: TextStyle(color: isDark ? const Color(0xFFF5C518) : const Color(0xFFD4A817), fontSize: 12)),
                                   )
-                                : const Text('-', style: TextStyle(fontSize: 12)),
+                                : Text('-', style: TextStyle(fontSize: 12, color: isDark ? Colors.white54 : Colors.black45)),
                           ),
                         ],
                       ),
@@ -1100,7 +799,7 @@ class _SeriesDownloadSheetState extends State<_SeriesDownloadSheet> {
     );
   }
 
-  Widget _tableCell(String text, double width, {bool isHeader = false}) {
+  Widget _tableCell(String text, double width, {bool isHeader = false, bool isDark = true}) {
     return SizedBox(
       width: width,
       child: Text(
@@ -1108,7 +807,9 @@ class _SeriesDownloadSheetState extends State<_SeriesDownloadSheet> {
         style: TextStyle(
           fontSize: 12,
           fontWeight: isHeader ? FontWeight.bold : FontWeight.normal,
-          color: isHeader ? null : (widget.isDark ? Colors.white70 : Colors.black87),
+          color: isHeader
+              ? (isDark ? Colors.white : Colors.black87)
+              : (isDark ? Colors.white70 : Colors.black87),
         ),
         overflow: TextOverflow.ellipsis,
       ),
@@ -1141,6 +842,7 @@ class _SeriesWatchSheetState extends State<_SeriesWatchSheet> {
   @override
   Widget build(BuildContext context) {
     final seasons = widget.detail.seasons;
+    final isDark = widget.isDark;
 
     return DraggableScrollableSheet(
       initialChildSize: 0.7,
@@ -1153,19 +855,26 @@ class _SeriesWatchSheetState extends State<_SeriesWatchSheet> {
             margin: const EdgeInsets.symmetric(vertical: 8),
             width: 40,
             height: 4,
-            decoration: BoxDecoration(color: Colors.grey.shade400, borderRadius: BorderRadius.circular(2)),
+            decoration: BoxDecoration(
+              color: isDark ? Colors.grey.shade600 : Colors.grey.shade400,
+              borderRadius: BorderRadius.circular(2),
+            ),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
             child: Row(
               children: [
-                const Icon(Icons.play_circle_filled, color: Color(0xFFF5C518)),
+                Icon(Icons.play_circle_filled, color: isDark ? const Color(0xFFF5C518) : const Color(0xFFD4A817)),
                 const SizedBox(width: 8),
-                Text('Watch Online', style: widget.theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                Text('Watch Online', style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 20,
+                  color: isDark ? Colors.white : Colors.black87,
+                )),
               ],
             ),
           ),
-          const Divider(height: 1),
+          Divider(height: 1, color: isDark ? Colors.white12 : Colors.grey.shade300),
 
           if (seasons.isNotEmpty) ...[
             Container(
@@ -1187,14 +896,29 @@ class _SeriesWatchSheetState extends State<_SeriesWatchSheet> {
                           _selectedEpisodeIndex = null;
                         });
                       },
-                      selectedColor: const Color(0xFFE50914).withOpacity(0.3),
-                      side: BorderSide(color: isSelected ? const Color(0xFFE50914) : Colors.grey.withOpacity(0.5)),
+                      selectedColor: isDark
+                          ? const Color(0xFFE50914).withOpacity(0.35)
+                          : const Color(0xFFE50914).withOpacity(0.15),
+                      backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
+                      side: BorderSide(
+                        color: isSelected
+                            ? const Color(0xFFE50914)
+                            : (isDark ? Colors.white24 : Colors.grey.shade400),
+                        width: isSelected ? 1.5 : 1.0,
+                      ),
+                      labelStyle: TextStyle(
+                        color: isSelected
+                            ? (isDark ? Colors.white : Colors.black87)
+                            : (isDark ? Colors.white70 : Colors.black54),
+                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                        fontSize: 12,
+                      ),
                     ),
                   );
                 },
               ),
             ),
-            const Divider(height: 1),
+            Divider(height: 1, color: isDark ? Colors.white12 : Colors.grey.shade300),
           ],
 
           if (_selectedSeasonIndex != null && seasons[_selectedSeasonIndex!].episodes.isNotEmpty) ...[
@@ -1212,15 +936,32 @@ class _SeriesWatchSheetState extends State<_SeriesWatchSheet> {
                     child: ChoiceChip(
                       label: Text(episode.name),
                       selected: isSelected,
-                      onSelected: (_) => setState(() => _selectedEpisodeIndex = index),
-                      selectedColor: const Color(0xFFF5C518).withOpacity(0.3),
-                      side: BorderSide(color: isSelected ? const Color(0xFFF5C518) : Colors.grey.withOpacity(0.5)),
+                      onSelected: (_) {
+                        setState(() => _selectedEpisodeIndex = index);
+                      },
+                      selectedColor: isDark
+                          ? const Color(0xFFF5C518).withOpacity(0.35)
+                          : const Color(0xFFF5C518).withOpacity(0.15),
+                      backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
+                      side: BorderSide(
+                        color: isSelected
+                            ? const Color(0xFFF5C518)
+                            : (isDark ? Colors.white24 : Colors.grey.shade400),
+                        width: isSelected ? 1.5 : 1.0,
+                      ),
+                      labelStyle: TextStyle(
+                        color: isSelected
+                            ? (isDark ? Colors.white : Colors.black87)
+                            : (isDark ? Colors.white70 : Colors.black54),
+                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                        fontSize: 12,
+                      ),
                     ),
                   );
                 },
               ),
             ),
-            const Divider(height: 1),
+            Divider(height: 1, color: isDark ? Colors.white12 : Colors.grey.shade300),
           ],
 
           if (_selectedSeasonIndex != null && _selectedEpisodeIndex != null)
@@ -1235,8 +976,10 @@ class _SeriesWatchSheetState extends State<_SeriesWatchSheet> {
             Expanded(
               child: Center(
                 child: Text(
-                  _selectedSeasonIndex == null ? 'Select a season' : 'Select an episode',
-                  style: TextStyle(color: widget.theme.colorScheme.onSurface.withOpacity(0.5)),
+                  _selectedSeasonIndex == null
+                      ? 'Select a season'
+                      : 'Select an episode',
+                  style: TextStyle(color: isDark ? Colors.white54 : Colors.black45),
                 ),
               ),
             ),
@@ -1246,24 +989,26 @@ class _SeriesWatchSheetState extends State<_SeriesWatchSheet> {
   }
 
   Widget _buildLinksTable(List<MovieDownloadLink> links, ScrollController controller) {
+    final isDark = widget.isDark;
+
     return Column(
       children: [
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          color: widget.isDark ? Colors.white10 : Colors.grey.shade100,
+          color: isDark ? Colors.white10 : Colors.grey.shade200,
           child: Row(
             children: [
-              _tableCell('No', 40, isHeader: true),
-              _tableCell('Server', 80, isHeader: true),
-              _tableCell('Quality', 70, isHeader: true),
-              _tableCell('Size', 70, isHeader: true),
-              _tableCell('Link', 80, isHeader: true),
+              _tableCell('No', 40, isHeader: true, isDark: isDark),
+              _tableCell('Server', 80, isHeader: true, isDark: isDark),
+              _tableCell('Quality', 70, isHeader: true, isDark: isDark),
+              _tableCell('Size', 70, isHeader: true, isDark: isDark),
+              _tableCell('Link', 80, isHeader: true, isDark: isDark),
             ],
           ),
         ),
         Expanded(
           child: links.isEmpty
-              ? Center(child: Text('No links', style: TextStyle(color: widget.theme.colorScheme.onSurface.withOpacity(0.5))))
+              ? Center(child: Text('No links', style: TextStyle(color: isDark ? Colors.white54 : Colors.black45)))
               : ListView.builder(
                   controller: controller,
                   itemCount: links.length,
@@ -1272,23 +1017,23 @@ class _SeriesWatchSheetState extends State<_SeriesWatchSheet> {
                     return Container(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                       decoration: BoxDecoration(
-                        border: Border(bottom: BorderSide(color: widget.isDark ? Colors.white10 : Colors.grey.shade200)),
+                        border: Border(bottom: BorderSide(color: isDark ? Colors.white10 : Colors.grey.shade200)),
                       ),
                       child: Row(
                         children: [
-                          _tableCell('${index + 1}', 40),
-                          _tableCell(link.serverName, 80),
-                          _tableCell(link.quality ?? '-', 70),
-                          _tableCell(link.size ?? '-', 70),
+                          _tableCell('${index + 1}', 40, isDark: isDark),
+                          _tableCell(link.serverName, 80, isDark: isDark),
+                          _tableCell(link.quality ?? '-', 70, isDark: isDark),
+                          _tableCell(link.size ?? '-', 70, isDark: isDark),
                           SizedBox(
                             width: 80,
                             child: link.url.isNotEmpty
                                 ? TextButton(
                                     onPressed: () => widget.onLaunchUrl(link.url),
                                     style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: Size.zero, tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                                    child: const Text('Watch', style: TextStyle(color: Color(0xFFF5C518), fontSize: 12)),
+                                    child: Text('Watch', style: TextStyle(color: isDark ? const Color(0xFFF5C518) : const Color(0xFFD4A817), fontSize: 12)),
                                   )
-                                : const Text('-', style: TextStyle(fontSize: 12)),
+                                : Text('-', style: TextStyle(fontSize: 12, color: isDark ? Colors.white54 : Colors.black45)),
                           ),
                         ],
                       ),
@@ -1300,7 +1045,7 @@ class _SeriesWatchSheetState extends State<_SeriesWatchSheet> {
     );
   }
 
-  Widget _tableCell(String text, double width, {bool isHeader = false}) {
+  Widget _tableCell(String text, double width, {bool isHeader = false, bool isDark = true}) {
     return SizedBox(
       width: width,
       child: Text(
@@ -1308,7 +1053,9 @@ class _SeriesWatchSheetState extends State<_SeriesWatchSheet> {
         style: TextStyle(
           fontSize: 12,
           fontWeight: isHeader ? FontWeight.bold : FontWeight.normal,
-          color: isHeader ? null : (widget.isDark ? Colors.white70 : Colors.black87),
+          color: isHeader
+              ? (isDark ? Colors.white : Colors.black87)
+              : (isDark ? Colors.white70 : Colors.black87),
         ),
         overflow: TextOverflow.ellipsis,
       ),
