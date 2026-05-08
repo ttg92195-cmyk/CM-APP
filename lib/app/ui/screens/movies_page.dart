@@ -86,157 +86,98 @@ class _MoviesPageState extends State<MoviesPage> {
 
   @override
   Widget build(BuildContext context) {
-    final appConfig = Provider.of<AppConfig>(context);
     final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
 
     return Scaffold(
-      body: Column(
-        children: [
-          // Custom Top Bar
-          SafeArea(
-            bottom: false,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF121212) : Colors.white,
-                border: Border(
-                  bottom: BorderSide(
-                    color: isDark ? Colors.white12 : Colors.grey.shade200,
-                    width: 1,
-                  ),
-                ),
-              ),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: Icon(
-                      Icons.arrow_back,
-                      color: isDark ? Colors.white : Colors.black87,
-                      size: 22,
-                    ),
-                    onPressed: () {
-                      Navigator.maybePop(context);
-                    },
-                  ),
-                  Expanded(
-                    child: Text(
-                      appConfig.translate('movies'),
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: isDark ? Colors.white : Colors.black87,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: _loadMovies,
+              child: CustomScrollView(
+                controller: _scrollController,
+                slivers: [
+                  // Movie grid (3 columns)
+                  SliverPadding(
+                    padding: const EdgeInsets.all(8),
+                    sliver: SliverGrid(
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 3,
+                        childAspectRatio: 0.55,
+                        crossAxisSpacing: 8,
+                        mainAxisSpacing: 8,
+                      ),
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                          final movie = _movies[index];
+                          return MovieCard(
+                            movie: movie,
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      MovieDetailScreen(slug: movie.slug),
+                                ),
+                              );
+                            },
+                          );
+                        },
+                        childCount: _movies.length,
                       ),
                     ),
                   ),
-                  Padding(
-                    padding: const EdgeInsets.only(right: 12),
-                    child: Text(
-                      '${_movies.length}',
-                      style: const TextStyle(
-                        color: Color(0xFFE50914),
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
+
+                  // Loading more indicator
+                  if (_isLoadingMore)
+                    const SliverToBoxAdapter(
+                      child: Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Center(child: CircularProgressIndicator()),
                       ),
                     ),
+
+                  // No more data indicator
+                  if (!_hasMore && _movies.isNotEmpty)
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Center(
+                          child: Text(
+                            'No more movies',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurface
+                                  .withOpacity(0.4),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                  // Empty state
+                  if (!_isLoading && _movies.isEmpty)
+                    SliverToBoxAdapter(
+                      child: SizedBox(
+                        height: 300,
+                        child: Center(
+                          child: Text(
+                            'No movies yet',
+                            style: theme.textTheme.bodyLarge?.copyWith(
+                              color:
+                                  theme.colorScheme.onSurface.withOpacity(0.5),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                  // Bottom spacing
+                  const SliverToBoxAdapter(
+                    child: SizedBox(height: 16),
                   ),
                 ],
               ),
             ),
-          ),
-
-          // Movie Grid
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : RefreshIndicator(
-                    onRefresh: _loadMovies,
-                    child: CustomScrollView(
-                      controller: _scrollController,
-                      slivers: [
-                        // Total count subtitle
-                        SliverToBoxAdapter(
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                            child: Text(
-                              '${_movies.length} ${appConfig.translate("movies")}',
-                              style: theme.textTheme.labelMedium?.copyWith(
-                                color: theme.colorScheme.onSurface
-                                    .withOpacity(0.6),
-                              ),
-                            ),
-                          ),
-                        ),
-
-                        // Movie grid
-                        SliverPadding(
-                          padding: const EdgeInsets.all(8),
-                          sliver: SliverGrid(
-                            gridDelegate:
-                                const SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: 3,
-                              childAspectRatio: 0.55,
-                              crossAxisSpacing: 8,
-                              mainAxisSpacing: 8,
-                            ),
-                            delegate: SliverChildBuilderDelegate(
-                              (context, index) {
-                                final movie = _movies[index];
-                                return MovieCard(
-                                  movie: movie,
-                                  onTap: () {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) =>
-                                            MovieDetailScreen(slug: movie.slug),
-                                      ),
-                                    );
-                                  },
-                                );
-                              },
-                              childCount: _movies.length,
-                            ),
-                          ),
-                        ),
-
-                        // Loading more indicator
-                        if (_isLoadingMore)
-                          const SliverToBoxAdapter(
-                            child: Padding(
-                              padding: EdgeInsets.all(16),
-                              child: Center(child: CircularProgressIndicator()),
-                            ),
-                          ),
-
-                        // No more data indicator
-                        if (!_hasMore && _movies.isNotEmpty)
-                          SliverToBoxAdapter(
-                            child: Padding(
-                              padding: const EdgeInsets.all(16),
-                              child: Center(
-                                child: Text(
-                                  'No more movies',
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: theme.colorScheme.onSurface
-                                        .withOpacity(0.4),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-
-                        // Bottom spacing
-                        const SliverToBoxAdapter(
-                          child: SizedBox(height: 16),
-                        ),
-                      ],
-                    ),
-                  ),
-          ),
-        ],
-      ),
     );
   }
 }

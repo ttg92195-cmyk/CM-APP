@@ -233,7 +233,7 @@ class _HomePageState extends State<HomePage> {
                   ),
 
                   // Admin Panel (only for admin users)
-                  if (appConfig.isCurrentUserAdmin)
+                  if (appConfig.isCurrentUserAdmin) ...[
                     _buildDrawerItem(
                       icon: Icons.admin_panel_settings_outlined,
                       activeIcon: Icons.admin_panel_settings,
@@ -247,6 +247,22 @@ class _HomePageState extends State<HomePage> {
                         );
                       },
                     ),
+                    _buildDrawerItem(
+                      icon: Icons.auto_awesome_outlined,
+                      activeIcon: Icons.auto_awesome,
+                      title: 'TMDB Generator',
+                      isDark: isDark,
+                      onTap: () {
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('TMDB Generator - Coming Soon!'),
+                            backgroundColor: Color(0xFFE50914),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
 
                   const Divider(height: 24),
 
