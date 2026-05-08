@@ -430,7 +430,7 @@ class FirestoreContentService {
     }
   }
 
-  /// Search movies by keyword (prefix match)
+  /// Search movies by keyword (prefix match + case-insensitive fallback)
   Future<Map<String, dynamic>> searchMovies(
     String keyword, {
     int limit = 20,
@@ -439,29 +439,90 @@ class FirestoreContentService {
     final lowerKeyword = keyword.toLowerCase();
     final upperKeyword = lowerKeyword + '\uf8ff';
 
-    Query query = _moviesRef
-        .where('title', isGreaterThanOrEqualTo: lowerKeyword)
-        .where('title', isLessThanOrEqualTo: upperKeyword)
-        .orderBy('title')
-        .limit(limit);
+    try {
+      // Try searching with lowercase title field first
+      Query query = _moviesRef
+          .where('title', isGreaterThanOrEqualTo: lowerKeyword)
+          .where('title', isLessThanOrEqualTo: upperKeyword)
+          .orderBy('title')
+          .limit(limit);
 
-    if (startAfter != null) {
-      query = query.startAfterDocument(startAfter);
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
+      }
+
+      final snapshot = await query.get();
+      final movies = snapshot.docs
+          .map((doc) => Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              ))
+          .toList();
+
+      // If no results with lowercase, try with original case
+      if (movies.isEmpty && keyword != lowerKeyword) {
+        final originalUpper = keyword + '\uf8ff';
+        Query query2 = _moviesRef
+            .where('title', isGreaterThanOrEqualTo: keyword)
+            .where('title', isLessThanOrEqualTo: originalUpper)
+            .orderBy('title')
+            .limit(limit);
+
+        if (startAfter != null) {
+          query2 = query2.startAfterDocument(startAfter);
+        }
+
+        final snapshot2 = await query2.get();
+        final movies2 = snapshot2.docs
+            .map((doc) => Movie.fromMap(
+                  doc.data() as Map<String, dynamic>,
+                  docId: doc.id,
+                ))
+            .toList();
+
+        return {
+          'movies': movies2,
+          'hasMore': snapshot2.docs.length >= limit,
+          'lastDoc': snapshot2.docs.isNotEmpty ? snapshot2.docs.last : null,
+        };
+      }
+
+      return {
+        'movies': movies,
+        'hasMore': snapshot.docs.length >= limit,
+        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+      };
+    } catch (e) {
+      // Fallback: fetch all movies and filter client-side
+      debugPrint('searchMovies query failed, using client-side fallback: $e');
+      try {
+        final snapshot = await _moviesRef.limit(200).get();
+        final allMovies = snapshot.docs
+            .map((doc) => Movie.fromMap(
+                  doc.data() as Map<String, dynamic>,
+                  docId: doc.id,
+                ))
+            .toList();
+
+        // Client-side case-insensitive search
+        final filtered = allMovies
+            .where((m) => m.title.toLowerCase().contains(lowerKeyword))
+            .toList();
+
+        return {
+          'movies': filtered.take(limit).toList(),
+          'hasMore': filtered.length > limit,
+          'lastDoc': null,
+        };
+      } catch (e2) {
+        debugPrint('searchMovies fallback also failed: $e2');
+        return {
+          'movies': <Movie>[],
+          'hasMore': false,
+          'lastDoc': null,
+        };
+      }
     }
-
-    final snapshot = await query.get();
-    final movies = snapshot.docs
-        .map((doc) => Movie.fromMap(
-              doc.data() as Map<String, dynamic>,
-              docId: doc.id,
-            ))
-        .toList();
-
-    return {
-      'movies': movies,
-      'hasMore': snapshot.docs.length >= limit,
-      'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
-    };
   }
 
   /// Get all genres
@@ -495,6 +556,68 @@ class FirestoreContentService {
               docId: doc.id,
             ))
         .toList();
+  }
+
+  /// Get movies by collection name
+  Future<Map<String, dynamic>> getMoviesByCollection(
+    String collectionName, {
+    int limit = 20,
+    DocumentSnapshot? startAfter,
+  }) async {
+    try {
+      Query query = _moviesRef
+          .where('collections', arrayContains: collectionName)
+          .orderBy('createdAt', descending: true)
+          .limit(limit);
+
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
+      }
+
+      final snapshot = await query.get();
+      final movies = snapshot.docs
+          .map((doc) => Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              ))
+          .toList();
+
+      return {
+        'movies': movies,
+        'hasMore': snapshot.docs.length >= limit,
+        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+      };
+    } catch (e) {
+      debugPrint('getMoviesByCollection with orderBy failed, trying fallback: $e');
+      try {
+        Query query = _moviesRef
+            .where('collections', arrayContains: collectionName)
+            .limit(limit);
+
+        final snapshot = await query.get();
+        final movies = snapshot.docs
+            .map((doc) => Movie.fromMap(
+                  doc.data() as Map<String, dynamic>,
+                  docId: doc.id,
+                ))
+            .toList();
+        movies.sort((a, b) => (b.createdAt ?? DateTime(2000))
+            .compareTo(a.createdAt ?? DateTime(2000)));
+
+        return {
+          'movies': movies,
+          'hasMore': snapshot.docs.length >= limit,
+          'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+        };
+      } catch (e2) {
+        debugPrint('getMoviesByCollection fallback also failed: $e2');
+        return {
+          'movies': <Movie>[],
+          'hasMore': false,
+          'lastDoc': null,
+        };
+      }
+    }
   }
 
   /// Get movies by tag name (simple list, for home screen sections)

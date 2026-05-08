@@ -96,6 +96,7 @@ class _MoviesPageState extends State<MoviesPage> {
               onRefresh: _loadMovies,
               child: CustomScrollView(
                 controller: _scrollController,
+                physics: const AlwaysScrollableScrollPhysics(),
                 slivers: [
                   // Movie grid (3 columns)
                   SliverPadding(
@@ -117,7 +118,9 @@ class _MoviesPageState extends State<MoviesPage> {
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (_) => MovieDetailScreen(slug: movie.slug),
+                                  builder: (_) => movie.type == 'series'
+                                      ? SeriesDetailScreen(slug: movie.slug)
+                                      : MovieDetailScreen(slug: movie.slug),
                                 ),
                               );
                             },
@@ -137,35 +140,28 @@ class _MoviesPageState extends State<MoviesPage> {
                       ),
                     ),
 
-                  // No more data indicator
-                  if (!_hasMore && _movies.isNotEmpty)
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Center(
-                          child: Text(
-                            'No more movies',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onSurface
-                                  .withOpacity(0.4),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-
                   // Empty state
                   if (!_isLoading && _movies.isEmpty)
                     SliverToBoxAdapter(
                       child: SizedBox(
                         height: 300,
                         child: Center(
-                          child: Text(
-                            'No movies yet',
-                            style: theme.textTheme.bodyLarge?.copyWith(
-                              color:
-                                  theme.colorScheme.onSurface.withOpacity(0.5),
-                            ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.movie_filter_outlined,
+                                size: 64,
+                                color: theme.colorScheme.onSurface.withOpacity(0.3),
+                              ),
+                              const SizedBox(height: 16),
+                              Text(
+                                'No movies yet',
+                                style: theme.textTheme.bodyLarge?.copyWith(
+                                  color: theme.colorScheme.onSurface.withOpacity(0.5),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),

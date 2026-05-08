@@ -15,40 +15,69 @@ class MovieListTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
     return ListTile(
       onTap: onTap,
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      leading: ClipRRect(
-        borderRadius: BorderRadius.circular(6),
-        child: SizedBox(
-          width: 55,
-          height: 80,
-          child: movie.fullPosterUrl.isNotEmpty
-              ? CachedNetworkImage(
-                  imageUrl: movie.fullPosterUrl,
-                  fit: BoxFit.cover,
-                  placeholder: (context, url) => Container(
-                    color: theme.colorScheme.surfaceContainerHighest,
-                    child: const Center(
-                      child: CircularProgressIndicator(strokeWidth: 2),
+      leading: Stack(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: SizedBox(
+              width: 55,
+              height: 80,
+              child: movie.fullPosterUrl.isNotEmpty
+                  ? CachedNetworkImage(
+                      imageUrl: movie.fullPosterUrl,
+                      fit: BoxFit.cover,
+                      placeholder: (context, url) => Container(
+                        color: theme.colorScheme.surfaceContainerHighest,
+                        child: const Center(
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                      errorWidget: (context, url, error) => Container(
+                        color: theme.colorScheme.surfaceContainerHighest,
+                        child: Icon(
+                          Icons.movie,
+                          color: theme.colorScheme.onSurface.withOpacity(0.5),
+                        ),
+                      ),
+                    )
+                  : Container(
+                      color: theme.colorScheme.surfaceContainerHighest,
+                      child: Icon(
+                        Icons.movie,
+                        color: theme.colorScheme.onSurface.withOpacity(0.5),
+                      ),
                     ),
-                  ),
-                  errorWidget: (context, url, error) => Container(
-                    color: theme.colorScheme.surfaceContainerHighest,
-                    child: Icon(
-                      Icons.movie,
-                      color: theme.colorScheme.onSurface.withOpacity(0.5),
-                    ),
-                  ),
-                )
-              : Container(
-                  color: theme.colorScheme.surfaceContainerHighest,
-                  child: Icon(
-                    Icons.movie,
-                    color: theme.colorScheme.onSurface.withOpacity(0.5),
+            ),
+          ),
+          // 4K badge on poster thumbnail
+          if (movie.resolution != null &&
+              movie.resolution!.isNotEmpty &&
+              movie.resolution!.toUpperCase().contains('4K'))
+            Positioned(
+              top: 2,
+              left: 2,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE50914),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                child: const Text(
+                  '4K',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 7,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-        ),
+              ),
+            ),
+        ],
       ),
       title: Text(
         movie.title,
@@ -63,12 +92,13 @@ class MovieListTile extends StatelessWidget {
         child: Row(
           children: [
             if (movie.rating != null && movie.rating!.isNotEmpty) ...[
-              Icon(Icons.star, size: 14, color: Colors.amber),
+              const Icon(Icons.star, size: 14, color: Color(0xFFFFC107)),
               const SizedBox(width: 2),
               Text(
                 movie.rating!,
                 style: theme.textTheme.labelSmall?.copyWith(
-                  color: Colors.amber,
+                  color: const Color(0xFFFFC107),
+                  fontWeight: FontWeight.bold,
                 ),
               ),
               const SizedBox(width: 8),
@@ -82,7 +112,9 @@ class MovieListTile extends StatelessWidget {
               ),
               const SizedBox(width: 8),
             ],
-            if (movie.resolution != null && movie.resolution!.isNotEmpty)
+            if (movie.resolution != null &&
+                movie.resolution!.isNotEmpty &&
+                !movie.resolution!.toUpperCase().contains('4K'))
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(

@@ -42,16 +42,34 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
 
   Future<void> _loadData() async {
     try {
-      final results = await Future.wait([
-        _contentService.getGenres(),
-        _contentService.getTags(),
-        _contentService.getCollections(),
-      ]);
+      // Load each independently
+      List<TagAndGenres> genres = [];
+      List<TagAndGenres> tags = [];
+      List<TagAndGenres> collections = [];
+
+      try {
+        genres = await _contentService.getGenres();
+      } catch (e) {
+        debugPrint('Error loading genres: $e');
+      }
+
+      try {
+        tags = await _contentService.getTags();
+      } catch (e) {
+        debugPrint('Error loading tags: $e');
+      }
+
+      try {
+        collections = await _contentService.getCollections();
+      } catch (e) {
+        debugPrint('Error loading collections: $e');
+      }
+
       if (mounted) {
         setState(() {
-          _genres = results[0] as List<TagAndGenres>;
-          _tags = results[1] as List<TagAndGenres>;
-          _collections = results[2] as List<TagAndGenres>;
+          _genres = genres;
+          _tags = tags;
+          _collections = collections;
           _isLoading = false;
         });
       }
@@ -97,7 +115,7 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
     }
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
-      child: _buildNeonGrid(theme, _genres.map((g) => g.name).toList(), isGenre: true, isTag: false),
+      child: _buildNeonGrid(theme, _genres.map((g) => g.name).toList(), filterType: 'genre'),
     );
   }
 
@@ -108,7 +126,7 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
     }
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
-      child: _buildNeonGrid(theme, _tags.map((t) => t.name).toList(), isGenre: false, isTag: true),
+      child: _buildNeonGrid(theme, _tags.map((t) => t.name).toList(), filterType: 'tag'),
     );
   }
 
@@ -119,14 +137,14 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
     }
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
-      child: _buildNeonGrid(theme, _collections.map((c) => c.name).toList(), isGenre: false, isTag: false),
+      child: _buildNeonGrid(theme, _collections.map((c) => c.name).toList(), filterType: 'collection'),
     );
   }
 
   // ==================== SHARED WIDGETS ====================
 
   Widget _buildNeonGrid(ThemeData theme, List<String> items,
-      {required bool isGenre, required bool isTag}) {
+      {required String filterType}) {
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -141,15 +159,16 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
         final item = items[index];
         return _NeonGlowButton(
           title: item,
-          isSolid: !isGenre && !isTag, // Collections = solid red
+          isSolid: filterType == 'collection',
           onTap: () {
             Navigator.push(
               context,
               MaterialPageRoute(
                 builder: (_) => FilterResultPage(
                   title: item,
-                  genreName: isGenre ? item : null,
-                  tagName: isTag ? item : null,
+                  genreName: filterType == 'genre' ? item : null,
+                  tagName: filterType == 'tag' ? item : null,
+                  collectionName: filterType == 'collection' ? item : null,
                 ),
               ),
             );
@@ -263,12 +282,14 @@ class FilterResultPage extends StatefulWidget {
   final String title;
   final String? genreName;
   final String? tagName;
+  final String? collectionName;
 
   const FilterResultPage({
     super.key,
     required this.title,
     this.genreName,
     this.tagName,
+    this.collectionName,
   });
 
   @override
@@ -298,6 +319,8 @@ class _FilterResultPageState extends State<FilterResultPage> {
         result = await _contentService.getMoviesByGenre(widget.genreName!, limit: 20);
       } else if (widget.tagName != null) {
         result = await _contentService.getMoviesByTag(widget.tagName!, limit: 20);
+      } else if (widget.collectionName != null) {
+        result = await _contentService.getMoviesByCollection(widget.collectionName!, limit: 20);
       } else {
         result = await _contentService.getMovies(limit: 20);
       }
@@ -311,6 +334,7 @@ class _FilterResultPageState extends State<FilterResultPage> {
         });
       }
     } catch (e) {
+      debugPrint('FilterResultPage load error: $e');
       if (mounted) setState(() => _isLoading = false);
     }
   }
@@ -327,6 +351,10 @@ class _FilterResultPageState extends State<FilterResultPage> {
       } else if (widget.tagName != null) {
         result = await _contentService.getMoviesByTag(
           widget.tagName!, limit: 20, startAfter: _lastDoc,
+        );
+      } else if (widget.collectionName != null) {
+        result = await _contentService.getMoviesByCollection(
+          widget.collectionName!, limit: 20, startAfter: _lastDoc,
         );
       } else {
         result = await _contentService.getMovies(limit: 20, startAfter: _lastDoc);
@@ -347,48 +375,73 @@ class _FilterResultPageState extends State<FilterResultPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Scaffold(
       appBar: AppBar(title: Text(widget.title)),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : NotificationListener<ScrollNotification>(
-              onNotification: (scrollInfo) {
-                if (scrollInfo.metrics.pixels ==
-                        scrollInfo.metrics.maxScrollExtent &&
-                    !_isLoadingMore &&
-                    _hasMore) {
-                  _loadMore();
-                }
-                return false;
-              },
-              child: GridView.builder(
-                padding: const EdgeInsets.all(8),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3,
-                  childAspectRatio: 0.55,
-                  crossAxisSpacing: 8,
-                  mainAxisSpacing: 8,
-                ),
-                itemCount: _movies.length + (_isLoadingMore ? 6 : 0),
-                itemBuilder: (context, index) {
-                  if (index >= _movies.length) {
-                    return const Center(child: CircularProgressIndicator());
+          : RefreshIndicator(
+              onRefresh: _loadMovies,
+              child: NotificationListener<ScrollNotification>(
+                onNotification: (scrollInfo) {
+                  if (scrollInfo.metrics.pixels ==
+                          scrollInfo.metrics.maxScrollExtent &&
+                      !_isLoadingMore &&
+                      _hasMore) {
+                    _loadMore();
                   }
-                  final movie = _movies[index];
-                  return MovieCard(
-                    movie: movie,
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => movie.type == 'series'
-                              ? SeriesDetailScreen(slug: movie.slug)
-                              : MovieDetailScreen(slug: movie.slug),
-                        ),
-                      );
-                    },
-                  );
+                  return false;
                 },
+                child: _movies.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.movie_filter_outlined,
+                              size: 64,
+                              color: theme.colorScheme.onSurface.withOpacity(0.3),
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'No ${widget.title} yet',
+                              style: theme.textTheme.bodyLarge?.copyWith(
+                                color: theme.colorScheme.onSurface.withOpacity(0.5),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : GridView.builder(
+                        padding: const EdgeInsets.all(8),
+                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 3,
+                          childAspectRatio: 0.55,
+                          crossAxisSpacing: 8,
+                          mainAxisSpacing: 8,
+                        ),
+                        itemCount: _movies.length + (_isLoadingMore ? 6 : 0),
+                        itemBuilder: (context, index) {
+                          if (index >= _movies.length) {
+                            return const Center(child: CircularProgressIndicator());
+                          }
+                          final movie = _movies[index];
+                          return MovieCard(
+                            movie: movie,
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => movie.type == 'series'
+                                      ? SeriesDetailScreen(slug: movie.slug)
+                                      : MovieDetailScreen(slug: movie.slug),
+                                ),
+                              );
+                            },
+                          );
+                        },
+                      ),
               ),
             ),
     );

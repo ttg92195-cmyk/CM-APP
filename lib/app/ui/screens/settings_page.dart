@@ -12,7 +12,6 @@ class SettingsPage extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(appConfig.translate('settings')),
       ),
       body: ListView(
         children: [

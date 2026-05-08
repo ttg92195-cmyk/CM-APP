@@ -8,10 +8,12 @@ import 'package:cm_movies/app/ui/home/trending_movie_component.dart';
 import 'package:cm_movies/app/ui/components/movie_list_tile.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
 import 'package:cm_movies/app/ui/screens/series_detail_screen.dart';
-import 'package:cm_movies/app/ui/screens/genres_tags_collections_page.dart';
+import 'package:cm_movies/app/ui/screens/category_page.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final Function(int)? onNavigateToTab;
+
+  const HomeScreen({super.key, this.onNavigateToTab});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -34,11 +36,11 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Movie> _animationMovies = [];
   List<Movie> _animeMovies = [];
   List<Movie> _bollywoodMovies = [];
-  List<Movie> _donghuaMovies = [];
-  List<Movie> _cDramaMovies = [];
 
   bool _isLoading = true;
   String? _error;
+
+  static const int _homeLimit = 10; // Show 10 posts per section on Home
 
   @override
   void initState() {
@@ -79,14 +81,14 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       try {
-        final moviesResult = await _contentService.getMovies(limit: 20);
+        final moviesResult = await _contentService.getMovies(limit: _homeLimit);
         allMovies = List<Movie>.from(moviesResult['movies'] ?? []);
       } catch (e) {
         debugPrint('Error loading all movies: $e');
       }
 
       try {
-        final seriesResult = await _contentService.getSeries(limit: 20);
+        final seriesResult = await _contentService.getSeries(limit: _homeLimit);
         allSeries = List<Movie>.from(seriesResult['movies'] ?? []);
       } catch (e) {
         debugPrint('Error loading all series: $e');
@@ -118,13 +120,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadTagBasedData() async {
     final tagEntries = <MapEntry<String, Future<List<Movie>>>>[
-      MapEntry('K Drama', _contentService.getMoviesByTagSimple('K Drama')),
-      MapEntry('4K', _contentService.getMoviesByTagSimple('4K')),
-      MapEntry('Animation', _contentService.getMoviesByTagSimple('Animation')),
-      MapEntry('Anime', _contentService.getMoviesByTagSimple('Anime')),
-      MapEntry('Bollywood', _contentService.getMoviesByTagSimple('Bollywood')),
-      MapEntry('Donghua', _contentService.getMoviesByTagSimple('Donghua')),
-      MapEntry('C Drama', _contentService.getMoviesByTagSimple('C Drama')),
+      MapEntry('K Drama', _contentService.getMoviesByTagSimple('K Drama', limit: _homeLimit)),
+      MapEntry('4K', _contentService.getMoviesByTagSimple('4K', limit: _homeLimit)),
+      MapEntry('Animation', _contentService.getMoviesByTagSimple('Animation', limit: _homeLimit)),
+      MapEntry('Anime', _contentService.getMoviesByTagSimple('Anime', limit: _homeLimit)),
+      MapEntry('Bollywood', _contentService.getMoviesByTagSimple('Bollywood', limit: _homeLimit)),
     ];
 
     // Load each tag query independently to avoid one failure blocking all
@@ -138,9 +138,15 @@ class _HomeScreenState extends State<HomeScreen> {
                 _kDramaMovies = movies;
                 break;
               case '4K':
-                _fourKMovies = movies;
+                _fourKMovies = movies.where((m) => m.type == 'movie').toList();
                 _fourKSeries = movies.where((m) => m.type == 'series').toList();
-                if (_fourKSeries.isEmpty) _fourKSeries = movies;
+                // If filtering by type resulted in empty, show all 4K
+                if (_fourKMovies.isEmpty && movies.isNotEmpty) {
+                  _fourKMovies = movies;
+                }
+                if (_fourKSeries.isEmpty && movies.isNotEmpty) {
+                  _fourKSeries = movies;
+                }
                 break;
               case 'Animation':
                 _animationMovies = movies;
@@ -150,12 +156,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 break;
               case 'Bollywood':
                 _bollywoodMovies = movies;
-                break;
-              case 'Donghua':
-                _donghuaMovies = movies;
-                break;
-              case 'C Drama':
-                _cDramaMovies = movies;
                 break;
             }
           });
@@ -186,15 +186,10 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  void _navigateToMoreByTag(String tagName) {
+  void _navigateToCategory(CategoryPage page) {
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => FilterResultPage(
-          title: tagName,
-          tagName: tagName,
-        ),
-      ),
+      MaterialPageRoute(builder: (_) => page),
     );
   }
 
@@ -257,9 +252,12 @@ class _HomeScreenState extends State<HomeScreen> {
           if (_allMovies.isNotEmpty)
             TrendingMovieComponent(
               title: appConfig.translate('movies'),
-              movies: _allMovies.length > 20 ? _allMovies.sublist(0, 20) : _allMovies,
+              movies: _allMovies.length > _homeLimit ? _allMovies.sublist(0, _homeLimit) : _allMovies,
               onMovieTap: _navigateToDetail,
-              onMore: () => _navigateToMoreByTag('Featured Movies'),
+              onMore: () {
+                // Navigate to Movies tab (index 1)
+                widget.onNavigateToTab?.call(1);
+              },
             ),
 
           const SizedBox(height: 8),
@@ -268,9 +266,12 @@ class _HomeScreenState extends State<HomeScreen> {
           if (_allSeries.isNotEmpty)
             TrendingMovieComponent(
               title: appConfig.translate('series'),
-              movies: _allSeries.length > 20 ? _allSeries.sublist(0, 20) : _allSeries,
+              movies: _allSeries.length > _homeLimit ? _allSeries.sublist(0, _homeLimit) : _allSeries,
               onMovieTap: _navigateToDetail,
-              onMore: () => _navigateToMoreByTag('Trending'),
+              onMore: () {
+                // Navigate to Series tab (index 2)
+                widget.onNavigateToTab?.call(2);
+              },
             ),
 
           const SizedBox(height: 8),
@@ -279,18 +280,30 @@ class _HomeScreenState extends State<HomeScreen> {
           if (_trendingMovies.isNotEmpty)
             TrendingMovieComponent(
               title: appConfig.translate('trending_movies'),
-              movies: _trendingMovies,
+              movies: _trendingMovies.length > _homeLimit ? _trendingMovies.sublist(0, _homeLimit) : _trendingMovies,
               onMovieTap: _navigateToDetail,
+              onMore: () {
+                _navigateToCategory(CategoryPage(
+                  title: appConfig.translate('trending_movies'),
+                  filterType: CategoryFilterType.trendingMovies,
+                ));
+              },
             ),
 
           const SizedBox(height: 8),
 
-          // Trending TV Shows
+          // Trending Series
           if (_trendingTvShows.isNotEmpty)
             TrendingMovieComponent(
               title: appConfig.translate('trending_tv_shows'),
-              movies: _trendingTvShows,
+              movies: _trendingTvShows.length > _homeLimit ? _trendingTvShows.sublist(0, _homeLimit) : _trendingTvShows,
               onMovieTap: _navigateToDetail,
+              onMore: () {
+                _navigateToCategory(CategoryPage(
+                  title: appConfig.translate('trending_tv_shows'),
+                  filterType: CategoryFilterType.trendingSeries,
+                ));
+              },
             ),
 
           const SizedBox(height: 8),
@@ -299,9 +312,15 @@ class _HomeScreenState extends State<HomeScreen> {
           if (_kDramaMovies.isNotEmpty)
             TrendingMovieComponent(
               title: appConfig.translate('k_drama'),
-              movies: _kDramaMovies,
+              movies: _kDramaMovies.length > _homeLimit ? _kDramaMovies.sublist(0, _homeLimit) : _kDramaMovies,
               onMovieTap: _navigateToDetail,
-              onMore: () => _navigateToMoreByTag('K Drama'),
+              onMore: () {
+                _navigateToCategory(CategoryPage(
+                  title: appConfig.translate('k_drama'),
+                  filterType: CategoryFilterType.tag,
+                  filterValue: 'K Drama',
+                ));
+              },
             ),
 
           const SizedBox(height: 8),
@@ -310,9 +329,16 @@ class _HomeScreenState extends State<HomeScreen> {
           if (_fourKMovies.isNotEmpty)
             TrendingMovieComponent(
               title: appConfig.translate('4k_movies'),
-              movies: _fourKMovies,
+              movies: _fourKMovies.length > _homeLimit ? _fourKMovies.sublist(0, _homeLimit) : _fourKMovies,
               onMovieTap: _navigateToDetail,
-              onMore: () => _navigateToMoreByTag('4K'),
+              onMore: () {
+                _navigateToCategory(CategoryPage(
+                  title: appConfig.translate('4k_movies'),
+                  filterType: CategoryFilterType.tag,
+                  filterValue: '4K',
+                  typeFilter: 'movie',
+                ));
+              },
             ),
 
           const SizedBox(height: 8),
@@ -321,9 +347,16 @@ class _HomeScreenState extends State<HomeScreen> {
           if (_fourKSeries.isNotEmpty)
             TrendingMovieComponent(
               title: appConfig.translate('4k_series'),
-              movies: _fourKSeries,
+              movies: _fourKSeries.length > _homeLimit ? _fourKSeries.sublist(0, _homeLimit) : _fourKSeries,
               onMovieTap: _navigateToDetail,
-              onMore: () => _navigateToMoreByTag('4K'),
+              onMore: () {
+                _navigateToCategory(CategoryPage(
+                  title: appConfig.translate('4k_series'),
+                  filterType: CategoryFilterType.tag,
+                  filterValue: '4K',
+                  typeFilter: 'series',
+                ));
+              },
             ),
 
           const SizedBox(height: 8),
@@ -332,9 +365,15 @@ class _HomeScreenState extends State<HomeScreen> {
           if (_animationMovies.isNotEmpty)
             TrendingMovieComponent(
               title: appConfig.translate('animation'),
-              movies: _animationMovies,
+              movies: _animationMovies.length > _homeLimit ? _animationMovies.sublist(0, _homeLimit) : _animationMovies,
               onMovieTap: _navigateToDetail,
-              onMore: () => _navigateToMoreByTag('Animation'),
+              onMore: () {
+                _navigateToCategory(CategoryPage(
+                  title: appConfig.translate('animation'),
+                  filterType: CategoryFilterType.tag,
+                  filterValue: 'Animation',
+                ));
+              },
             ),
 
           const SizedBox(height: 8),
@@ -343,9 +382,15 @@ class _HomeScreenState extends State<HomeScreen> {
           if (_animeMovies.isNotEmpty)
             TrendingMovieComponent(
               title: appConfig.translate('anime'),
-              movies: _animeMovies,
+              movies: _animeMovies.length > _homeLimit ? _animeMovies.sublist(0, _homeLimit) : _animeMovies,
               onMovieTap: _navigateToDetail,
-              onMore: () => _navigateToMoreByTag('Anime'),
+              onMore: () {
+                _navigateToCategory(CategoryPage(
+                  title: appConfig.translate('anime'),
+                  filterType: CategoryFilterType.tag,
+                  filterValue: 'Anime',
+                ));
+              },
             ),
 
           const SizedBox(height: 8),
@@ -354,31 +399,15 @@ class _HomeScreenState extends State<HomeScreen> {
           if (_bollywoodMovies.isNotEmpty)
             TrendingMovieComponent(
               title: appConfig.translate('bollywood'),
-              movies: _bollywoodMovies,
+              movies: _bollywoodMovies.length > _homeLimit ? _bollywoodMovies.sublist(0, _homeLimit) : _bollywoodMovies,
               onMovieTap: _navigateToDetail,
-              onMore: () => _navigateToMoreByTag('Bollywood'),
-            ),
-
-          const SizedBox(height: 8),
-
-          // Donghua
-          if (_donghuaMovies.isNotEmpty)
-            TrendingMovieComponent(
-              title: appConfig.translate('donghua'),
-              movies: _donghuaMovies,
-              onMovieTap: _navigateToDetail,
-              onMore: () => _navigateToMoreByTag('Donghua'),
-            ),
-
-          const SizedBox(height: 8),
-
-          // C Drama
-          if (_cDramaMovies.isNotEmpty)
-            TrendingMovieComponent(
-              title: appConfig.translate('c_drama'),
-              movies: _cDramaMovies,
-              onMovieTap: _navigateToDetail,
-              onMore: () => _navigateToMoreByTag('C Drama'),
+              onMore: () {
+                _navigateToCategory(CategoryPage(
+                  title: appConfig.translate('bollywood'),
+                  filterType: CategoryFilterType.tag,
+                  filterValue: 'Bollywood',
+                ));
+              },
             ),
 
           const SizedBox(height: 16),
