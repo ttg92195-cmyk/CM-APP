@@ -61,6 +61,7 @@ class _MovieBookmarkScreenState extends State<MovieBookmarkScreen> {
 
     return Scaffold(
       appBar: AppBar(
+        title: Text(appConfig.translate('bookmarks')),
         actions: [
           if (_bookmarks.isNotEmpty)
             IconButton(

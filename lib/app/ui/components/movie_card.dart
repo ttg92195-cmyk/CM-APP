@@ -24,6 +24,7 @@ class MovieCard extends StatelessWidget {
         margin: const EdgeInsets.symmetric(horizontal: 4),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
             // Poster with overlays
             Stack(
@@ -166,23 +167,31 @@ class MovieCard extends StatelessWidget {
                   ),
               ],
             ),
-            const SizedBox(height: 6),
-            // Title
-            Text(
-              movie.title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall?.copyWith(
-                fontWeight: FontWeight.w600,
+            const SizedBox(height: 4),
+            // Title - use Flexible to prevent overflow
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: Text(
+                movie.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  height: 1.2,
+                ),
               ),
             ),
-            const SizedBox(height: 2),
-            // Year only (rating and resolution are on the poster now)
+            const SizedBox(height: 1),
+            // Year + Rating inline below title
             if (movie.year != null && movie.year!.isNotEmpty)
-              Text(
-                movie.year!,
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: theme.colorScheme.onSurface.withOpacity(0.6),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: Text(
+                  movie.year!,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.onSurface.withOpacity(0.6),
+                    fontSize: 10,
+                  ),
                 ),
               ),
           ],

@@ -3,12 +3,12 @@ import 'package:provider/provider.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
-import 'package:cm_movies/app/core/services/recent_service.dart';
 import 'package:cm_movies/app/ui/home/trending_movie_component.dart';
-import 'package:cm_movies/app/ui/components/movie_list_tile.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
 import 'package:cm_movies/app/ui/screens/series_detail_screen.dart';
 import 'package:cm_movies/app/ui/screens/category_page.dart';
+import 'package:cm_movies/app/ui/home/home_page.dart' show kMoviesTab, kSeriesTab;
+import 'package:cm_movies/app/core/services/recent_service.dart';
 
 class HomeScreen extends StatefulWidget {
   final Function(int)? onNavigateToTab;
@@ -25,7 +25,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   List<Movie> _trendingMovies = [];
   List<Movie> _trendingTvShows = [];
-  List<Movie> _recentMovies = [];
   List<Movie> _allMovies = [];
   List<Movie> _allSeries = [];
 
@@ -54,14 +53,11 @@ class _HomeScreenState extends State<HomeScreen> {
       _error = null;
     });
     try {
-      // Load each query independently to avoid one failure blocking all
       List<Movie> trendingMovies = [];
       List<Movie> trendingTvShows = [];
-      List<Movie> recentMovies = [];
       List<Movie> allMovies = [];
       List<Movie> allSeries = [];
 
-      // Load core data with individual error handling
       try {
         trendingMovies = await _contentService.getTrendingMovies();
       } catch (e) {
@@ -72,12 +68,6 @@ class _HomeScreenState extends State<HomeScreen> {
         trendingTvShows = await _contentService.getTrendingTvShows();
       } catch (e) {
         debugPrint('Error loading trending TV shows: $e');
-      }
-
-      try {
-        recentMovies = await _recentService.getRecentMovies();
-      } catch (e) {
-        debugPrint('Error loading recent movies: $e');
       }
 
       try {
@@ -98,13 +88,11 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _trendingMovies = trendingMovies;
           _trendingTvShows = trendingTvShows;
-          _recentMovies = recentMovies;
           _allMovies = allMovies;
           _allSeries = allSeries;
           _isLoading = false;
         });
 
-        // Now load tag-based data
         _loadTagBasedData();
       }
     } catch (e) {
@@ -127,7 +115,6 @@ class _HomeScreenState extends State<HomeScreen> {
       MapEntry('Bollywood', _contentService.getMoviesByTagSimple('Bollywood', limit: _homeLimit)),
     ];
 
-    // Load each tag query independently to avoid one failure blocking all
     for (final entry in tagEntries) {
       try {
         final movies = await entry.value;
@@ -140,7 +127,6 @@ class _HomeScreenState extends State<HomeScreen> {
               case '4K':
                 _fourKMovies = movies.where((m) => m.type == 'movie').toList();
                 _fourKSeries = movies.where((m) => m.type == 'series').toList();
-                // If filtering by type resulted in empty, show all 4K
                 if (_fourKMovies.isEmpty && movies.isNotEmpty) {
                   _fourKMovies = movies;
                 }
@@ -166,8 +152,11 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _navigateToDetail(Movie movie) {
+  void _navigateToDetail(Movie movie) async {
     final isSeries = movie.type == 'series';
+    // Save to recent before navigating
+    await _recentService.addRecent(movie);
+    if (!mounted) return;
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -175,15 +164,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ? SeriesDetailScreen(slug: movie.slug)
             : MovieDetailScreen(slug: movie.slug),
       ),
-    ).then((_) {
-      _recentService.getRecentMovies().then((recents) {
-        if (mounted) {
-          setState(() {
-            _recentMovies = recents;
-          });
-        }
-      });
-    });
+    );
   }
 
   void _navigateToCategory(CategoryPage page) {
@@ -255,8 +236,7 @@ class _HomeScreenState extends State<HomeScreen> {
               movies: _allMovies.length > _homeLimit ? _allMovies.sublist(0, _homeLimit) : _allMovies,
               onMovieTap: _navigateToDetail,
               onMore: () {
-                // Navigate to Movies tab (index 1)
-                widget.onNavigateToTab?.call(1);
+                widget.onNavigateToTab?.call(kMoviesTab);
               },
             ),
 
@@ -269,8 +249,7 @@ class _HomeScreenState extends State<HomeScreen> {
               movies: _allSeries.length > _homeLimit ? _allSeries.sublist(0, _homeLimit) : _allSeries,
               onMovieTap: _navigateToDetail,
               onMore: () {
-                // Navigate to Series tab (index 2)
-                widget.onNavigateToTab?.call(2);
+                widget.onNavigateToTab?.call(kSeriesTab);
               },
             ),
 
@@ -410,56 +389,11 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
 
-          const SizedBox(height: 16),
-
-          // Recently Viewed
-          if (_recentMovies.isNotEmpty) ...[
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    appConfig.translate('recently_viewed'),
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: () async {
-                      await _recentService.clearRecents();
-                      setState(() {
-                        _recentMovies = [];
-                      });
-                    },
-                    child: Text(
-                      appConfig.translate('clear_history'),
-                      style: TextStyle(color: Colors.redAccent.shade200),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            ListView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: _recentMovies.length > 10 ? 10 : _recentMovies.length,
-              itemBuilder: (context, index) {
-                final movie = _recentMovies[index];
-                return MovieListTile(
-                  movie: movie,
-                  onTap: () => _navigateToDetail(movie),
-                );
-              },
-            ),
-          ],
-
           // Empty state
           if (_trendingMovies.isEmpty &&
               _trendingTvShows.isEmpty &&
               _allMovies.isEmpty &&
-              _allSeries.isEmpty &&
-              _recentMovies.isEmpty)
+              _allSeries.isEmpty)
             SizedBox(
               height: 300,
               child: Center(

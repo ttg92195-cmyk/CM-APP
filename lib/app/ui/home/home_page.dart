@@ -4,6 +4,7 @@ import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/ui/home/home_screen.dart';
 import 'package:cm_movies/app/ui/screens/movies_page.dart';
 import 'package:cm_movies/app/ui/screens/series_page.dart';
+import 'package:cm_movies/app/ui/screens/recent_page.dart';
 import 'package:cm_movies/app/ui/screens/movie_bookmark_screen.dart';
 import 'package:cm_movies/app/ui/screens/genres_tags_collections_page.dart';
 import 'package:cm_movies/app/ui/screens/download_page.dart';
@@ -12,7 +13,13 @@ import 'package:cm_movies/app/ui/screens/login_page.dart';
 import 'package:cm_movies/app/ui/screens/profile_page.dart';
 import 'package:cm_movies/app/ui/screens/search_screen.dart';
 import 'package:cm_movies/app/ui/screens/admin_panel_page.dart';
-import 'package:cm_movies/app/ui/screens/category_page.dart';
+
+// Bottom nav tab indices
+const int kHomeTab = 0;
+const int kMoviesTab = 1;
+const int kSeriesTab = 2;
+const int kRecentTab = 3;
+const int kSettingsTab = 4;
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -22,36 +29,26 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  int _currentIndex = 0;
+  int _currentIndex = kHomeTab;
 
-  // We use a dynamic approach - some indexes are actual bottom nav tabs,
-  // others navigate to pages pushed on the stack
-  static const int _homeIndex = 0;
-  static const int _moviesIndex = 1;
-  static const int _seriesIndex = 2;
-  static const int _bookmarksIndex = 3;
-  static const int _settingsIndex = 4;
-
-  void navigateToCategoryPage(CategoryPage page) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => page),
-    );
-  }
+  // Global keys for tab pages to allow refresh
+  final GlobalKey<State<MoviesPage>> _moviesKey = GlobalKey();
+  final GlobalKey<State<SeriesPage>> _seriesKey = GlobalKey();
+  final GlobalKey<State<RecentPage>> _recentKey = GlobalKey();
 
   @override
   Widget build(BuildContext context) {
     final appConfig = Provider.of<AppConfig>(context);
     final theme = Theme.of(context);
 
-    // Bottom Nav pages (5 main tabs)
+    // Bottom Nav pages (5 main tabs: Home, Movies, Series, Recent, Settings)
     final List<Widget> bottomNavPages = [
       HomeScreen(onNavigateToTab: (index) {
         setState(() => _currentIndex = index);
       }),
-      const MoviesPage(),
-      const SeriesPage(),
-      const MovieBookmarkScreen(),
+      MoviesPage(key: _moviesKey),
+      SeriesPage(key: _seriesKey),
+      RecentPage(key: _recentKey),
       const SettingsPage(),
     ];
 
@@ -133,9 +130,9 @@ class _HomePageState extends State<HomePage> {
             label: appConfig.translate('series'),
           ),
           NavigationDestination(
-            icon: Icon(Icons.bookmark_outline, color: isDark ? Colors.grey : Colors.grey.shade600),
-            selectedIcon: const Icon(Icons.bookmark, color: Color(0xFFE50914)),
-            label: appConfig.translate('bookmarks'),
+            icon: Icon(Icons.history_outlined, color: isDark ? Colors.grey : Colors.grey.shade600),
+            selectedIcon: const Icon(Icons.history, color: Color(0xFFE50914)),
+            label: appConfig.translate('recent'),
           ),
           NavigationDestination(
             icon: Icon(Icons.settings_outlined, color: isDark ? Colors.grey : Colors.grey.shade600),
@@ -220,121 +217,32 @@ class _HomePageState extends State<HomePage> {
               child: ListView(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 children: [
-                  // Category shortcuts from drawer
+                  // Bookmark (moved from bottom nav to drawer)
                   _buildDrawerItem(
-                    icon: Icons.local_fire_department_outlined,
-                    activeIcon: Icons.local_fire_department,
-                    title: 'K Drama',
+                    icon: Icons.bookmark_outline,
+                    activeIcon: Icons.bookmark,
+                    title: appConfig.translate('bookmarks'),
                     isDark: isDark,
                     onTap: () {
                       Navigator.pop(context);
-                      navigateToCategoryPage(CategoryPage(
-                        title: 'K Drama',
-                        filterType: CategoryFilterType.tag,
-                        filterValue: 'K Drama',
-                      ));
-                    },
-                  ),
-                  _buildDrawerItem(
-                    icon: Icons.trending_up_outlined,
-                    activeIcon: Icons.trending_up,
-                    title: appConfig.translate('trending_movies'),
-                    isDark: isDark,
-                    onTap: () {
-                      Navigator.pop(context);
-                      navigateToCategoryPage(CategoryPage(
-                        title: appConfig.translate('trending_movies'),
-                        filterType: CategoryFilterType.trendingMovies,
-                      ));
-                    },
-                  ),
-                  _buildDrawerItem(
-                    icon: Icons.trending_up_outlined,
-                    activeIcon: Icons.trending_up,
-                    title: appConfig.translate('trending_tv_shows'),
-                    isDark: isDark,
-                    onTap: () {
-                      Navigator.pop(context);
-                      navigateToCategoryPage(CategoryPage(
-                        title: appConfig.translate('trending_tv_shows'),
-                        filterType: CategoryFilterType.trendingSeries,
-                      ));
-                    },
-                  ),
-                  _buildDrawerItem(
-                    icon: Icons.high_quality_outlined,
-                    activeIcon: Icons.high_quality,
-                    title: appConfig.translate('4k_movies'),
-                    isDark: isDark,
-                    onTap: () {
-                      Navigator.pop(context);
-                      navigateToCategoryPage(CategoryPage(
-                        title: appConfig.translate('4k_movies'),
-                        filterType: CategoryFilterType.tag,
-                        filterValue: '4K',
-                        typeFilter: 'movie',
-                      ));
-                    },
-                  ),
-                  _buildDrawerItem(
-                    icon: Icons.high_quality_outlined,
-                    activeIcon: Icons.high_quality,
-                    title: appConfig.translate('4k_series'),
-                    isDark: isDark,
-                    onTap: () {
-                      Navigator.pop(context);
-                      navigateToCategoryPage(CategoryPage(
-                        title: appConfig.translate('4k_series'),
-                        filterType: CategoryFilterType.tag,
-                        filterValue: '4K',
-                        typeFilter: 'series',
-                      ));
-                    },
-                  ),
-                  _buildDrawerItem(
-                    icon: Icons.animation_outlined,
-                    activeIcon: Icons.animation,
-                    title: appConfig.translate('animation'),
-                    isDark: isDark,
-                    onTap: () {
-                      Navigator.pop(context);
-                      navigateToCategoryPage(CategoryPage(
-                        title: appConfig.translate('animation'),
-                        filterType: CategoryFilterType.tag,
-                        filterValue: 'Animation',
-                      ));
-                    },
-                  ),
-                  _buildDrawerItem(
-                    icon: Icons.play_circle_outline,
-                    activeIcon: Icons.play_circle,
-                    title: appConfig.translate('anime'),
-                    isDark: isDark,
-                    onTap: () {
-                      Navigator.pop(context);
-                      navigateToCategoryPage(CategoryPage(
-                        title: appConfig.translate('anime'),
-                        filterType: CategoryFilterType.tag,
-                        filterValue: 'Anime',
-                      ));
-                    },
-                  ),
-                  _buildDrawerItem(
-                    icon: Icons.movie_filter_outlined,
-                    activeIcon: Icons.movie_filter,
-                    title: appConfig.translate('bollywood'),
-                    isDark: isDark,
-                    onTap: () {
-                      Navigator.pop(context);
-                      navigateToCategoryPage(CategoryPage(
-                        title: appConfig.translate('bollywood'),
-                        filterType: CategoryFilterType.tag,
-                        filterValue: 'Bollywood',
-                      ));
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const MovieBookmarkScreen()),
+                      );
                     },
                   ),
 
-                  const Divider(height: 24),
+                  // Recent
+                  _buildDrawerItem(
+                    icon: Icons.history_outlined,
+                    activeIcon: Icons.history,
+                    title: appConfig.translate('recently_viewed'),
+                    isDark: isDark,
+                    onTap: () {
+                      Navigator.pop(context);
+                      setState(() => _currentIndex = kRecentTab);
+                    },
+                  ),
 
                   // Genres/Tags/Collections
                   _buildDrawerItem(
@@ -368,6 +276,7 @@ class _HomePageState extends State<HomePage> {
 
                   // Admin Panel (only for admin users)
                   if (appConfig.isCurrentUserAdmin) ...[
+                    const Divider(height: 24),
                     _buildDrawerItem(
                       icon: Icons.admin_panel_settings_outlined,
                       activeIcon: Icons.admin_panel_settings,

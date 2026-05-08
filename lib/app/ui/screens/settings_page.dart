@@ -11,9 +11,8 @@ class SettingsPage extends StatelessWidget {
     final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(
-      ),
-      body: ListView(
+      body: SafeArea(
+        child: ListView(
         children: [
           // Theme Section
           Padding(
@@ -109,6 +108,7 @@ class SettingsPage extends StatelessWidget {
             },
           ),
         ],
+      ),
       ),
     );
   }

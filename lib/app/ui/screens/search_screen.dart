@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
-import 'package:cm_movies/app/ui/components/movie_list_tile.dart';
+import 'package:cm_movies/app/ui/components/movie_card.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
 import 'package:cm_movies/app/ui/screens/series_detail_screen.dart';
 
@@ -18,39 +17,26 @@ class SearchScreen extends StatefulWidget {
 class _SearchScreenState extends State<SearchScreen> {
   final FirestoreContentService _contentService = FirestoreContentService();
   final TextEditingController _searchController = TextEditingController();
-  final ScrollController _scrollController = ScrollController();
 
   List<Movie> _results = [];
-  DocumentSnapshot? _lastDoc;
-  bool _hasMore = true;
   bool _isLoading = false;
-  bool _isLoadingMore = false;
   bool _hasSearched = false;
-  String _lastQuery = '';
 
   @override
   void initState() {
     super.initState();
-    _scrollController.addListener(_onScroll);
+    _searchController.addListener(() {
+      setState(() {}); // Rebuild to show/hide clear button
+    });
   }
 
   @override
   void dispose() {
     _searchController.dispose();
-    _scrollController.dispose();
     super.dispose();
   }
 
-  void _onScroll() {
-    if (_scrollController.position.pixels ==
-            _scrollController.position.maxScrollExtent &&
-        !_isLoadingMore &&
-        _hasMore) {
-      _loadMore();
-    }
-  }
-
-  Future<void> _search({bool loadMore = false}) async {
+  Future<void> _search() async {
     final query = _searchController.text.trim();
     if (query.isEmpty) {
       setState(() {
@@ -60,50 +46,40 @@ class _SearchScreenState extends State<SearchScreen> {
       return;
     }
 
-    if (!loadMore) {
-      setState(() {
-        _isLoading = true;
-        _lastQuery = query;
-        _lastDoc = null;
-        _hasMore = true;
-      });
-    } else {
-      setState(() => _isLoadingMore = true);
-    }
+    setState(() {
+      _isLoading = true;
+      _hasSearched = true;
+    });
 
     try {
-      final result = await _contentService.searchMovies(
-        query,
-        limit: 20,
-        startAfter: loadMore ? _lastDoc : null,
-      );
+      final result = await _contentService.searchMovies(query, limit: 50);
       if (mounted) {
         setState(() {
-          if (loadMore) {
-            _results.addAll(result['movies'] as List<Movie>);
-          } else {
-            _results = result['movies'] as List<Movie>;
-          }
-          _hasMore = result['hasMore'] as bool;
-          _lastDoc = result['lastDoc'] as DocumentSnapshot?;
+          _results = result['movies'] as List<Movie>;
           _isLoading = false;
-          _isLoadingMore = false;
-          _hasSearched = true;
         });
       }
     } catch (e) {
+      debugPrint('Search error: $e');
       if (mounted) {
         setState(() {
+          _results = [];
           _isLoading = false;
-          _isLoadingMore = false;
-          _hasSearched = true;
         });
       }
     }
   }
 
-  Future<void> _loadMore() async {
-    await _search(loadMore: true);
+  void _navigateToDetail(Movie movie) {
+    final isSeries = movie.type == 'series';
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => isSeries
+            ? SeriesDetailScreen(slug: movie.slug)
+            : MovieDetailScreen(slug: movie.slug),
+      ),
+    );
   }
 
   @override
@@ -154,7 +130,7 @@ class _SearchScreenState extends State<SearchScreen> {
               child: Row(
                 children: [
                   Text(
-                    '${_results.length} ${appConfig.translate('movies')}',
+                    '${_results.length} results',
                     style: theme.textTheme.labelMedium?.copyWith(
                       color: theme.colorScheme.onSurface.withOpacity(0.6),
                     ),
@@ -163,7 +139,7 @@ class _SearchScreenState extends State<SearchScreen> {
               ),
             ),
 
-          // Results List
+          // Results Grid
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
@@ -181,8 +157,7 @@ class _SearchScreenState extends State<SearchScreen> {
                             Text(
                               appConfig.translate('no_results'),
                               style: theme.textTheme.bodyLarge?.copyWith(
-                                color:
-                                    theme.colorScheme.onSurface.withOpacity(0.5),
+                                color: theme.colorScheme.onSurface.withOpacity(0.5),
                               ),
                             ),
                           ],
@@ -196,46 +171,32 @@ class _SearchScreenState extends State<SearchScreen> {
                                 Icon(
                                   Icons.movie_filter_outlined,
                                   size: 64,
-                                  color:
-                                      theme.colorScheme.onSurface.withOpacity(0.3),
+                                  color: theme.colorScheme.onSurface.withOpacity(0.3),
                                 ),
                                 const SizedBox(height: 16),
                                 Text(
                                   appConfig.translate('search_hint'),
                                   style: theme.textTheme.bodyLarge?.copyWith(
-                                    color: theme.colorScheme.onSurface
-                                        .withOpacity(0.5),
+                                    color: theme.colorScheme.onSurface.withOpacity(0.5),
                                   ),
                                 ),
                               ],
                             ),
                           )
-                        : ListView.builder(
-                            controller: _scrollController,
-                            itemCount: _results.length + (_isLoadingMore ? 1 : 0),
+                        : GridView.builder(
+                            padding: const EdgeInsets.all(8),
+                            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 3,
+                              childAspectRatio: 0.55,
+                              crossAxisSpacing: 8,
+                              mainAxisSpacing: 8,
+                            ),
+                            itemCount: _results.length,
                             itemBuilder: (context, index) {
-                              if (index >= _results.length) {
-                                return const Padding(
-                                  padding: EdgeInsets.all(16),
-                                  child: Center(
-                                    child: CircularProgressIndicator(),
-                                  ),
-                                );
-                              }
                               final movie = _results[index];
-                              return MovieListTile(
+                              return MovieCard(
                                 movie: movie,
-                                onTap: () {
-                                  final isSeries = movie.type == 'series';
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => isSeries
-                                          ? SeriesDetailScreen(slug: movie.slug)
-                                          : MovieDetailScreen(slug: movie.slug),
-                                    ),
-                                  );
-                                },
+                                onTap: () => _navigateToDetail(movie),
                               );
                             },
                           ),
