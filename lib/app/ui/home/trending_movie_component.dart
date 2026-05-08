@@ -77,7 +77,7 @@ class TrendingMovieComponent extends StatelessWidget {
   }
 }
 
-/// Skeleton loading widget for a single movie card
+/// Skeleton loading widget for a single movie card with shimmer pulse
 class MovieCardSkeleton extends StatefulWidget {
   const MovieCardSkeleton({super.key});
 
@@ -95,7 +95,7 @@ class _MovieCardSkeletonState extends State<MovieCardSkeleton>
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1200),
-    )..repeat();
+    )..repeat(reverse: true);
   }
 
   @override
@@ -109,95 +109,55 @@ class _MovieCardSkeletonState extends State<MovieCardSkeleton>
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final baseColor = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE0E0E0);
-    final highlightColor = isDark ? const Color(0xFF3A3A3A) : const Color(0xFFF5F5F5);
 
-    return Container(
-      width: 130,
-      margin: const EdgeInsets.symmetric(horizontal: 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Poster skeleton
-          AnimatedBuilder(
-            animation: _controller,
-            builder: (context, child) {
-              return Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  gradient: LinearGradient(
-                    begin: Alignment(-1.0 + (_controller.value * 2.0), 0),
-                    end: Alignment(1.0 + (_controller.value * 2.0), 0),
-                    colors: [
-                      baseColor,
-                      highlightColor,
-                      baseColor,
-                    ],
-                    stops: const [0.0, 0.5, 1.0],
-                  ),
-                ),
-                child: AspectRatio(
-                  aspectRatio: 2 / 3,
-                  child: Container(),
-                ),
-              );
-            },
-          ),
-          const SizedBox(height: 4),
-          // Title skeleton
-          AnimatedBuilder(
-            animation: _controller,
-            builder: (context, child) {
-              return Container(
-                height: 12,
-                width: 100,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(4),
-                  gradient: LinearGradient(
-                    begin: Alignment(-1.0 + (_controller.value * 2.0), 0),
-                    end: Alignment(1.0 + (_controller.value * 2.0), 0),
-                    colors: [
-                      baseColor,
-                      highlightColor,
-                      baseColor,
-                    ],
-                    stops: const [0.0, 0.5, 1.0],
-                  ),
-                ),
-              );
-            },
-          ),
-          const SizedBox(height: 4),
-          // Year skeleton
-          AnimatedBuilder(
-            animation: _controller,
-            builder: (context, child) {
-              return Container(
-                height: 10,
-                width: 50,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(4),
-                  gradient: LinearGradient(
-                    begin: Alignment(-1.0 + (_controller.value * 2.0), 0),
-                    end: Alignment(1.0 + (_controller.value * 2.0), 0),
-                    colors: [
-                      baseColor,
-                      highlightColor,
-                      baseColor,
-                    ],
-                    stops: const [0.0, 0.5, 1.0],
-                  ],
-                ),
-              );
-            },
-          ),
-        ],
+    return FadeTransition(
+      opacity: Tween<double>(begin: 0.4, end: 1.0).animate(_controller),
+      child: Container(
+        width: 130,
+        margin: const EdgeInsets.symmetric(horizontal: 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Poster skeleton
+            Container(
+              decoration: BoxDecoration(
+                color: baseColor,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: AspectRatio(
+                aspectRatio: 2 / 3,
+                child: const SizedBox.expand(),
+              ),
+            ),
+            const SizedBox(height: 6),
+            // Title skeleton
+            Container(
+              height: 12,
+              width: 100,
+              decoration: BoxDecoration(
+                color: baseColor,
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+            const SizedBox(height: 4),
+            // Year skeleton
+            Container(
+              height: 10,
+              width: 50,
+              decoration: BoxDecoration(
+                color: baseColor,
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
-/// Skeleton loading for a horizontal section (one row)
+/// Skeleton loading for a horizontal section (one row with one poster)
 class TrendingMovieSkeleton extends StatelessWidget {
   final String title;
 
