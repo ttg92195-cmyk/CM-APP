@@ -278,18 +278,64 @@ class FirestoreContentService {
   }
 
   /// Get movie detail by slug
+  /// Prefers the most recently updated document when duplicates exist.
   Future<MovieDetail?> getMovieBySlug(String slug) async {
+    try {
+      // Try with orderBy first (requires composite index: slug + updatedAt)
+      final snapshot = await _moviesRef
+          .where('slug', isEqualTo: slug)
+          .orderBy('updatedAt', descending: true)
+          .limit(1)
+          .get();
+
+      if (snapshot.docs.isNotEmpty) {
+        final doc = snapshot.docs.first;
+        return MovieDetail.fromMap(
+          doc.data() as Map<String, dynamic>,
+          docId: doc.id,
+        );
+      }
+    } catch (e) {
+      // Fallback: if composite index doesn't exist, fetch all and pick best
+      debugPrint('getMovieBySlug with orderBy failed, trying fallback: $e');
+    }
+
+    // Fallback: fetch all matching and pick the most complete one
     final snapshot = await _moviesRef
         .where('slug', isEqualTo: slug)
-        .limit(1)
+        .limit(10)
         .get();
 
     if (snapshot.docs.isEmpty) return null;
 
-    final doc = snapshot.docs.first;
+    // Pick the document with the most data (poster, backdrop, rating, etc.)
+    DocumentSnapshot? bestDoc;
+    int bestScore = -1;
+
+    for (final doc in snapshot.docs) {
+      final data = doc.data() as Map<String, dynamic>;
+      int score = 0;
+      // Score based on how many fields have actual data
+      if (data['poster'] != null) score += 3;
+      if (data['backdrop'] != null) score += 3;
+      if (data['rating'] != null) score += 2;
+      if (data['duration'] != null) score += 2;
+      if (data['resolution'] != null) score += 1;
+      if (data['overview'] != null) score += 1;
+      if ((data['categories'] as List?)?.isNotEmpty == true) score += 2;
+      if ((data['tags'] as List?)?.isNotEmpty == true) score += 1;
+      if (data['updatedAt'] != null) score += 5; // Prefer recently updated
+      if (score > bestScore) {
+        bestScore = score;
+        bestDoc = doc;
+      }
+    }
+
+    if (bestDoc == null) return null;
+
     return MovieDetail.fromMap(
-      doc.data() as Map<String, dynamic>,
-      docId: doc.id,
+      bestDoc.data() as Map<String, dynamic>,
+      docId: bestDoc.id,
     );
   }
 
@@ -625,6 +671,38 @@ class FirestoreContentService {
     if (!data.containsKey('slug') || (data['slug'] as String).isEmpty) {
       data['slug'] = _generateSlug(data['title'] as String);
     }
+
+    // Check for duplicate slug - if exists, update instead of creating new
+    final slug = data['slug'] as String;
+    final existingSnapshot = await _moviesRef
+        .where('slug', isEqualTo: slug)
+        .limit(1)
+        .get();
+
+    if (existingSnapshot.docs.isNotEmpty) {
+      // A document with this slug already exists - update it instead
+      final existingDoc = existingSnapshot.docs.first;
+      debugPrint('Slug "$slug" already exists (doc: ${existingDoc.id}), updating instead of creating duplicate');
+      data['updatedAt'] = FieldValue.serverTimestamp();
+      // Don't overwrite createdAt if document exists
+      data.remove('createdAt');
+      await existingDoc.reference.update(data);
+
+      // Update genre/tag counts for new selections
+      if (data.containsKey('categories')) {
+        for (final genreName in data['categories'] as List) {
+          await _incrementCount(_genresRef, genreName.toString());
+        }
+      }
+      if (data.containsKey('tags')) {
+        for (final tagName in data['tags'] as List) {
+          await _incrementCount(_tagsRef, tagName.toString());
+        }
+      }
+
+      return existingDoc.id;
+    }
+
     data['createdAt'] = FieldValue.serverTimestamp();
     data['updatedAt'] = FieldValue.serverTimestamp();
 
