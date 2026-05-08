@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/models/tag_and_genres.dart';
-import 'package:cm_movies/app/core/services/api_service.dart';
+import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/ui/components/movie_card.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
 
@@ -17,56 +18,19 @@ class GenresTagsCollectionsPage extends StatefulWidget {
 
 class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
     with SingleTickerProviderStateMixin {
-  final ApiService _apiService = ApiService();
+  final FirestoreContentService _contentService = FirestoreContentService();
   late TabController _tabController;
 
-  List<TagAndGenres> _apiGenres = [];
-  List<TagAndGenres> _apiTags = [];
+  List<TagAndGenres> _genres = [];
+  List<TagAndGenres> _tags = [];
+  List<TagAndGenres> _collections = [];
   bool _isLoading = true;
-
-  // Hardcoded data matching screenshots
-  final List<String> _movieGenres = [
-    'Action', 'Adventure', 'Animation', 'Comedy', 'Crime',
-    'Documentary', 'Drama', 'Family', 'Fantasy', 'History',
-    'Horror', 'Music', 'Mystery', 'Revenge', 'Romance',
-    'Science Fiction', 'Thriller', 'TV Movie', 'War', 'Western',
-  ];
-
-  final List<String> _seriesGenres = [
-    'Action & Adventure', 'Animation', 'Comedy',
-  ];
-
-  final List<String> _movieTags = [
-    '4K', 'Animation', 'Anime', 'Bollywood', 'C Drama',
-    'Donghua', 'Featured Movies', 'K Drama', 'Reality Show',
-    'Thai Drama', 'Trending',
-  ];
-
-  final List<String> _seriesTags = [
-    '4K', 'Animation', 'Anime', 'Bollywood', 'C Drama',
-    'Donghua', 'Featured Movies', 'K Drama', 'Reality Show',
-    'Thai Drama', 'Trending',
-  ];
-
-  final List<String> _movieCollections = [
-    '007', 'A24 Movies', 'American Pie', 'Batman',
-    'CHRISTMAS MOVIES', 'DCEU', 'Detective Chinatown',
-    'Dragon Gate Posthouse', 'Fast and Furious',
-    'Final Destination', 'Harry Potter',
-    'Marvel Cinematic Universe - MCU', "Ocean's Collection",
-    'Queen Of Kung Fu', 'Quentin Tarantino', 'Saw Collection',
-    'Scooby-Doo', 'Studio Ghibli',
-  ];
-
-  final List<String> _seriesCollections = [
-    'Sit-com', 'Sports Documentaries',
-  ];
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
-    _loadApiData();
+    _loadData();
   }
 
   @override
@@ -75,16 +39,18 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
     super.dispose();
   }
 
-  Future<void> _loadApiData() async {
+  Future<void> _loadData() async {
     try {
       final results = await Future.wait([
-        _apiService.getMovieGenres(),
-        _apiService.getMovieTags(),
+        _contentService.getGenres(),
+        _contentService.getTags(),
+        _contentService.getCollections(),
       ]);
       if (mounted) {
         setState(() {
-          _apiGenres = results[0] as List<TagAndGenres>;
-          _apiTags = results[1] as List<TagAndGenres>;
+          _genres = results[0] as List<TagAndGenres>;
+          _tags = results[1] as List<TagAndGenres>;
+          _collections = results[2] as List<TagAndGenres>;
           _isLoading = false;
         });
       }
@@ -125,76 +91,38 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
 
   // ==================== GENRES TAB ====================
   Widget _buildGenresTab(AppConfig appConfig, ThemeData theme) {
+    if (_genres.isEmpty) {
+      return Center(child: Text(appConfig.translate('no_results')));
+    }
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildSectionTitle(theme, 'Movies'),
-          const SizedBox(height: 8),
-          _buildNeonGrid(theme, _movieGenres, isGenre: true, isTag: false),
-          const SizedBox(height: 24),
-          _buildSectionTitle(theme, 'Series'),
-          const SizedBox(height: 8),
-          _buildNeonGrid(theme, _seriesGenres, isGenre: true, isTag: false),
-        ],
-      ),
+      child: _buildNeonGrid(theme, _genres.map((g) => g.name).toList(), isGenre: true, isTag: false),
     );
   }
 
   // ==================== TAGS TAB ====================
   Widget _buildTagsTab(AppConfig appConfig, ThemeData theme) {
+    if (_tags.isEmpty) {
+      return Center(child: Text(appConfig.translate('no_results')));
+    }
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildSectionTitle(theme, 'Movies'),
-          const SizedBox(height: 8),
-          _buildNeonGrid(theme, _movieTags, isGenre: false, isTag: true),
-          const SizedBox(height: 24),
-          _buildSectionTitle(theme, 'Series'),
-          const SizedBox(height: 8),
-          _buildNeonGrid(theme, _seriesTags, isGenre: false, isTag: true),
-        ],
-      ),
+      child: _buildNeonGrid(theme, _tags.map((t) => t.name).toList(), isGenre: false, isTag: true),
     );
   }
 
   // ==================== COLLECTIONS TAB ====================
   Widget _buildCollectionsTab(AppConfig appConfig, ThemeData theme) {
+    if (_collections.isEmpty) {
+      return Center(child: Text(appConfig.translate('no_results')));
+    }
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildSectionTitle(theme, 'Movies'),
-          const SizedBox(height: 8),
-          _buildNeonGrid(theme, _movieCollections, isGenre: false, isTag: false),
-          const SizedBox(height: 24),
-          _buildSectionTitle(theme, 'Series'),
-          const SizedBox(height: 8),
-          _buildNeonGrid(theme, _seriesCollections, isGenre: false, isTag: false),
-        ],
-      ),
+      child: _buildNeonGrid(theme, _collections.map((c) => c.name).toList(), isGenre: false, isTag: false),
     );
   }
 
   // ==================== SHARED WIDGETS ====================
-
-  Widget _buildSectionTitle(ThemeData theme, String title) {
-    final isDark = theme.brightness == Brightness.dark;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: Text(
-        title,
-        style: theme.textTheme.titleMedium?.copyWith(
-          fontWeight: FontWeight.bold,
-          color: isDark ? Colors.white : Colors.black87,
-        ),
-      ),
-    );
-  }
 
   Widget _buildNeonGrid(ThemeData theme, List<String> items,
       {required bool isGenre, required bool isTag}) {
@@ -214,35 +142,16 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
           title: item,
           isSolid: !isGenre && !isTag, // Collections = solid red
           onTap: () {
-            if (isGenre) {
-              final match = _apiGenres.where((g) => g.name.toLowerCase() == item.toLowerCase()).toList();
-              if (match.isNotEmpty) {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => FilterResultPage(
-                      title: item,
-                      fetchFn: (page) =>
-                          _apiService.getMoviesByGenre(match.first.id, page: page),
-                    ),
-                  ),
-                );
-              }
-            } else if (isTag) {
-              final match = _apiTags.where((t) => t.name.toLowerCase() == item.toLowerCase()).toList();
-              if (match.isNotEmpty) {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => FilterResultPage(
-                      title: item,
-                      fetchFn: (page) =>
-                          _apiService.getMoviesByTag(match.first.id, page: page),
-                    ),
-                  ),
-                );
-              }
-            }
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => FilterResultPage(
+                  title: item,
+                  genreName: isGenre ? item : null,
+                  tagName: isTag ? item : null,
+                ),
+              ),
+            );
           },
         );
       },
@@ -351,12 +260,14 @@ class _NeonGlowButtonState extends State<_NeonGlowButton> {
 // ==================== FILTER RESULT PAGE (public for home_screen) ====================
 class FilterResultPage extends StatefulWidget {
   final String title;
-  final Future<Map<String, dynamic>> Function(int page) fetchFn;
+  final String? genreName;
+  final String? tagName;
 
   const FilterResultPage({
     super.key,
     required this.title,
-    required this.fetchFn,
+    this.genreName,
+    this.tagName,
   });
 
   @override
@@ -364,10 +275,11 @@ class FilterResultPage extends StatefulWidget {
 }
 
 class _FilterResultPageState extends State<FilterResultPage> {
+  final FirestoreContentService _contentService = FirestoreContentService();
+
   List<Movie> _movies = [];
-  int _currentPage = 1;
-  int _lastPage = 1;
-  int _total = 0;
+  DocumentSnapshot? _lastDoc;
+  bool _hasMore = true;
   bool _isLoading = true;
   bool _isLoadingMore = false;
 
@@ -380,13 +292,20 @@ class _FilterResultPageState extends State<FilterResultPage> {
   Future<void> _loadMovies() async {
     setState(() => _isLoading = true);
     try {
-      final result = await widget.fetchFn(1);
+      Map<String, dynamic> result;
+      if (widget.genreName != null) {
+        result = await _contentService.getMoviesByGenre(widget.genreName!, limit: 20);
+      } else if (widget.tagName != null) {
+        result = await _contentService.getMoviesByTag(widget.tagName!, limit: 20);
+      } else {
+        result = await _contentService.getMovies(limit: 20);
+      }
+
       if (mounted) {
         setState(() {
-          _movies = (result['movies'] as List).cast<Movie>();
-          _currentPage = result['current_page'] as int;
-          _lastPage = result['last_page'] as int;
-          _total = result['total'] as int;
+          _movies = result['movies'] as List<Movie>;
+          _hasMore = result['hasMore'] as bool;
+          _lastDoc = result['lastDoc'] as DocumentSnapshot?;
           _isLoading = false;
         });
       }
@@ -396,16 +315,27 @@ class _FilterResultPageState extends State<FilterResultPage> {
   }
 
   Future<void> _loadMore() async {
-    if (_isLoadingMore || _currentPage >= _lastPage) return;
+    if (_isLoadingMore || !_hasMore) return;
     setState(() => _isLoadingMore = true);
     try {
-      final result = await widget.fetchFn(_currentPage + 1);
+      Map<String, dynamic> result;
+      if (widget.genreName != null) {
+        result = await _contentService.getMoviesByGenre(
+          widget.genreName!, limit: 20, startAfter: _lastDoc,
+        );
+      } else if (widget.tagName != null) {
+        result = await _contentService.getMoviesByTag(
+          widget.tagName!, limit: 20, startAfter: _lastDoc,
+        );
+      } else {
+        result = await _contentService.getMovies(limit: 20, startAfter: _lastDoc);
+      }
+
       if (mounted) {
         setState(() {
-          _movies.addAll((result['movies'] as List).cast<Movie>());
-          _currentPage = result['current_page'] as int;
-          _lastPage = result['last_page'] as int;
-          _total = result['total'] as int;
+          _movies.addAll(result['movies'] as List<Movie>);
+          _hasMore = result['hasMore'] as bool;
+          _lastDoc = result['lastDoc'] as DocumentSnapshot?;
           _isLoadingMore = false;
         });
       }
@@ -425,7 +355,7 @@ class _FilterResultPageState extends State<FilterResultPage> {
                 if (scrollInfo.metrics.pixels ==
                         scrollInfo.metrics.maxScrollExtent &&
                     !_isLoadingMore &&
-                    _currentPage < _lastPage) {
+                    _hasMore) {
                   _loadMore();
                 }
                 return false;

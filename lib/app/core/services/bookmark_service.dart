@@ -26,7 +26,7 @@ class BookmarkService {
             .get();
 
         return snapshot.docs
-            .map((doc) => Movie.fromMap(doc.data()))
+            .map((doc) => Movie.fromMap(doc.data(), docId: doc.id))
             .toList();
       } catch (e) {
         // Fall back to local storage if Firestore fails
@@ -48,7 +48,7 @@ class BookmarkService {
   }
 
   // Check if movie is bookmarked
-  Future<bool> isBookmarked(int movieId) async {
+  Future<bool> isBookmarked(String movieId) async {
     final bookmarks = await getBookmarks();
     return bookmarks.any((m) => m.id == movieId);
   }
@@ -61,7 +61,7 @@ class BookmarkService {
             .collection('users')
             .doc(_userId)
             .collection('bookmarks')
-            .doc(movie.id.toString())
+            .doc(movie.id)
             .set({
           ...movie.toMap(),
           'addedAt': FieldValue.serverTimestamp(),
@@ -80,14 +80,14 @@ class BookmarkService {
   }
 
   // Remove bookmark - from Firestore if logged in, else local
-  Future<void> removeBookmark(int movieId) async {
+  Future<void> removeBookmark(String movieId) async {
     if (_isLoggedIn && _userId != null) {
       try {
         await _firestore
             .collection('users')
             .doc(_userId)
             .collection('bookmarks')
-            .doc(movieId.toString())
+            .doc(movieId)
             .delete();
         return;
       } catch (e) {
@@ -150,7 +150,7 @@ class BookmarkService {
             .collection('users')
             .doc(_userId)
             .collection('bookmarks')
-            .doc(movie.id.toString());
+            .doc(movie.id);
 
         final doc = await docRef.get();
         if (!doc.exists) {

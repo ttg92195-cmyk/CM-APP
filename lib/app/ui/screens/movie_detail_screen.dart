@@ -4,10 +4,9 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_html/flutter_html.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
-import 'package:cm_movies/app/constants.dart';
 import 'package:cm_movies/app/core/models/movie_detail.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
-import 'package:cm_movies/app/core/services/api_service.dart';
+import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/core/services/bookmark_service.dart';
 import 'package:cm_movies/app/core/services/recent_service.dart';
 
@@ -22,7 +21,7 @@ class MovieDetailScreen extends StatefulWidget {
 
 class _MovieDetailScreenState extends State<MovieDetailScreen>
     with SingleTickerProviderStateMixin {
-  final ApiService _apiService = ApiService();
+  final FirestoreContentService _contentService = FirestoreContentService();
   final BookmarkService _bookmarkService = BookmarkService();
   final RecentService _recentService = RecentService();
 
@@ -51,7 +50,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
       _error = null;
     });
     try {
-      final detail = await _apiService.getMovieDetail(widget.slug);
+      final detail = await _contentService.getMovieBySlug(widget.slug);
       if (detail != null && mounted) {
         // Add to recent
         final movie = Movie(
@@ -60,6 +59,8 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
           slug: detail.slug,
           year: detail.year,
           poster: detail.poster,
+          type: detail.type,
+          isTrending: detail.isTrending,
         );
         await _recentService.addRecent(movie);
 
@@ -95,6 +96,8 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
       slug: _movieDetail!.slug,
       year: _movieDetail!.year,
       poster: _movieDetail!.poster,
+      type: _movieDetail!.type,
+      isTrending: _movieDetail!.isTrending,
     );
     await _bookmarkService.toggleBookmark(movie);
     final bookmarked = await _bookmarkService.isBookmarked(_movieDetail!.id);
@@ -243,9 +246,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                             ],
                             if (detail.categories.isNotEmpty)
                               Text(
-                                detail.categories
-                                    .map((c) => c.name)
-                                    .join(', '),
+                                detail.categories.join(', '),
                                 style: const TextStyle(
                                   color: Colors.white70,
                                   fontSize: 13,
@@ -331,7 +332,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
               runSpacing: 4,
               children: detail.categories
                   .map((c) => Chip(
-                        label: Text(c.name),
+                        label: Text(c),
                         materialTapTargetSize:
                             MaterialTapTargetSize.shrinkWrap,
                       ))
@@ -354,7 +355,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
               runSpacing: 4,
               children: detail.tags
                   .map((t) => Chip(
-                        label: Text(t.name),
+                        label: Text(t),
                         materialTapTargetSize:
                             MaterialTapTargetSize.shrinkWrap,
                       ))

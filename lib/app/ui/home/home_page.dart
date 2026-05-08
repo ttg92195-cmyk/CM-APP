@@ -11,6 +11,7 @@ import 'package:cm_movies/app/ui/screens/settings_page.dart';
 import 'package:cm_movies/app/ui/screens/login_page.dart';
 import 'package:cm_movies/app/ui/screens/profile_page.dart';
 import 'package:cm_movies/app/ui/screens/search_screen.dart';
+import 'package:cm_movies/app/ui/screens/admin_panel_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -230,6 +231,22 @@ class _HomePageState extends State<HomePage> {
                       );
                     },
                   ),
+
+                  // Admin Panel (only for admin users)
+                  if (appConfig.isCurrentUserAdmin)
+                    _buildDrawerItem(
+                      icon: Icons.admin_panel_settings_outlined,
+                      activeIcon: Icons.admin_panel_settings,
+                      title: 'Admin Panel',
+                      isDark: isDark,
+                      onTap: () {
+                        Navigator.pop(context);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const AdminPanelPage()),
+                        );
+                      },
+                    ),
 
                   const Divider(height: 24),
 

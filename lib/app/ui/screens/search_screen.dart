@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
-import 'package:cm_movies/app/core/services/api_service.dart';
+import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/ui/components/movie_list_tile.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
 
@@ -14,14 +15,13 @@ class SearchScreen extends StatefulWidget {
 }
 
 class _SearchScreenState extends State<SearchScreen> {
-  final ApiService _apiService = ApiService();
+  final FirestoreContentService _contentService = FirestoreContentService();
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
 
   List<Movie> _results = [];
-  int _currentPage = 1;
-  int _lastPage = 1;
-  int _total = 0;
+  DocumentSnapshot? _lastDoc;
+  bool _hasMore = true;
   bool _isLoading = false;
   bool _isLoadingMore = false;
   bool _hasSearched = false;
@@ -44,7 +44,7 @@ class _SearchScreenState extends State<SearchScreen> {
     if (_scrollController.position.pixels ==
             _scrollController.position.maxScrollExtent &&
         !_isLoadingMore &&
-        _currentPage < _lastPage) {
+        _hasMore) {
       _loadMore();
     }
   }
@@ -62,17 +62,19 @@ class _SearchScreenState extends State<SearchScreen> {
     if (!loadMore) {
       setState(() {
         _isLoading = true;
-        _currentPage = 1;
         _lastQuery = query;
+        _lastDoc = null;
+        _hasMore = true;
       });
     } else {
       setState(() => _isLoadingMore = true);
     }
 
     try {
-      final result = await _apiService.searchMovies(
+      final result = await _contentService.searchMovies(
         query,
-        page: loadMore ? _currentPage + 1 : 1,
+        limit: 20,
+        startAfter: loadMore ? _lastDoc : null,
       );
       if (mounted) {
         setState(() {
@@ -81,9 +83,8 @@ class _SearchScreenState extends State<SearchScreen> {
           } else {
             _results = result['movies'] as List<Movie>;
           }
-          _currentPage = result['current_page'] as int;
-          _lastPage = result['last_page'] as int;
-          _total = result['total'] as int;
+          _hasMore = result['hasMore'] as bool;
+          _lastDoc = result['lastDoc'] as DocumentSnapshot?;
           _isLoading = false;
           _isLoadingMore = false;
           _hasSearched = true;
@@ -146,13 +147,13 @@ class _SearchScreenState extends State<SearchScreen> {
           ),
 
           // Results count
-          if (_hasSearched && _total > 0)
+          if (_hasSearched && _results.isNotEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               child: Row(
                 children: [
                   Text(
-                    '$_total ${appConfig.translate('movies')}',
+                    '${_results.length} ${appConfig.translate('movies')}',
                     style: theme.textTheme.labelMedium?.copyWith(
                       color: theme.colorScheme.onSurface.withOpacity(0.6),
                     ),

@@ -1,5 +1,5 @@
 class TagAndGenres {
-  final int id;
+  final String id;
   final String name;
   final int? moviesCount;
 
@@ -9,11 +9,11 @@ class TagAndGenres {
     this.moviesCount,
   });
 
-  factory TagAndGenres.fromMap(Map<String, dynamic> map) {
+  factory TagAndGenres.fromMap(Map<String, dynamic> map, {String? docId}) {
     return TagAndGenres(
-      id: map['id'] as int? ?? 0,
+      id: docId ?? map['id']?.toString() ?? '',
       name: map['name'] as String? ?? '',
-      moviesCount: map['movies_count'] as int?,
+      moviesCount: map['moviesCount'] as int?,
     );
   }
 
@@ -21,7 +21,7 @@ class TagAndGenres {
     return {
       'id': id,
       'name': name,
-      'movies_count': moviesCount,
+      'moviesCount': moviesCount,
     };
   }
 }

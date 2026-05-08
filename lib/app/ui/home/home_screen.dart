@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
-import 'package:cm_movies/app/core/models/tag_and_genres.dart';
-import 'package:cm_movies/app/core/services/api_service.dart';
+import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/core/services/recent_service.dart';
 import 'package:cm_movies/app/ui/home/trending_movie_component.dart';
 import 'package:cm_movies/app/ui/components/movie_list_tile.dart';
@@ -18,7 +17,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final ApiService _apiService = ApiService();
+  final FirestoreContentService _contentService = FirestoreContentService();
   final RecentService _recentService = RecentService();
 
   List<Movie> _trendingMovies = [];
@@ -37,8 +36,6 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Movie> _donghuaMovies = [];
   List<Movie> _cDramaMovies = [];
 
-  List<TagAndGenres> _apiTags = [];
-
   bool _isLoading = true;
   String? _error;
 
@@ -56,12 +53,11 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       // Load core data first
       final results = await Future.wait([
-        _apiService.getTrendingMovies(),
-        _apiService.getTrendingTvShows(),
+        _contentService.getTrendingMovies(),
+        _contentService.getTrendingTvShows(),
         _recentService.getRecentMovies(),
-        _apiService.getMovies(page: 1),
-        _apiService.getTvShows(page: 1),
-        _apiService.getMovieTags(),
+        _contentService.getMovies(limit: 20),
+        _contentService.getSeries(limit: 20),
       ]);
 
       if (mounted) {
@@ -75,7 +71,6 @@ class _HomeScreenState extends State<HomeScreen> {
           _allSeries = results[4] is Map<String, dynamic>
               ? (results[4] as Map<String, dynamic>)['movies'] as List<Movie>
               : <Movie>[];
-          _apiTags = results[5] as List<TagAndGenres>;
           _isLoading = false;
         });
 
@@ -93,112 +88,51 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadTagBasedData() async {
-    // Map tag names to their API IDs
-    final tagMap = <String, int>{};
-    for (final tag in _apiTags) {
-      tagMap[tag.name.toLowerCase()] = tag.id;
-    }
-
-    // Load each tag-based section
-    final futures = <Future<void>>[];
-
-    final tagSections = {
-      'k drama': () async {
-        final id = tagMap['k drama'];
-        if (id != null) {
-          try {
-            final result = await _apiService.getMoviesByTag(id, page: 1);
-            if (mounted) {
-              setState(() => _kDramaMovies = result['movies'] as List<Movie>);
-            }
-          } catch (_) {}
-        }
-      },
-      '4k': () async {
-        final id = tagMap['4k'];
-        if (id != null) {
-          try {
-            final result = await _apiService.getMoviesByTag(id, page: 1);
-            if (mounted) {
-              setState(() {
-                _fourKMovies = result['movies'] as List<Movie>;
-              });
-            }
-          } catch (_) {}
-        }
-      },
-      'animation': () async {
-        final id = tagMap['animation'];
-        if (id != null) {
-          try {
-            final result = await _apiService.getMoviesByTag(id, page: 1);
-            if (mounted) {
-              setState(() {
-                _animationMovies = result['movies'] as List<Movie>;
-              });
-            }
-          } catch (_) {}
-        }
-      },
-      'anime': () async {
-        final id = tagMap['anime'];
-        if (id != null) {
-          try {
-            final result = await _apiService.getMoviesByTag(id, page: 1);
-            if (mounted) {
-              setState(() => _animeMovies = result['movies'] as List<Movie>);
-            }
-          } catch (_) {}
-        }
-      },
-      'bollywood': () async {
-        final id = tagMap['bollywood'];
-        if (id != null) {
-          try {
-            final result = await _apiService.getMoviesByTag(id, page: 1);
-            if (mounted) {
-              setState(() => _bollywoodMovies = result['movies'] as List<Movie>);
-            }
-          } catch (_) {}
-        }
-      },
-      'donghua': () async {
-        final id = tagMap['donghua'];
-        if (id != null) {
-          try {
-            final result = await _apiService.getMoviesByTag(id, page: 1);
-            if (mounted) {
-              setState(() => _donghuaMovies = result['movies'] as List<Movie>);
-            }
-          } catch (_) {}
-        }
-      },
-      'c drama': () async {
-        final id = tagMap['c drama'];
-        if (id != null) {
-          try {
-            final result = await _apiService.getMoviesByTag(id, page: 1);
-            if (mounted) {
-              setState(() => _cDramaMovies = result['movies'] as List<Movie>);
-            }
-          } catch (_) {}
-        }
-      },
+    final tagSections = <String, Future<List<Movie>>>{
+      'K Drama': _contentService.getMoviesByTagSimple('K Drama'),
+      '4K': _contentService.getMoviesByTagSimple('4K'),
+      'Animation': _contentService.getMoviesByTagSimple('Animation'),
+      'Anime': _contentService.getMoviesByTagSimple('Anime'),
+      'Bollywood': _contentService.getMoviesByTagSimple('Bollywood'),
+      'Donghua': _contentService.getMoviesByTagSimple('Donghua'),
+      'C Drama': _contentService.getMoviesByTagSimple('C Drama'),
     };
 
-    for (final entry in tagSections.entries) {
-      futures.add(entry.value());
-    }
+    final results = await Future.wait(tagSections.values.toList());
+    final tagNames = tagSections.keys.toList();
 
-    await Future.wait(futures);
-
-    // Derive 4K Series from 4K tag results (we'll just use the 4K movies list)
-    if (_fourKMovies.isNotEmpty) {
-      // The API returns all items with 4K tag - some might be series
-      // We'll show the same list for now
-      if (mounted) {
-        setState(() => _fourKSeries = _fourKMovies);
-      }
+    if (mounted) {
+      setState(() {
+        for (int i = 0; i < tagNames.length; i++) {
+          final movies = results[i];
+          switch (tagNames[i]) {
+            case 'K Drama':
+              _kDramaMovies = movies;
+              break;
+            case '4K':
+              _fourKMovies = movies;
+              // Derive 4K Series from 4K tag results filtered by type
+              _fourKSeries = movies.where((m) => m.type == 'series').toList();
+              if (_fourKSeries.isEmpty) _fourKSeries = movies;
+              break;
+            case 'Animation':
+              _animationMovies = movies;
+              break;
+            case 'Anime':
+              _animeMovies = movies;
+              break;
+            case 'Bollywood':
+              _bollywoodMovies = movies;
+              break;
+            case 'Donghua':
+              _donghuaMovies = movies;
+              break;
+            case 'C Drama':
+              _cDramaMovies = movies;
+              break;
+          }
+        }
+      });
     }
   }
 
@@ -220,22 +154,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _navigateToMoreByTag(String tagName) {
-    final match = _apiTags.where(
-      (t) => t.name.toLowerCase() == tagName.toLowerCase(),
-    ).toList();
-
-    if (match.isNotEmpty) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => FilterResultPage(
-            title: tagName,
-            fetchFn: (page) =>
-                _apiService.getMoviesByTag(match.first.id, page: page),
-          ),
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => FilterResultPage(
+          title: tagName,
+          tagName: tagName,
         ),
-      );
-    }
+      ),
+    );
   }
 
   @override

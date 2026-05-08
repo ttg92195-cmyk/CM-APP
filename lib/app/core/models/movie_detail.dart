@@ -1,17 +1,19 @@
-import 'package:cm_movies/app/constants.dart';
-import 'package:cm_movies/app/core/models/movie.dart';
-
 class MovieDetail {
-  final int id;
+  final String id;
   final String title;
   final String slug;
   final String? year;
   final String? poster;
   final String? overview;
+  final String? rating;
+  final String? resolution;
+  final int? isAdult;
+  final String? type;
+  final bool isTrending;
   final List<String> directors;
   final List<CastMember> casts;
-  final List<MovieCategory> categories;
-  final List<TagItem> tags;
+  final List<String> categories;
+  final List<String> tags;
   final List<MovieDownloadLink> downloadLinks;
 
   MovieDetail({
@@ -21,6 +23,11 @@ class MovieDetail {
     this.year,
     this.poster,
     this.overview,
+    this.rating,
+    this.resolution,
+    this.isAdult,
+    this.type,
+    this.isTrending = false,
     this.directors = const [],
     this.casts = const [],
     this.categories = const [],
@@ -28,14 +35,19 @@ class MovieDetail {
     this.downloadLinks = const [],
   });
 
-  factory MovieDetail.fromMap(Map<String, dynamic> map) {
+  factory MovieDetail.fromMap(Map<String, dynamic> map, {String? docId}) {
     return MovieDetail(
-      id: map['id'] as int? ?? 0,
+      id: docId ?? map['id']?.toString() ?? '',
       title: map['title'] as String? ?? '',
       slug: map['slug'] as String? ?? '',
       year: map['year']?.toString(),
       poster: map['poster'] as String?,
       overview: map['overview'] as String?,
+      rating: map['rating']?.toString(),
+      resolution: map['resolution'] as String?,
+      isAdult: map['isAdult'] as int?,
+      type: map['type'] as String?,
+      isTrending: map['isTrending'] as bool? ?? false,
       directors: map['directors'] != null
           ? List<String>.from(
               (map['directors'] as List).map((x) => x.toString()),
@@ -49,22 +61,14 @@ class MovieDetail {
             )
           : [],
       categories: map['categories'] != null
-          ? List<MovieCategory>.from(
-              (map['categories'] as List).map(
-                (x) => MovieCategory.fromMap(x as Map<String, dynamic>),
-              ),
-            )
+          ? List<String>.from(map['categories'] as List)
           : [],
       tags: map['tags'] != null
-          ? List<TagItem>.from(
-              (map['tags'] as List).map(
-                (x) => TagItem.fromMap(x as Map<String, dynamic>),
-              ),
-            )
+          ? List<String>.from(map['tags'] as List)
           : [],
-      downloadLinks: map['movie_download_links'] != null
+      downloadLinks: map['downloadLinks'] != null
           ? List<MovieDownloadLink>.from(
-              (map['movie_download_links'] as List).map(
+              (map['downloadLinks'] as List).map(
                 (x) => MovieDownloadLink.fromMap(x as Map<String, dynamic>),
               ),
             )
@@ -72,10 +76,30 @@ class MovieDetail {
     );
   }
 
+  Map<String, dynamic> toMap() {
+    return {
+      'title': title,
+      'slug': slug,
+      'year': year,
+      'poster': poster,
+      'overview': overview,
+      'rating': rating,
+      'resolution': resolution,
+      'isAdult': isAdult,
+      'type': type,
+      'isTrending': isTrending,
+      'directors': directors,
+      'casts': casts.map((x) => x.toMap()).toList(),
+      'categories': categories,
+      'tags': tags,
+      'downloadLinks': downloadLinks.map((x) => x.toMap()).toList(),
+    };
+  }
+
   String get fullPosterUrl {
     if (poster == null || poster!.isEmpty) return '';
     if (poster!.startsWith('http')) return poster!;
-    return '$hostUrl$poster';
+    return '';
   }
 }
 
@@ -91,62 +115,56 @@ class CastMember {
   factory CastMember.fromMap(Map<String, dynamic> map) {
     return CastMember(
       name: map['name'] as String? ?? '',
-      profilePath: map['profile_path'] as String?,
+      profilePath: map['profilePath'] as String?,
     );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'name': name,
+      'profilePath': profilePath,
+    };
   }
 
   String get fullProfileUrl {
     if (profilePath == null || profilePath!.isEmpty) return '';
     if (profilePath!.startsWith('http')) return profilePath!;
-    return '$hostUrl$profilePath';
-  }
-}
-
-class TagItem {
-  final int id;
-  final String name;
-
-  TagItem({
-    required this.id,
-    required this.name,
-  });
-
-  factory TagItem.fromMap(Map<String, dynamic> map) {
-    return TagItem(
-      id: map['id'] as int? ?? 0,
-      name: map['name'] as String? ?? '',
-    );
+    return '';
   }
 }
 
 class MovieDownloadLink {
-  final int id;
   final String serverName;
   final String url;
   final String? size;
   final String? quality;
   final String? resolution;
-  final int? viewable;
 
   MovieDownloadLink({
-    required this.id,
     required this.serverName,
     required this.url,
     this.size,
     this.quality,
     this.resolution,
-    this.viewable,
   });
 
   factory MovieDownloadLink.fromMap(Map<String, dynamic> map) {
     return MovieDownloadLink(
-      id: map['id'] as int? ?? 0,
-      serverName: map['server_name'] as String? ?? '',
+      serverName: map['serverName'] as String? ?? '',
       url: map['url'] as String? ?? '',
       size: map['size']?.toString(),
       quality: map['quality']?.toString(),
       resolution: map['resolution']?.toString(),
-      viewable: map['viewable'] as int?,
     );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'serverName': serverName,
+      'url': url,
+      'size': size,
+      'quality': quality,
+      'resolution': resolution,
+    };
   }
 }
