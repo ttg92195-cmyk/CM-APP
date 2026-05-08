@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/models/movie_detail.dart';
@@ -19,28 +20,63 @@ class FirestoreContentService {
     int limit = 20,
     DocumentSnapshot? startAfter,
   }) async {
-    Query query = _moviesRef
-        .where('type', isEqualTo: 'movie')
-        .orderBy('createdAt', descending: true)
-        .limit(limit);
+    try {
+      Query query = _moviesRef
+          .where('type', isEqualTo: 'movie')
+          .orderBy('createdAt', descending: true)
+          .limit(limit);
 
-    if (startAfter != null) {
-      query = query.startAfterDocument(startAfter);
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
+      }
+
+      final snapshot = await query.get();
+      final movies = snapshot.docs
+          .map((doc) => Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              ))
+          .toList();
+
+      return {
+        'movies': movies,
+        'hasMore': snapshot.docs.length >= limit,
+        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+      };
+    } catch (e) {
+      // Fallback: if composite index doesn't exist, try without orderBy
+      debugPrint('getMovies with orderBy failed, trying fallback: $e');
+      try {
+        Query query = _moviesRef
+            .where('type', isEqualTo: 'movie')
+            .limit(limit);
+
+        final snapshot = await query.get();
+        final movies = snapshot.docs
+            .map((doc) => Movie.fromMap(
+                  doc.data() as Map<String, dynamic>,
+                  docId: doc.id,
+                ))
+            .toList();
+
+        // Sort client-side
+        movies.sort((a, b) => (b.createdAt ?? DateTime(2000))
+            .compareTo(a.createdAt ?? DateTime(2000)));
+
+        return {
+          'movies': movies,
+          'hasMore': snapshot.docs.length >= limit,
+          'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+        };
+      } catch (e2) {
+        debugPrint('getMovies fallback also failed: $e2');
+        return {
+          'movies': <Movie>[],
+          'hasMore': false,
+          'lastDoc': null,
+        };
+      }
     }
-
-    final snapshot = await query.get();
-    final movies = snapshot.docs
-        .map((doc) => Movie.fromMap(
-              doc.data() as Map<String, dynamic>,
-              docId: doc.id,
-            ))
-        .toList();
-
-    return {
-      'movies': movies,
-      'hasMore': snapshot.docs.length >= limit,
-      'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
-    };
   }
 
   /// Get series with cursor-based pagination
@@ -48,28 +84,63 @@ class FirestoreContentService {
     int limit = 20,
     DocumentSnapshot? startAfter,
   }) async {
-    Query query = _moviesRef
-        .where('type', isEqualTo: 'series')
-        .orderBy('createdAt', descending: true)
-        .limit(limit);
+    try {
+      Query query = _moviesRef
+          .where('type', isEqualTo: 'series')
+          .orderBy('createdAt', descending: true)
+          .limit(limit);
 
-    if (startAfter != null) {
-      query = query.startAfterDocument(startAfter);
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
+      }
+
+      final snapshot = await query.get();
+      final series = snapshot.docs
+          .map((doc) => Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              ))
+          .toList();
+
+      return {
+        'movies': series,
+        'hasMore': snapshot.docs.length >= limit,
+        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+      };
+    } catch (e) {
+      // Fallback: if composite index doesn't exist, try without orderBy
+      debugPrint('getSeries with orderBy failed, trying fallback: $e');
+      try {
+        Query query = _moviesRef
+            .where('type', isEqualTo: 'series')
+            .limit(limit);
+
+        final snapshot = await query.get();
+        final series = snapshot.docs
+            .map((doc) => Movie.fromMap(
+                  doc.data() as Map<String, dynamic>,
+                  docId: doc.id,
+                ))
+            .toList();
+
+        // Sort client-side
+        series.sort((a, b) => (b.createdAt ?? DateTime(2000))
+            .compareTo(a.createdAt ?? DateTime(2000)));
+
+        return {
+          'movies': series,
+          'hasMore': snapshot.docs.length >= limit,
+          'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+        };
+      } catch (e2) {
+        debugPrint('getSeries fallback also failed: $e2');
+        return {
+          'movies': <Movie>[],
+          'hasMore': false,
+          'lastDoc': null,
+        };
+      }
     }
-
-    final snapshot = await query.get();
-    final series = snapshot.docs
-        .map((doc) => Movie.fromMap(
-              doc.data() as Map<String, dynamic>,
-              docId: doc.id,
-            ))
-        .toList();
-
-    return {
-      'movies': series,
-      'hasMore': snapshot.docs.length >= limit,
-      'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
-    };
   }
 
   /// Get all movies and series (for admin panel)
@@ -124,36 +195,86 @@ class FirestoreContentService {
 
   /// Get trending movies
   Future<List<Movie>> getTrendingMovies() async {
-    final snapshot = await _moviesRef
-        .where('type', isEqualTo: 'movie')
-        .where('isTrending', isEqualTo: true)
-        .orderBy('createdAt', descending: true)
-        .limit(20)
-        .get();
+    try {
+      final snapshot = await _moviesRef
+          .where('type', isEqualTo: 'movie')
+          .where('isTrending', isEqualTo: true)
+          .orderBy('createdAt', descending: true)
+          .limit(20)
+          .get();
 
-    return snapshot.docs
-        .map((doc) => Movie.fromMap(
-              doc.data() as Map<String, dynamic>,
-              docId: doc.id,
-            ))
-        .toList();
+      return snapshot.docs
+          .map((doc) => Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              ))
+          .toList();
+    } catch (e) {
+      // Fallback: if composite index doesn't exist, try simpler query
+      debugPrint('getTrendingMovies with orderBy failed, trying fallback: $e');
+      try {
+        final snapshot = await _moviesRef
+            .where('type', isEqualTo: 'movie')
+            .where('isTrending', isEqualTo: true)
+            .limit(20)
+            .get();
+
+        final movies = snapshot.docs
+            .map((doc) => Movie.fromMap(
+                  doc.data() as Map<String, dynamic>,
+                  docId: doc.id,
+                ))
+            .toList();
+        movies.sort((a, b) => (b.createdAt ?? DateTime(2000))
+            .compareTo(a.createdAt ?? DateTime(2000)));
+        return movies;
+      } catch (e2) {
+        debugPrint('getTrendingMovies fallback also failed: $e2');
+        return [];
+      }
+    }
   }
 
   /// Get trending TV shows
   Future<List<Movie>> getTrendingTvShows() async {
-    final snapshot = await _moviesRef
-        .where('type', isEqualTo: 'series')
-        .where('isTrending', isEqualTo: true)
-        .orderBy('createdAt', descending: true)
-        .limit(20)
-        .get();
+    try {
+      final snapshot = await _moviesRef
+          .where('type', isEqualTo: 'series')
+          .where('isTrending', isEqualTo: true)
+          .orderBy('createdAt', descending: true)
+          .limit(20)
+          .get();
 
-    return snapshot.docs
-        .map((doc) => Movie.fromMap(
-              doc.data() as Map<String, dynamic>,
-              docId: doc.id,
-            ))
-        .toList();
+      return snapshot.docs
+          .map((doc) => Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              ))
+          .toList();
+    } catch (e) {
+      // Fallback: if composite index doesn't exist, try simpler query
+      debugPrint('getTrendingTvShows with orderBy failed, trying fallback: $e');
+      try {
+        final snapshot = await _moviesRef
+            .where('type', isEqualTo: 'series')
+            .where('isTrending', isEqualTo: true)
+            .limit(20)
+            .get();
+
+        final movies = snapshot.docs
+            .map((doc) => Movie.fromMap(
+                  doc.data() as Map<String, dynamic>,
+                  docId: doc.id,
+                ))
+            .toList();
+        movies.sort((a, b) => (b.createdAt ?? DateTime(2000))
+            .compareTo(a.createdAt ?? DateTime(2000)));
+        return movies;
+      } catch (e2) {
+        debugPrint('getTrendingTvShows fallback also failed: $e2');
+        return [];
+      }
+    }
   }
 
   /// Get movie detail by slug
@@ -189,28 +310,61 @@ class FirestoreContentService {
     int limit = 20,
     DocumentSnapshot? startAfter,
   }) async {
-    Query query = _moviesRef
-        .where('categories', arrayContains: genreName)
-        .orderBy('createdAt', descending: true)
-        .limit(limit);
+    try {
+      Query query = _moviesRef
+          .where('categories', arrayContains: genreName)
+          .orderBy('createdAt', descending: true)
+          .limit(limit);
 
-    if (startAfter != null) {
-      query = query.startAfterDocument(startAfter);
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
+      }
+
+      final snapshot = await query.get();
+      final movies = snapshot.docs
+          .map((doc) => Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              ))
+          .toList();
+
+      return {
+        'movies': movies,
+        'hasMore': snapshot.docs.length >= limit,
+        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+      };
+    } catch (e) {
+      // Fallback without orderBy if composite index missing
+      debugPrint('getMoviesByGenre with orderBy failed, trying fallback: $e');
+      try {
+        Query query = _moviesRef
+            .where('categories', arrayContains: genreName)
+            .limit(limit);
+
+        final snapshot = await query.get();
+        final movies = snapshot.docs
+            .map((doc) => Movie.fromMap(
+                  doc.data() as Map<String, dynamic>,
+                  docId: doc.id,
+                ))
+            .toList();
+        movies.sort((a, b) => (b.createdAt ?? DateTime(2000))
+            .compareTo(a.createdAt ?? DateTime(2000)));
+
+        return {
+          'movies': movies,
+          'hasMore': snapshot.docs.length >= limit,
+          'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+        };
+      } catch (e2) {
+        debugPrint('getMoviesByGenre fallback also failed: $e2');
+        return {
+          'movies': <Movie>[],
+          'hasMore': false,
+          'lastDoc': null,
+        };
+      }
     }
-
-    final snapshot = await query.get();
-    final movies = snapshot.docs
-        .map((doc) => Movie.fromMap(
-              doc.data() as Map<String, dynamic>,
-              docId: doc.id,
-            ))
-        .toList();
-
-    return {
-      'movies': movies,
-      'hasMore': snapshot.docs.length >= limit,
-      'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
-    };
   }
 
   /// Get movies by tag name
@@ -219,28 +373,61 @@ class FirestoreContentService {
     int limit = 20,
     DocumentSnapshot? startAfter,
   }) async {
-    Query query = _moviesRef
-        .where('tags', arrayContains: tagName)
-        .orderBy('createdAt', descending: true)
-        .limit(limit);
+    try {
+      Query query = _moviesRef
+          .where('tags', arrayContains: tagName)
+          .orderBy('createdAt', descending: true)
+          .limit(limit);
 
-    if (startAfter != null) {
-      query = query.startAfterDocument(startAfter);
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
+      }
+
+      final snapshot = await query.get();
+      final movies = snapshot.docs
+          .map((doc) => Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              ))
+          .toList();
+
+      return {
+        'movies': movies,
+        'hasMore': snapshot.docs.length >= limit,
+        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+      };
+    } catch (e) {
+      // Fallback without orderBy if composite index missing
+      debugPrint('getMoviesByTag with orderBy failed, trying fallback: $e');
+      try {
+        Query query = _moviesRef
+            .where('tags', arrayContains: tagName)
+            .limit(limit);
+
+        final snapshot = await query.get();
+        final movies = snapshot.docs
+            .map((doc) => Movie.fromMap(
+                  doc.data() as Map<String, dynamic>,
+                  docId: doc.id,
+                ))
+            .toList();
+        movies.sort((a, b) => (b.createdAt ?? DateTime(2000))
+            .compareTo(a.createdAt ?? DateTime(2000)));
+
+        return {
+          'movies': movies,
+          'hasMore': snapshot.docs.length >= limit,
+          'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+        };
+      } catch (e2) {
+        debugPrint('getMoviesByTag fallback also failed: $e2');
+        return {
+          'movies': <Movie>[],
+          'hasMore': false,
+          'lastDoc': null,
+        };
+      }
     }
-
-    final snapshot = await query.get();
-    final movies = snapshot.docs
-        .map((doc) => Movie.fromMap(
-              doc.data() as Map<String, dynamic>,
-              docId: doc.id,
-            ))
-        .toList();
-
-    return {
-      'movies': movies,
-      'hasMore': snapshot.docs.length >= limit,
-      'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
-    };
   }
 
   /// Search movies by keyword (prefix match)
@@ -312,18 +499,42 @@ class FirestoreContentService {
 
   /// Get movies by tag name (simple list, for home screen sections)
   Future<List<Movie>> getMoviesByTagSimple(String tagName, {int limit = 20}) async {
-    final snapshot = await _moviesRef
-        .where('tags', arrayContains: tagName)
-        .orderBy('createdAt', descending: true)
-        .limit(limit)
-        .get();
+    try {
+      final snapshot = await _moviesRef
+          .where('tags', arrayContains: tagName)
+          .orderBy('createdAt', descending: true)
+          .limit(limit)
+          .get();
 
-    return snapshot.docs
-        .map((doc) => Movie.fromMap(
-              doc.data() as Map<String, dynamic>,
-              docId: doc.id,
-            ))
-        .toList();
+      return snapshot.docs
+          .map((doc) => Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              ))
+          .toList();
+    } catch (e) {
+      // Fallback without orderBy if composite index missing
+      debugPrint('getMoviesByTagSimple with orderBy failed, trying fallback: $e');
+      try {
+        final snapshot = await _moviesRef
+            .where('tags', arrayContains: tagName)
+            .limit(limit)
+            .get();
+
+        final movies = snapshot.docs
+            .map((doc) => Movie.fromMap(
+                  doc.data() as Map<String, dynamic>,
+                  docId: doc.id,
+                ))
+            .toList();
+        movies.sort((a, b) => (b.createdAt ?? DateTime(2000))
+            .compareTo(a.createdAt ?? DateTime(2000)));
+        return movies;
+      } catch (e2) {
+        debugPrint('getMoviesByTagSimple fallback also failed: $e2');
+        return [];
+      }
+    }
   }
 
   // ==================== ADMIN CRUD OPERATIONS ====================

@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 class Movie {
   final String id;
   final String title;
@@ -45,14 +47,7 @@ class Movie {
           : [],
       type: map['type'] as String?,
       isTrending: map['isTrending'] as bool? ?? false,
-      createdAt: map['createdAt'] != null
-          ? (map['createdAt'] is DateTime
-              ? map['createdAt'] as DateTime
-              : (map['createdAt'] is Map && map['createdAt']['_seconds'] != null
-                  ? DateTime.fromMillisecondsSinceEpoch(
-                      (map['createdAt']['_seconds'] as int) * 1000)
-                  : DateTime.tryParse(map['createdAt'].toString())))
-          : null,
+      createdAt: _parseDateTime(map['createdAt']),
     );
   }
 
@@ -101,4 +96,18 @@ class Movie {
       return 'Just now';
     }
   }
+}
+
+/// Helper to parse DateTime from Firestore Timestamp, DateTime, Map, or String
+DateTime? _parseDateTime(dynamic value) {
+  if (value == null) return null;
+  if (value is DateTime) return value;
+  if (value is Timestamp) return value.toDate();
+  if (value is Map && value['_seconds'] != null) {
+    return DateTime.fromMillisecondsSinceEpoch(
+      (value['_seconds'] as int) * 1000 +
+          ((value['_nanoseconds'] as int?) ?? 0) ~/ 1000000,
+    );
+  }
+  return DateTime.tryParse(value.toString());
 }

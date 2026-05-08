@@ -52,26 +52,53 @@ class _HomeScreenState extends State<HomeScreen> {
       _error = null;
     });
     try {
-      // Load core data first
-      final results = await Future.wait([
-        _contentService.getTrendingMovies(),
-        _contentService.getTrendingTvShows(),
-        _recentService.getRecentMovies(),
-        _contentService.getMovies(limit: 20),
-        _contentService.getSeries(limit: 20),
-      ]);
+      // Load each query independently to avoid one failure blocking all
+      List<Movie> trendingMovies = [];
+      List<Movie> trendingTvShows = [];
+      List<Movie> recentMovies = [];
+      List<Movie> allMovies = [];
+      List<Movie> allSeries = [];
+
+      // Load core data with individual error handling
+      try {
+        trendingMovies = await _contentService.getTrendingMovies();
+      } catch (e) {
+        debugPrint('Error loading trending movies: $e');
+      }
+
+      try {
+        trendingTvShows = await _contentService.getTrendingTvShows();
+      } catch (e) {
+        debugPrint('Error loading trending TV shows: $e');
+      }
+
+      try {
+        recentMovies = await _recentService.getRecentMovies();
+      } catch (e) {
+        debugPrint('Error loading recent movies: $e');
+      }
+
+      try {
+        final moviesResult = await _contentService.getMovies(limit: 20);
+        allMovies = List<Movie>.from(moviesResult['movies'] ?? []);
+      } catch (e) {
+        debugPrint('Error loading all movies: $e');
+      }
+
+      try {
+        final seriesResult = await _contentService.getSeries(limit: 20);
+        allSeries = List<Movie>.from(seriesResult['movies'] ?? []);
+      } catch (e) {
+        debugPrint('Error loading all series: $e');
+      }
 
       if (mounted) {
         setState(() {
-          _trendingMovies = results[0] as List<Movie>;
-          _trendingTvShows = results[1] as List<Movie>;
-          _recentMovies = results[2] as List<Movie>;
-          _allMovies = results[3] is Map<String, dynamic>
-              ? (results[3] as Map<String, dynamic>)['movies'] as List<Movie>
-              : <Movie>[];
-          _allSeries = results[4] is Map<String, dynamic>
-              ? (results[4] as Map<String, dynamic>)['movies'] as List<Movie>
-              : <Movie>[];
+          _trendingMovies = trendingMovies;
+          _trendingTvShows = trendingTvShows;
+          _recentMovies = recentMovies;
+          _allMovies = allMovies;
+          _allSeries = allSeries;
           _isLoading = false;
         });
 
@@ -79,6 +106,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _loadTagBasedData();
       }
     } catch (e) {
+      debugPrint('Error in _loadData: $e');
       if (mounted) {
         setState(() {
           _error = e.toString();
@@ -89,51 +117,52 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadTagBasedData() async {
-    final tagSections = <String, Future<List<Movie>>>{
-      'K Drama': _contentService.getMoviesByTagSimple('K Drama'),
-      '4K': _contentService.getMoviesByTagSimple('4K'),
-      'Animation': _contentService.getMoviesByTagSimple('Animation'),
-      'Anime': _contentService.getMoviesByTagSimple('Anime'),
-      'Bollywood': _contentService.getMoviesByTagSimple('Bollywood'),
-      'Donghua': _contentService.getMoviesByTagSimple('Donghua'),
-      'C Drama': _contentService.getMoviesByTagSimple('C Drama'),
-    };
+    final tagEntries = <MapEntry<String, Future<List<Movie>>>>[
+      MapEntry('K Drama', _contentService.getMoviesByTagSimple('K Drama')),
+      MapEntry('4K', _contentService.getMoviesByTagSimple('4K')),
+      MapEntry('Animation', _contentService.getMoviesByTagSimple('Animation')),
+      MapEntry('Anime', _contentService.getMoviesByTagSimple('Anime')),
+      MapEntry('Bollywood', _contentService.getMoviesByTagSimple('Bollywood')),
+      MapEntry('Donghua', _contentService.getMoviesByTagSimple('Donghua')),
+      MapEntry('C Drama', _contentService.getMoviesByTagSimple('C Drama')),
+    ];
 
-    final results = await Future.wait(tagSections.values.toList());
-    final tagNames = tagSections.keys.toList();
-
-    if (mounted) {
-      setState(() {
-        for (int i = 0; i < tagNames.length; i++) {
-          final movies = results[i];
-          switch (tagNames[i]) {
-            case 'K Drama':
-              _kDramaMovies = movies;
-              break;
-            case '4K':
-              _fourKMovies = movies;
-              // Derive 4K Series from 4K tag results filtered by type
-              _fourKSeries = movies.where((m) => m.type == 'series').toList();
-              if (_fourKSeries.isEmpty) _fourKSeries = movies;
-              break;
-            case 'Animation':
-              _animationMovies = movies;
-              break;
-            case 'Anime':
-              _animeMovies = movies;
-              break;
-            case 'Bollywood':
-              _bollywoodMovies = movies;
-              break;
-            case 'Donghua':
-              _donghuaMovies = movies;
-              break;
-            case 'C Drama':
-              _cDramaMovies = movies;
-              break;
-          }
+    // Load each tag query independently to avoid one failure blocking all
+    for (final entry in tagEntries) {
+      try {
+        final movies = await entry.value;
+        if (mounted) {
+          setState(() {
+            switch (entry.key) {
+              case 'K Drama':
+                _kDramaMovies = movies;
+                break;
+              case '4K':
+                _fourKMovies = movies;
+                _fourKSeries = movies.where((m) => m.type == 'series').toList();
+                if (_fourKSeries.isEmpty) _fourKSeries = movies;
+                break;
+              case 'Animation':
+                _animationMovies = movies;
+                break;
+              case 'Anime':
+                _animeMovies = movies;
+                break;
+              case 'Bollywood':
+                _bollywoodMovies = movies;
+                break;
+              case 'Donghua':
+                _donghuaMovies = movies;
+                break;
+              case 'C Drama':
+                _cDramaMovies = movies;
+                break;
+            }
+          });
         }
-      });
+      } catch (e) {
+        debugPrint('Error loading tag ${entry.key}: $e');
+      }
     }
   }
 
@@ -188,21 +217,32 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildErrorWidget(AppConfig appConfig) {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.error_outline, size: 48, color: Colors.redAccent),
-          const SizedBox(height: 16),
-          Text(
-            appConfig.translate('error_occurred'),
-            style: const TextStyle(fontSize: 16),
-          ),
-          const SizedBox(height: 16),
-          ElevatedButton(
-            onPressed: _loadData,
-            child: Text(appConfig.translate('retry')),
-          ),
-        ],
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, size: 48, color: Colors.redAccent),
+            const SizedBox(height: 16),
+            Text(
+              appConfig.translate('error_occurred'),
+              style: const TextStyle(fontSize: 16),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _error != null ? _error! : '',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+              textAlign: TextAlign.center,
+              maxLines: 5,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: _loadData,
+              child: Text(appConfig.translate('retry')),
+            ),
+          ],
+        ),
       ),
     );
   }

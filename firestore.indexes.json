@@ -1,0 +1,52 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "movies",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "movies",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "isTrending", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "movies",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "tags", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "movies",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "categories", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "movies",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "slug", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "movies",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "title", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
