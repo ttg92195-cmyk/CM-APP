@@ -72,6 +72,56 @@ class FirestoreContentService {
     };
   }
 
+  /// Get all movies and series (for admin panel)
+  Future<Map<String, dynamic>> getAllPosts({
+    int limit = 50,
+    DocumentSnapshot? startAfter,
+  }) async {
+    Query query = _moviesRef
+        .orderBy('createdAt', descending: true)
+        .limit(limit);
+
+    if (startAfter != null) {
+      query = query.startAfterDocument(startAfter);
+    }
+
+    final snapshot = await query.get();
+    final movies = snapshot.docs
+        .map((doc) => Movie.fromMap(
+              doc.data() as Map<String, dynamic>,
+              docId: doc.id,
+            ))
+        .toList();
+
+    return {
+      'movies': movies,
+      'hasMore': snapshot.docs.length >= limit,
+      'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+    };
+  }
+
+  /// Search all posts (for admin panel)
+  Future<List<Movie>> searchAllPosts(String keyword) async {
+    if (keyword.trim().isEmpty) return [];
+
+    final lowerKeyword = keyword.toLowerCase();
+    final upperKeyword = lowerKeyword + '\uf8ff';
+
+    final snapshot = await _moviesRef
+        .where('title', isGreaterThanOrEqualTo: lowerKeyword)
+        .where('title', isLessThanOrEqualTo: upperKeyword)
+        .orderBy('title')
+        .limit(50)
+        .get();
+
+    return snapshot.docs
+        .map((doc) => Movie.fromMap(
+              doc.data() as Map<String, dynamic>,
+              docId: doc.id,
+            ))
+        .toList();
+  }
+
   /// Get trending movies
   Future<List<Movie>> getTrendingMovies() async {
     final snapshot = await _moviesRef

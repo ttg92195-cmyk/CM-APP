@@ -2,16 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/core/models/movie_detail.dart';
 
-class AddMoviePage extends StatefulWidget {
-  final String initialType;
-
-  const AddMoviePage({super.key, this.initialType = 'movie'});
+class AddSeriesPage extends StatefulWidget {
+  const AddSeriesPage({super.key});
 
   @override
-  State<AddMoviePage> createState() => _AddMoviePageState();
+  State<AddSeriesPage> createState() => _AddSeriesPageState();
 }
 
-class _AddMoviePageState extends State<AddMoviePage> {
+class _AddSeriesPageState extends State<AddSeriesPage> {
   final FirestoreContentService _contentService = FirestoreContentService();
   final _formKey = GlobalKey<FormState>();
   final _scrollController = ScrollController();
@@ -26,7 +24,6 @@ class _AddMoviePageState extends State<AddMoviePage> {
   final _resolutionController = TextEditingController();
   final _durationController = TextEditingController();
 
-  String _type = 'movie';
   bool _isAdult = false;
   bool _isTrending = false;
   bool _isSaving = false;
@@ -40,12 +37,11 @@ class _AddMoviePageState extends State<AddMoviePage> {
   // Dynamic lists
   List<String> _directors = [];
   List<CastMember> _casts = [];
-  List<MovieDownloadLink> _downloadLinks = [];
+  List<Season> _seasons = [];
 
   @override
   void initState() {
     super.initState();
-    _type = widget.initialType;
     _loadGenresAndTags();
   }
 
@@ -74,12 +70,10 @@ class _AddMoviePageState extends State<AddMoviePage> {
     }
   }
 
-  Future<void> _saveMovie() async {
+  Future<void> _saveSeries() async {
     if (!_formKey.currentState!.validate()) return;
     if (_titleController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Title is required')),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Title is required')));
       return;
     }
 
@@ -96,35 +90,25 @@ class _AddMoviePageState extends State<AddMoviePage> {
         'resolution': _resolutionController.text.trim().isEmpty ? null : _resolutionController.text.trim(),
         'duration': _durationController.text.trim().isEmpty ? null : _durationController.text.trim(),
         'isAdult': _isAdult ? 1 : 0,
-        'type': _type,
+        'type': 'series',
         'isTrending': _isTrending,
         'categories': _selectedGenres,
         'tags': _selectedTags,
         'directors': _directors,
         'casts': _casts.map((c) => {'name': c.name, 'profilePath': c.profilePath}).toList(),
-        'downloadLinks': _downloadLinks.map((l) => {
-          'serverName': l.serverName,
-          'url': l.url,
-          'size': l.size,
-          'quality': l.quality,
-          'resolution': l.resolution,
-        }).toList(),
-        'seasons': <Map<String, dynamic>>[],
+        'downloadLinks': <Map<String, dynamic>>[],
+        'seasons': _seasons.map((s) => s.toMap()).toList(),
       };
 
       await _contentService.addMovie(data);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Saved successfully!')),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved successfully!')));
         Navigator.pop(context);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
@@ -138,10 +122,10 @@ class _AddMoviePageState extends State<AddMoviePage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Add ${_type == 'movie' ? 'Movie' : 'Series'}'),
+        title: const Text('Add Series'),
         actions: [
           TextButton.icon(
-            onPressed: _isSaving ? null : _saveMovie,
+            onPressed: _isSaving ? null : _saveSeries,
             icon: const Icon(Icons.save, color: Color(0xFFE50914)),
             label: const Text('Save', style: TextStyle(color: Color(0xFFE50914))),
           ),
@@ -160,15 +144,12 @@ class _AddMoviePageState extends State<AddMoviePage> {
                     // Title
                     TextFormField(
                       controller: _titleController,
-                      decoration: const InputDecoration(
-                        labelText: 'Title *',
-                        hintText: 'Enter movie title',
-                      ),
+                      decoration: const InputDecoration(labelText: 'Title *', hintText: 'Enter series title'),
                       validator: (v) => v == null || v.trim().isEmpty ? 'Title is required' : null,
                     ),
                     const SizedBox(height: 16),
 
-                    // Year + Rating row
+                    // Year + Rating
                     Row(
                       children: [
                         Expanded(
@@ -190,13 +171,13 @@ class _AddMoviePageState extends State<AddMoviePage> {
                     ),
                     const SizedBox(height: 16),
 
-                    // Duration + Resolution row
+                    // Duration + Resolution
                     Row(
                       children: [
                         Expanded(
                           child: TextFormField(
                             controller: _durationController,
-                            decoration: const InputDecoration(labelText: 'Duration (min)', hintText: 'e.g. 120'),
+                            decoration: const InputDecoration(labelText: 'Duration (min)', hintText: 'e.g. 45'),
                             keyboardType: TextInputType.number,
                           ),
                         ),
@@ -204,7 +185,7 @@ class _AddMoviePageState extends State<AddMoviePage> {
                         Expanded(
                           child: TextFormField(
                             controller: _resolutionController,
-                            decoration: const InputDecoration(labelText: 'Resolution', hintText: 'e.g. 4K, HD'),
+                            decoration: const InputDecoration(labelText: 'Resolution', hintText: 'e.g. FHD, 4K'),
                           ),
                         ),
                       ],
@@ -234,7 +215,7 @@ class _AddMoviePageState extends State<AddMoviePage> {
                     ),
                     const SizedBox(height: 20),
 
-                    // Movie Details section header
+                    // Series Details header
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
@@ -243,18 +224,11 @@ class _AddMoviePageState extends State<AddMoviePage> {
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(color: const Color(0xFFE50914).withOpacity(0.3)),
                       ),
-                      child: Text(
-                        '${_type == 'movie' ? 'Movie' : 'Series'} Details',
-                        style: const TextStyle(
-                          color: Color(0xFFE50914),
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
+                      child: const Text('Series Details', style: TextStyle(color: Color(0xFFE50914), fontWeight: FontWeight.bold, fontSize: 16)),
                     ),
                     const SizedBox(height: 16),
 
-                    // Poster URL + Backdrop URL row
+                    // Poster + Backdrop
                     Row(
                       children: [
                         Expanded(
@@ -405,42 +379,79 @@ class _AddMoviePageState extends State<AddMoviePage> {
                     ),
                     const SizedBox(height: 24),
 
-                    // Download Links
-                    _buildSectionTitle('Download Links'),
-                    const SizedBox(height: 8),
-                    ..._downloadLinks.asMap().entries.map((entry) {
-                      final link = entry.value;
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: isDark ? Colors.white12 : Colors.grey.shade300),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Row(
+                    // ===== SEASONS & EPISODES =====
+                    _buildSectionTitle('Seasons & Episodes'),
+                    const SizedBox(height: 12),
+
+                    // Add Season button
+                    OutlinedButton.icon(
+                      onPressed: () => _showAddSeasonDialog(),
+                      icon: const Icon(Icons.add),
+                      label: const Text('Add Season'),
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Seasons list
+                    ..._seasons.asMap().entries.map((entry) {
+                      final seasonIndex = entry.key;
+                      final season = entry.value;
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(link.serverName, style: const TextStyle(fontWeight: FontWeight.w500)),
-                                    Text('${link.quality ?? ''} ${link.resolution ?? ''} ${link.size ?? ''}'.trim(),
-                                      style: TextStyle(fontSize: 11, color: isDark ? Colors.white38 : Colors.black38)),
-                                  ],
-                                ),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(season.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete, size: 20, color: Colors.red),
+                                    onPressed: () => setState(() => _seasons.removeAt(seasonIndex)),
+                                  ),
+                                ],
                               ),
-                              IconButton(icon: const Icon(Icons.delete, size: 20), onPressed: () => setState(() => _downloadLinks.removeAt(entry.key))),
+                              const SizedBox(height: 8),
+                              // Episodes
+                              ...season.episodes.asMap().entries.map((epEntry) {
+                                final epIndex = epEntry.key;
+                                final episode = epEntry.value;
+                                return ListTile(
+                                  dense: true,
+                                  contentPadding: EdgeInsets.zero,
+                                  leading: const Icon(Icons.play_circle_outline, size: 20, color: Color(0xFFE50914)),
+                                  title: Text(episode.name, style: const TextStyle(fontSize: 13)),
+                                  subtitle: Text('${episode.downloadLinks.length} download link(s)',
+                                    style: TextStyle(fontSize: 11, color: isDark ? Colors.white38 : Colors.black38)),
+                                  trailing: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      IconButton(
+                                        icon: const Icon(Icons.edit, size: 18),
+                                        onPressed: () => _showEditEpisodeDialog(seasonIndex, epIndex),
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.delete, size: 18, color: Colors.red),
+                                        onPressed: () => setState(() => _seasons[seasonIndex].episodes.removeAt(epIndex)),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }),
+                              // Add Episode button
+                              TextButton.icon(
+                                onPressed: () => _showAddEpisodeDialog(seasonIndex),
+                                icon: const Icon(Icons.add, size: 18),
+                                label: const Text('Add Episode'),
+                              ),
                             ],
                           ),
                         ),
                       );
                     }),
-                    OutlinedButton.icon(
-                      onPressed: () => _showAddDownloadLinkModal(),
-                      icon: const Icon(Icons.add),
-                      label: const Text('Add Download Link'),
-                    ),
+
                     const SizedBox(height: 80),
                   ],
                 ),
@@ -449,7 +460,122 @@ class _AddMoviePageState extends State<AddMoviePage> {
     );
   }
 
-  void _showAddDownloadLinkModal() {
+  void _showAddSeasonDialog() {
+    final controller = TextEditingController(text: 'Season ${_seasons.length + 1}');
+    showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Add Season'),
+        content: TextField(controller: controller, decoration: const InputDecoration(labelText: 'Season Name'), autofocus: true),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
+        ],
+      ),
+    ).then((result) {
+      if (result == true && controller.text.trim().isNotEmpty) {
+        setState(() {
+          _seasons.add(Season(name: controller.text.trim()));
+        });
+      }
+    });
+  }
+
+  void _showAddEpisodeDialog(int seasonIndex) {
+    final controller = TextEditingController(text: 'Episode ${_seasons[seasonIndex].episodes.length + 1}');
+    showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Add Episode - ${_seasons[seasonIndex].name}'),
+        content: TextField(controller: controller, decoration: const InputDecoration(labelText: 'Episode Name'), autofocus: true),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
+        ],
+      ),
+    ).then((result) {
+      if (result == true && controller.text.trim().isNotEmpty) {
+        setState(() {
+          _seasons[seasonIndex].episodes.add(Episode(name: controller.text.trim()));
+        });
+      }
+    });
+  }
+
+  void _showEditEpisodeDialog(int seasonIndex, int episodeIndex) {
+    final episode = _seasons[seasonIndex].episodes[episodeIndex];
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: isDark ? const Color(0xFF1A1A2E) : Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => DraggableScrollableSheet(
+          initialChildSize: 0.7,
+          minChildSize: 0.3,
+          maxChildSize: 0.95,
+          expand: false,
+          builder: (_, scrollController) => Column(
+            children: [
+              Container(
+                margin: const EdgeInsets.symmetric(vertical: 8),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(color: Colors.grey.shade400, borderRadius: BorderRadius.circular(2)),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  '${_seasons[seasonIndex].name} - ${episode.name} - Download Links',
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+              ),
+              const Divider(),
+              Expanded(
+                child: episode.downloadLinks.isEmpty
+                    ? Center(child: Text('No download links yet', style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5))))
+                    : ListView.builder(
+                        controller: scrollController,
+                        itemCount: episode.downloadLinks.length,
+                        itemBuilder: (_, index) {
+                          final link = episode.downloadLinks[index];
+                          return ListTile(
+                            dense: true,
+                            title: Text(link.serverName),
+                            subtitle: Text('${link.quality ?? ''} ${link.size ?? ''}'.trim()),
+                            trailing: IconButton(
+                              icon: const Icon(Icons.delete, size: 18, color: Colors.red),
+                              onPressed: () {
+                                setState(() => episode.downloadLinks.removeAt(index));
+                                setModalState(() {});
+                              },
+                            ),
+                          );
+                        },
+                      ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _showAddEpisodeDownloadLinkDialog(seasonIndex, episodeIndex);
+                  },
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add Download Link'),
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE50914), foregroundColor: Colors.white),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showAddEpisodeDownloadLinkDialog(int seasonIndex, int episodeIndex) {
     final serverController = TextEditingController();
     final urlController = TextEditingController();
     final qualityController = TextEditingController();
@@ -459,7 +585,7 @@ class _AddMoviePageState extends State<AddMoviePage> {
     showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Add Download Link'),
+        title: Text('${_seasons[seasonIndex].name} - ${_seasons[seasonIndex].episodes[episodeIndex].name} - Download Link'),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -470,7 +596,7 @@ class _AddMoviePageState extends State<AddMoviePage> {
               const SizedBox(height: 8),
               TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. FHD, HD')),
               const SizedBox(height: 8),
-              TextField(controller: resController, decoration: const InputDecoration(labelText: 'Resolution', hintText: 'e.g. 1080p, 4K')),
+              TextField(controller: resController, decoration: const InputDecoration(labelText: 'Resolution', hintText: 'e.g. 1080p')),
               const SizedBox(height: 8),
               TextField(controller: sizeController, decoration: const InputDecoration(labelText: 'Size', hintText: 'e.g. 1.5 GB')),
             ],
@@ -484,7 +610,7 @@ class _AddMoviePageState extends State<AddMoviePage> {
     ).then((result) {
       if (result == true && serverController.text.trim().isNotEmpty) {
         setState(() {
-          _downloadLinks.add(MovieDownloadLink(
+          _seasons[seasonIndex].episodes[episodeIndex].downloadLinks.add(MovieDownloadLink(
             serverName: serverController.text.trim(),
             url: urlController.text.trim(),
             quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),

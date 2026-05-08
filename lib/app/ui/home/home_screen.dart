@@ -7,6 +7,7 @@ import 'package:cm_movies/app/core/services/recent_service.dart';
 import 'package:cm_movies/app/ui/home/trending_movie_component.dart';
 import 'package:cm_movies/app/ui/components/movie_list_tile.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
+import 'package:cm_movies/app/ui/screens/series_detail_screen.dart';
 import 'package:cm_movies/app/ui/screens/genres_tags_collections_page.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -137,10 +138,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _navigateToDetail(Movie movie) {
+    final isSeries = movie.type == 'series';
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => MovieDetailScreen(slug: movie.slug),
+        builder: (_) => isSeries
+            ? SeriesDetailScreen(slug: movie.slug)
+            : MovieDetailScreen(slug: movie.slug),
       ),
     ).then((_) {
       _recentService.getRecentMovies().then((recents) {

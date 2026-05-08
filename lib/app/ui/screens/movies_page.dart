@@ -6,6 +6,7 @@ import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/ui/components/movie_card.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
+import 'package:cm_movies/app/ui/screens/series_detail_screen.dart';
 
 class MoviesPage extends StatefulWidget {
   const MoviesPage({super.key});
@@ -116,8 +117,7 @@ class _MoviesPageState extends State<MoviesPage> {
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (_) =>
-                                      MovieDetailScreen(slug: movie.slug),
+                                  builder: (_) => MovieDetailScreen(slug: movie.slug),
                                 ),
                               );
                             },

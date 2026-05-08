@@ -5,6 +5,7 @@ import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/services/bookmark_service.dart';
 import 'package:cm_movies/app/ui/components/movie_card.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
+import 'package:cm_movies/app/ui/screens/series_detail_screen.dart';
 
 class MovieBookmarkScreen extends StatefulWidget {
   const MovieBookmarkScreen({super.key});
@@ -132,11 +133,13 @@ class _MovieBookmarkScreenState extends State<MovieBookmarkScreen> {
                         child: MovieCard(
                           movie: movie,
                           onTap: () {
+                            final isSeries = movie.type == 'series';
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (_) =>
-                                    MovieDetailScreen(slug: movie.slug),
+                                builder: (_) => isSeries
+                                    ? SeriesDetailScreen(slug: movie.slug)
+                                    : MovieDetailScreen(slug: movie.slug),
                               ),
                             ).then((_) => _loadBookmarks());
                           },

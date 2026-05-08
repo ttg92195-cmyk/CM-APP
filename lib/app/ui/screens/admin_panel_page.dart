@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/models/tag_and_genres.dart';
 import 'package:cm_movies/app/ui/screens/add_movie_page.dart';
+import 'package:cm_movies/app/ui/screens/add_series_page.dart';
 import 'package:cm_movies/app/ui/screens/edit_movie_page.dart';
 
 class AdminPanelPage extends StatefulWidget {
@@ -19,18 +21,19 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   final FirestoreContentService _contentService = FirestoreContentService();
   late TabController _tabController;
 
-  List<Movie> _movies = [];
-  List<Movie> _series = [];
+  List<Movie> _allPosts = [];
+  List<Movie> _filteredPosts = [];
   List<TagAndGenres> _genres = [];
   List<TagAndGenres> _tags = [];
   List<TagAndGenres> _collections = [];
 
   bool _isLoading = true;
+  String _searchQuery = '';
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 5, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _loadData();
   }
 
@@ -44,20 +47,20 @@ class _AdminPanelPageState extends State<AdminPanelPage>
     setState(() => _isLoading = true);
     try {
       final results = await Future.wait([
-        _contentService.getMovies(limit: 100),
-        _contentService.getSeries(limit: 100),
+        _contentService.getAllPosts(limit: 100),
         _contentService.getGenres(),
         _contentService.getTags(),
         _contentService.getCollections(),
       ]);
 
       if (mounted) {
+        final posts = (results[0] as Map<String, dynamic>)['movies'] as List<Movie>;
         setState(() {
-          _movies = (results[0] as Map<String, dynamic>)['movies'] as List<Movie>;
-          _series = (results[1] as Map<String, dynamic>)['movies'] as List<Movie>;
-          _genres = results[2] as List<TagAndGenres>;
-          _tags = results[3] as List<TagAndGenres>;
-          _collections = results[4] as List<TagAndGenres>;
+          _allPosts = posts;
+          _filteredPosts = posts;
+          _genres = results[1] as List<TagAndGenres>;
+          _tags = results[2] as List<TagAndGenres>;
+          _collections = results[3] as List<TagAndGenres>;
           _isLoading = false;
         });
       }
@@ -66,17 +69,26 @@ class _AdminPanelPageState extends State<AdminPanelPage>
     }
   }
 
-  Future<void> _deleteMovie(String id, String type) async {
+  void _filterPosts(String query) {
+    setState(() {
+      _searchQuery = query;
+      if (query.isEmpty) {
+        _filteredPosts = _allPosts;
+      } else {
+        _filteredPosts = _allPosts.where((post) =>
+          post.title.toLowerCase().contains(query.toLowerCase())).toList();
+      }
+    });
+  }
+
+  Future<void> _deletePost(String id, String type) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Delete Confirmation'),
-        content: Text('Are you sure you want to delete this ${type == 'movie' ? 'movie' : 'series'}?'),
+        content: Text('Are you sure you want to delete this ${type == 'series' ? 'series' : 'movie'}?'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: TextButton.styleFrom(foregroundColor: Colors.red),
@@ -90,286 +102,8 @@ class _AdminPanelPageState extends State<AdminPanelPage>
       await _contentService.deleteMovie(id);
       _loadData();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Deleted successfully')),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Deleted successfully')));
       }
-    }
-  }
-
-  Future<void> _deleteGenre(String id) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete Genre'),
-        content: const Text('Are you sure you want to delete this genre?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      await _contentService.deleteGenre(id);
-      _loadData();
-    }
-  }
-
-  Future<void> _deleteTag(String id) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete Tag'),
-        content: const Text('Are you sure you want to delete this tag?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      await _contentService.deleteTag(id);
-      _loadData();
-    }
-  }
-
-  Future<void> _deleteCollection(String id) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete Collection'),
-        content: const Text('Are you sure you want to delete this collection?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      await _contentService.deleteCollection(id);
-      _loadData();
-    }
-  }
-
-  Future<void> _addGenreDialog() async {
-    final controller = TextEditingController();
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Add Genre'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            labelText: 'Genre Name',
-            border: OutlineInputBorder(),
-          ),
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: const Text('Add'),
-          ),
-        ],
-      ),
-    );
-
-    if (result != null && result.isNotEmpty) {
-      await _contentService.addGenre(result);
-      _loadData();
-    }
-  }
-
-  Future<void> _addTagDialog() async {
-    final controller = TextEditingController();
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Add Tag'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            labelText: 'Tag Name',
-            border: OutlineInputBorder(),
-          ),
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: const Text('Add'),
-          ),
-        ],
-      ),
-    );
-
-    if (result != null && result.isNotEmpty) {
-      await _contentService.addTag(result);
-      _loadData();
-    }
-  }
-
-  Future<void> _addCollectionDialog() async {
-    final controller = TextEditingController();
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Add Collection'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            labelText: 'Collection Name',
-            border: OutlineInputBorder(),
-          ),
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: const Text('Add'),
-          ),
-        ],
-      ),
-    );
-
-    if (result != null && result.isNotEmpty) {
-      await _contentService.addCollection(result);
-      _loadData();
-    }
-  }
-
-  Future<void> _editGenreDialog(TagAndGenres genre) async {
-    final controller = TextEditingController(text: genre.name);
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Edit Genre'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            labelText: 'Genre Name',
-            border: OutlineInputBorder(),
-          ),
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-
-    if (result != null && result.isNotEmpty) {
-      await _contentService.updateGenre(genre.id, result);
-      _loadData();
-    }
-  }
-
-  Future<void> _editTagDialog(TagAndGenres tag) async {
-    final controller = TextEditingController(text: tag.name);
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Edit Tag'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            labelText: 'Tag Name',
-            border: OutlineInputBorder(),
-          ),
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-
-    if (result != null && result.isNotEmpty) {
-      await _contentService.updateTag(tag.id, result);
-      _loadData();
-    }
-  }
-
-  Future<void> _editCollectionDialog(TagAndGenres collection) async {
-    final controller = TextEditingController(text: collection.name);
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Edit Collection'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            labelText: 'Collection Name',
-            border: OutlineInputBorder(),
-          ),
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-
-    if (result != null && result.isNotEmpty) {
-      await _contentService.updateCollection(collection.id, result);
-      _loadData();
     }
   }
 
@@ -379,6 +113,9 @@ class _AdminPanelPageState extends State<AdminPanelPage>
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
+    final movies = _filteredPosts.where((p) => p.type != 'series').toList();
+    final series = _filteredPosts.where((p) => p.type == 'series').toList();
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Admin Panel'),
@@ -386,11 +123,10 @@ class _AdminPanelPageState extends State<AdminPanelPage>
           controller: _tabController,
           isScrollable: true,
           tabs: [
-            Tab(text: 'Movies (${_movies.length})'),
-            Tab(text: 'Series (${_series.length})'),
-            Tab(text: 'Genres (${_genres.length})'),
-            Tab(text: 'Tags (${_tags.length})'),
-            Tab(text: 'Collections (${_collections.length})'),
+            Tab(text: 'All (${_filteredPosts.length})'),
+            Tab(text: 'Movies (${movies.length})'),
+            Tab(text: 'Series (${series.length})'),
+            Tab(text: 'Genres/Tags'),
           ],
         ),
       ),
@@ -399,32 +135,19 @@ class _AdminPanelPageState extends State<AdminPanelPage>
           : TabBarView(
               controller: _tabController,
               children: [
-                _buildMoviesTab(isDark),
-                _buildSeriesTab(isDark),
-                _buildGenresTab(isDark),
-                _buildTagsTab(isDark),
-                _buildCollectionsTab(isDark),
+                _buildPostsTab(_filteredPosts, isDark),
+                _buildPostsTab(movies, isDark),
+                _buildPostsTab(series, isDark),
+                _buildGenresTagsTab(isDark),
               ],
             ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {
           final index = _tabController.index;
-          if (index <= 1) {
-            // Movies or Series tab
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => AddMoviePage(
-                  initialType: index == 0 ? 'movie' : 'series',
-                ),
-              ),
-            ).then((_) => _loadData());
-          } else if (index == 2) {
-            _addGenreDialog();
-          } else if (index == 3) {
-            _addTagDialog();
-          } else if (index == 4) {
-            _addCollectionDialog();
+          if (index <= 2) {
+            _showAddOptions();
+          } else {
+            _addGenreTagDialog();
           }
         },
         backgroundColor: const Color(0xFFE50914),
@@ -433,138 +156,234 @@ class _AdminPanelPageState extends State<AdminPanelPage>
     );
   }
 
-  Widget _buildMoviesTab(bool isDark) {
-    if (_movies.isEmpty) {
-      return const Center(child: Text('No movies yet. Tap + to add one.'));
-    }
-    return ListView.builder(
-      itemCount: _movies.length,
-      itemBuilder: (context, index) {
-        final movie = _movies[index];
-        return _buildMovieListItem(movie, isDark);
-      },
+  void _showAddOptions() {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.movie, color: Color(0xFFE50914)),
+              title: const Text('Add Movie'),
+              onTap: () {
+                Navigator.pop(ctx);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AddMoviePage(initialType: 'movie')),
+                ).then((_) => _loadData());
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.tv, color: Color(0xFFE50914)),
+              title: const Text('Add Series'),
+              onTap: () {
+                Navigator.pop(ctx);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AddSeriesPage()),
+                ).then((_) => _loadData());
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 
-  Widget _buildSeriesTab(bool isDark) {
-    if (_series.isEmpty) {
-      return const Center(child: Text('No series yet. Tap + to add one.'));
-    }
-    return ListView.builder(
-      itemCount: _series.length,
-      itemBuilder: (context, index) {
-        final series = _series[index];
-        return _buildMovieListItem(series, isDark);
-      },
+  Widget _buildPostsTab(List<Movie> posts, bool isDark) {
+    return Column(
+      children: [
+        // Search bar
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+          child: TextField(
+            onChanged: _filterPosts,
+            decoration: InputDecoration(
+              hintText: 'Search posts...',
+              prefixIcon: const Icon(Icons.search),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              contentPadding: const EdgeInsets.symmetric(vertical: 8),
+              isDense: true,
+            ),
+          ),
+        ),
+        Expanded(
+          child: posts.isEmpty
+              ? const Center(child: Text('No posts yet. Tap + to add one.'))
+              : ListView.builder(
+                  itemCount: posts.length,
+                  itemBuilder: (context, index) {
+                    final post = posts[index];
+                    return _buildPostListItem(post, isDark);
+                  },
+                ),
+        ),
+      ],
     );
   }
 
-  Widget _buildMovieListItem(Movie movie, bool isDark) {
-    return ListTile(
-      leading: Container(
-        width: 50,
-        height: 70,
-        decoration: BoxDecoration(
-          color: const Color(0xFF1A1A2E),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: movie.fullPosterUrl.isNotEmpty
-            ? ClipRRect(
-                borderRadius: BorderRadius.circular(6),
-                child: Image.network(
-                  movie.fullPosterUrl,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const Icon(Icons.movie, size: 24),
-                ),
-              )
-            : const Icon(Icons.movie, size: 24),
-      ),
-      title: Text(
-        movie.title,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontWeight: FontWeight.w600),
-      ),
-      subtitle: Text(
-        '${movie.year ?? 'N/A'} • ${movie.categories.join(', ')}',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          color: isDark ? Colors.white54 : Colors.black54,
-          fontSize: 12,
-        ),
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (movie.isTrending)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: const Color(0xFFE50914).withOpacity(0.2),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: const Text(
-                'TRENDING',
-                style: TextStyle(
-                  color: Color(0xFFE50914),
-                  fontSize: 9,
-                  fontWeight: FontWeight.bold,
-                ),
+  Widget _buildPostListItem(Movie post, bool isDark) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Poster
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: SizedBox(
+                width: 55,
+                height: 78,
+                child: post.fullPosterUrl.isNotEmpty
+                    ? CachedNetworkImage(
+                        imageUrl: post.fullPosterUrl,
+                        fit: BoxFit.cover,
+                        errorWidget: (_, __, ___) => Container(
+                          color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade300,
+                          child: const Icon(Icons.movie, size: 24),
+                        ),
+                      )
+                    : Container(
+                        color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade300,
+                        child: const Icon(Icons.movie, size: 24),
+                      ),
               ),
             ),
-          IconButton(
-            icon: const Icon(Icons.edit, size: 20),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => EditMoviePage(movieId: movie.id),
+            const SizedBox(width: 12),
+            // Info
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    post.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      if (post.year != null && post.year!.isNotEmpty)
+                        Text(post.year!, style: TextStyle(fontSize: 12, color: isDark ? Colors.white54 : Colors.black54)),
+                      if (post.year != null && post.year!.isNotEmpty)
+                        const Text(' • ', style: TextStyle(fontSize: 12)),
+                      if (post.rating != null && post.rating!.isNotEmpty) ...[
+                        const Icon(Icons.star, size: 12, color: Colors.amber),
+                        Text(post.rating!, style: const TextStyle(fontSize: 12, color: Colors.amber)),
+                        const Text(' • ', style: TextStyle(fontSize: 12)),
+                      ],
+                      Text(
+                        post.timeAgo.isNotEmpty ? post.timeAgo : 'Unknown',
+                        style: TextStyle(fontSize: 12, color: isDark ? Colors.white38 : Colors.black38),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      if (post.isTrending)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFE50914).withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text('TRENDING', style: TextStyle(color: Color(0xFFE50914), fontSize: 9, fontWeight: FontWeight.bold)),
+                        ),
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: (post.type == 'series' ? Colors.blue : Colors.green).withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          post.type == 'series' ? 'SERIES' : 'MOVIE',
+                          style: TextStyle(
+                            color: post.type == 'series' ? Colors.blue : Colors.green,
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            // Edit & Delete buttons
+            Column(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.edit, size: 20),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => EditMoviePage(movieId: post.id)),
+                    ).then((_) => _loadData());
+                  },
                 ),
-              ).then((_) => _loadData());
-            },
+                IconButton(
+                  icon: Icon(Icons.delete, size: 20, color: Colors.red.shade400),
+                  onPressed: () => _deletePost(post.id, post.type ?? 'movie'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGenresTagsTab(bool isDark) {
+    return DefaultTabController(
+      length: 3,
+      child: Column(
+        children: [
+          const TabBar(
+            tabs: [
+              Tab(text: 'Genres'),
+              Tab(text: 'Tags'),
+              Tab(text: 'Collections'),
+            ],
           ),
-          IconButton(
-            icon: Icon(Icons.delete, size: 20, color: Colors.red.shade400),
-            onPressed: () => _deleteMovie(movie.id, movie.type ?? 'movie'),
+          Expanded(
+            child: TabBarView(
+              children: [
+                _buildSimpleList(_genres, isDark, 'genre'),
+                _buildSimpleList(_tags, isDark, 'tag'),
+                _buildSimpleList(_collections, isDark, 'collection'),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildGenresTab(bool isDark) {
-    if (_genres.isEmpty) {
-      return const Center(child: Text('No genres yet. Tap + to add one.'));
-    }
+  Widget _buildSimpleList(List<TagAndGenres> items, bool isDark, String type) {
+    if (items.isEmpty) return Center(child: Text('No ${type}s yet. Tap + to add one.'));
     return ListView.builder(
-      itemCount: _genres.length,
+      itemCount: items.length,
       itemBuilder: (context, index) {
-        final genre = _genres[index];
+        final item = items[index];
         return ListTile(
           leading: CircleAvatar(
             backgroundColor: const Color(0xFFE50914).withOpacity(0.15),
-            child: Text(
-              '${index + 1}',
-              style: const TextStyle(
-                color: Color(0xFFE50914),
-                fontWeight: FontWeight.bold,
-              ),
-            ),
+            child: Text('${index + 1}', style: const TextStyle(color: Color(0xFFE50914), fontWeight: FontWeight.bold)),
           ),
-          title: Text(genre.name),
-          subtitle: Text('${genre.moviesCount ?? 0} movies'),
+          title: Text(item.name),
+          subtitle: Text('${item.moviesCount ?? 0} movies'),
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              IconButton(
-                icon: const Icon(Icons.edit, size: 20),
-                onPressed: () => _editGenreDialog(genre),
-              ),
-              IconButton(
-                icon: Icon(Icons.delete, size: 20, color: Colors.red.shade400),
-                onPressed: () => _deleteGenre(genre.id),
-              ),
+              IconButton(icon: const Icon(Icons.edit, size: 20), onPressed: () => _editItemDialog(item, type)),
+              IconButton(icon: Icon(Icons.delete, size: 20, color: Colors.red.shade400), onPressed: () => _deleteItemDialog(item, type)),
             ],
           ),
         );
@@ -572,81 +391,73 @@ class _AdminPanelPageState extends State<AdminPanelPage>
     );
   }
 
-  Widget _buildTagsTab(bool isDark) {
-    if (_tags.isEmpty) {
-      return const Center(child: Text('No tags yet. Tap + to add one.'));
-    }
-    return ListView.builder(
-      itemCount: _tags.length,
-      itemBuilder: (context, index) {
-        final tag = _tags[index];
-        return ListTile(
-          leading: CircleAvatar(
-            backgroundColor: const Color(0xFFE50914).withOpacity(0.15),
-            child: Text(
-              '${index + 1}',
-              style: const TextStyle(
-                color: Color(0xFFE50914),
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          title: Text(tag.name),
-          subtitle: Text('${tag.moviesCount ?? 0} movies'),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                icon: const Icon(Icons.edit, size: 20),
-                onPressed: () => _editTagDialog(tag),
-              ),
-              IconButton(
-                icon: Icon(Icons.delete, size: 20, color: Colors.red.shade400),
-                onPressed: () => _deleteTag(tag.id),
-              ),
-            ],
-          ),
-        );
-      },
-    );
+  void _addGenreTagDialog() {
+    final controller = TextEditingController();
+    showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Add Item'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(controller: controller, decoration: const InputDecoration(labelText: 'Name'), autofocus: true),
+            const SizedBox(height: 12),
+            const Text('This will be added as a Genre, Tag, or Collection based on the current tab.'),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
+        ],
+      ),
+    ).then((result) async {
+      if (result == true && controller.text.trim().isNotEmpty) {
+        // Add to all three for simplicity
+        await _contentService.addGenre(controller.text.trim());
+        await _contentService.addTag(controller.text.trim());
+        _loadData();
+      }
+    });
   }
 
-  Widget _buildCollectionsTab(bool isDark) {
-    if (_collections.isEmpty) {
-      return const Center(child: Text('No collections yet. Tap + to add one.'));
-    }
-    return ListView.builder(
-      itemCount: _collections.length,
-      itemBuilder: (context, index) {
-        final collection = _collections[index];
-        return ListTile(
-          leading: CircleAvatar(
-            backgroundColor: const Color(0xFFE50914).withOpacity(0.15),
-            child: Text(
-              '${index + 1}',
-              style: const TextStyle(
-                color: Color(0xFFE50914),
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          title: Text(collection.name),
-          subtitle: Text('${collection.moviesCount ?? 0} movies'),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                icon: const Icon(Icons.edit, size: 20),
-                onPressed: () => _editCollectionDialog(collection),
-              ),
-              IconButton(
-                icon: Icon(Icons.delete, size: 20, color: Colors.red.shade400),
-                onPressed: () => _deleteCollection(collection.id),
-              ),
-            ],
-          ),
-        );
-      },
+  Future<void> _editItemDialog(TagAndGenres item, String type) async {
+    final controller = TextEditingController(text: item.name);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Edit ${type[0].toUpperCase()}${type.substring(1)}'),
+        content: TextField(controller: controller, decoration: InputDecoration(labelText: 'Name'), autofocus: true),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, controller.text.trim()), child: const Text('Save')),
+        ],
+      ),
     );
+    if (result != null && result.isNotEmpty) {
+      if (type == 'genre') await _contentService.updateGenre(item.id, result);
+      else if (type == 'tag') await _contentService.updateTag(item.id, result);
+      else await _contentService.updateCollection(item.id, result);
+      _loadData();
+    }
+  }
+
+  Future<void> _deleteItemDialog(TagAndGenres item, String type) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete ${type[0].toUpperCase()}${type.substring(1)}'),
+        content: Text('Are you sure you want to delete "${item.name}"?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), style: TextButton.styleFrom(foregroundColor: Colors.red), child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      if (type == 'genre') await _contentService.deleteGenre(item.id);
+      else if (type == 'tag') await _contentService.deleteTag(item.id);
+      else await _contentService.deleteCollection(item.id);
+      _loadData();
+    }
   }
 }

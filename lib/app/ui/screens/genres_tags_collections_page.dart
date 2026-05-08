@@ -7,6 +7,7 @@ import 'package:cm_movies/app/core/models/tag_and_genres.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/ui/components/movie_card.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
+import 'package:cm_movies/app/ui/screens/series_detail_screen.dart';
 
 class GenresTagsCollectionsPage extends StatefulWidget {
   const GenresTagsCollectionsPage({super.key});
@@ -380,8 +381,9 @@ class _FilterResultPageState extends State<FilterResultPage> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) =>
-                              MovieDetailScreen(slug: movie.slug),
+                          builder: (_) => movie.type == 'series'
+                              ? SeriesDetailScreen(slug: movie.slug)
+                              : MovieDetailScreen(slug: movie.slug),
                         ),
                       );
                     },

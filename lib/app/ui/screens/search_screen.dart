@@ -6,6 +6,7 @@ import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/ui/components/movie_list_tile.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
+import 'package:cm_movies/app/ui/screens/series_detail_screen.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -225,11 +226,13 @@ class _SearchScreenState extends State<SearchScreen> {
                               return MovieListTile(
                                 movie: movie,
                                 onTap: () {
+                                  final isSeries = movie.type == 'series';
                                   Navigator.push(
                                     context,
                                     MaterialPageRoute(
-                                      builder: (_) => MovieDetailScreen(
-                                          slug: movie.slug),
+                                      builder: (_) => isSeries
+                                          ? SeriesDetailScreen(slug: movie.slug)
+                                          : MovieDetailScreen(slug: movie.slug),
                                     ),
                                   );
                                 },
