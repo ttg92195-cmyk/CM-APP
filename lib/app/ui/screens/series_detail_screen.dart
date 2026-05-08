@@ -105,9 +105,15 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
   }
 
   Future<void> _launchUrl(String url) async {
+    if (url.isEmpty) return;
     final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    try {
+      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched) {
+        await launchUrl(uri, mode: LaunchMode.platformDefault);
+      }
+    } catch (e) {
+      debugPrint('Could not launch URL: $url - $e');
     }
   }
 
@@ -212,19 +218,23 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
     // Adaptive colors
     final sectionHeaderColor = isDark ? const Color(0xFFF5C518) : const Color(0xFFB8960F);
     final bodyTextColor = isDark ? Colors.white70 : Colors.black87;
-    final chipBgColor = isDark ? Colors.white12 : const Color(0xFFE8E8E8);
-    final chipTextColor = isDark ? Colors.white70 : const Color(0xFF333333);
+    final metaTextColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
+    final tagBorderColor = isDark ? Colors.grey.shade600 : Colors.grey.shade400;
+    final tagTextColor = isDark ? Colors.grey.shade300 : Colors.grey.shade700;
 
     return Scaffold(
+      backgroundColor: isDark ? const Color(0xFF0A0A0A) : const Color(0xFFF5F5F5),
       body: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ===== Poster Backdrop Section =====
+            // ===== Header: Backdrop + Poster + Info =====
             Stack(
+              clipBehavior: Clip.none,
               children: [
+                // Backdrop image (shorter height, ~200px)
                 SizedBox(
-                  height: 300,
+                  height: 220,
                   width: double.infinity,
                   child: (detail.fullBackdropUrl.isNotEmpty
                           ? CachedNetworkImage(
@@ -233,34 +243,22 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                               errorWidget: (context, url, error) =>
                                   detail.fullPosterUrl.isNotEmpty
                                       ? CachedNetworkImage(imageUrl: detail.fullPosterUrl, fit: BoxFit.cover)
-                                      : Container(
-                                          color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade300,
-                                          child: Icon(Icons.tv, size: 64, color: isDark ? Colors.white24 : Colors.black12),
-                                        ),
+                                      : Container(color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade400),
                             )
                           : detail.fullPosterUrl.isNotEmpty
                               ? CachedNetworkImage(imageUrl: detail.fullPosterUrl, fit: BoxFit.cover)
-                              : Container(
-                                  color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade300,
-                                  child: Icon(Icons.tv, size: 64, color: isDark ? Colors.white24 : Colors.black12),
-                                )
+                              : Container(color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade400)
                       ),
                 ),
-                // Stronger gradient overlay for text readability
+
+                // Dark overlay on backdrop (0.7 opacity)
                 Container(
-                  height: 300,
+                  height: 220,
                   decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.black.withOpacity(0.2),
-                        Colors.black.withOpacity(0.5),
-                        Colors.black.withOpacity(0.95),
-                      ],
-                    ),
+                    color: Colors.black.withOpacity(0.7),
                   ),
                 ),
+
                 // Back button and bookmark - with glassmorphism
                 Positioned(
                   top: 0,
@@ -286,76 +284,131 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                     ),
                   ),
                 ),
-                Positioned(
-                  left: 16,
-                  right: 16,
-                  bottom: 16,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        detail.title,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          shadows: [Shadow(offset: Offset(0, 1), blurRadius: 4, color: Colors.black87)],
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          if (detail.rating != null && detail.rating!.isNotEmpty)
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                              decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(12)),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(Icons.star, size: 14, color: Colors.amber),
-                                  const SizedBox(width: 3),
-                                  Text(detail.rating!, style: const TextStyle(color: Colors.amber, fontSize: 13, fontWeight: FontWeight.w600)),
-                                ],
-                              ),
-                            ),
-                          if (detail.rating != null && detail.rating!.isNotEmpty) const SizedBox(width: 10),
-                          if (detail.year != null && detail.year!.isNotEmpty)
-                            Text(detail.year!, style: const TextStyle(color: Colors.white70, fontSize: 14)),
-                          if (detail.year != null && detail.year!.isNotEmpty) const SizedBox(width: 10),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFE50914).withOpacity(0.85),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: const Text('Series', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600)),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      if (detail.categories.isNotEmpty)
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 4,
-                          children: detail.categories.take(4).map((cat) => Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.white24,
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(color: Colors.white38, width: 0.5),
-                            ),
-                            child: Text(cat, style: const TextStyle(color: Colors.white, fontSize: 11)),
-                          )).toList(),
-                        ),
-                    ],
-                  ),
-                ),
               ],
             ),
 
+            // Poster + Title/Info row (overlaps up into backdrop)
+            Transform.translate(
+              offset: const Offset(0, -60),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    // Poster thumbnail
+                    Container(
+                      width: 110,
+                      height: 160,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.5),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: detail.fullPosterUrl.isNotEmpty
+                            ? CachedNetworkImage(
+                                imageUrl: detail.fullPosterUrl,
+                                fit: BoxFit.cover,
+                                errorWidget: (context, url, error) => Container(
+                                  color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade300,
+                                  child: Icon(Icons.tv, size: 40, color: isDark ? Colors.white24 : Colors.black12),
+                                ),
+                              )
+                            : Container(
+                                color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade300,
+                                child: Icon(Icons.tv, size: 40, color: isDark ? Colors.white24 : Colors.black12),
+                              ),
+                      ),
+                    ),
+
+                    const SizedBox(width: 14),
+
+                    // Title + Meta info
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Title
+                            Text(
+                              detail.title,
+                              style: TextStyle(
+                                color: isDark ? Colors.white : Colors.black87,
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                height: 1.2,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 8),
+
+                            // Rating + Year row
+                            Row(
+                              children: [
+                                if (detail.rating != null && detail.rating!.isNotEmpty) ...[
+                                  const Icon(Icons.star, size: 16, color: Colors.amber),
+                                  const SizedBox(width: 3),
+                                  Text(
+                                    detail.rating!,
+                                    style: const TextStyle(color: Colors.amber, fontSize: 13, fontWeight: FontWeight.w600),
+                                  ),
+                                  const SizedBox(width: 12),
+                                ],
+                                if (detail.year != null && detail.year!.isNotEmpty) ...[
+                                  Text(detail.year!, style: TextStyle(color: metaTextColor, fontSize: 13)),
+                                  const SizedBox(width: 12),
+                                ],
+                                // Series badge
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFE50914).withOpacity(0.85),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: const Text('Series', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600)),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // Categories - outline style tags
+            if (detail.categories.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: detail.categories.take(5).map((cat) => Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: tagBorderColor, width: 1),
+                    ),
+                    child: Text(cat, style: TextStyle(color: tagTextColor, fontSize: 11)),
+                  )).toList(),
+                ),
+              ),
+
+            const SizedBox(height: 16),
+
             // ===== Action Buttons =====
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
               child: Row(
                 children: [
                   Expanded(
@@ -395,24 +448,20 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
               ),
             ),
 
-            // Tags row - improved contrast for light mode
+            // Tags row - outline style
             if (detail.tags.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                 child: Wrap(
-                  spacing: 6,
-                  runSpacing: 4,
+                  spacing: 8,
+                  runSpacing: 6,
                   children: detail.tags.take(6).map((tag) => Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                     decoration: BoxDecoration(
-                      color: chipBgColor,
                       borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: isDark ? Colors.white24 : Colors.grey.shade400,
-                        width: 0.5,
-                      ),
+                      border: Border.all(color: tagBorderColor, width: 1),
                     ),
-                    child: Text(tag, style: TextStyle(color: chipTextColor, fontSize: 11)),
+                    child: Text(tag, style: TextStyle(color: tagTextColor, fontSize: 11)),
                   )).toList(),
                 ),
               ),
@@ -453,11 +502,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                                   padding: const EdgeInsets.only(top: 6),
                                   child: Text(
                                     _synopsisExpanded ? 'read less' : '...read more',
-                                    style: TextStyle(
-                                      color: sectionHeaderColor,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500,
-                                    ),
+                                    style: TextStyle(color: sectionHeaderColor, fontSize: 13, fontWeight: FontWeight.w500),
                                   ),
                                 ),
                               ),
@@ -486,12 +531,9 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                       children: detail.directors.map((d) => Container(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                         decoration: BoxDecoration(
-                          color: chipBgColor,
+                          color: isDark ? Colors.white12 : Colors.grey.shade200,
                           borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: isDark ? Colors.white12 : Colors.grey.shade400,
-                            width: 0.5,
-                          ),
+                          border: Border.all(color: isDark ? Colors.white12 : Colors.grey.shade400, width: 0.5),
                         ),
                         child: Text(d, style: TextStyle(color: isDark ? Colors.white : Colors.black87, fontSize: 13)),
                       )).toList(),
@@ -557,9 +599,6 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                 ),
               ),
 
-            // NOTE: "Seasons & Episodes" inline section REMOVED
-            // Season/Episode selection is now only available via Watch/Download modal bottom sheets
-
             const SizedBox(height: 40),
           ],
         ),
@@ -575,12 +614,7 @@ class _SeriesDownloadSheet extends StatefulWidget {
   final ThemeData theme;
   final Function(String) onLaunchUrl;
 
-  const _SeriesDownloadSheet({
-    required this.detail,
-    required this.isDark,
-    required this.theme,
-    required this.onLaunchUrl,
-  });
+  const _SeriesDownloadSheet({required this.detail, required this.isDark, required this.theme, required this.onLaunchUrl});
 
   @override
   State<_SeriesDownloadSheet> createState() => _SeriesDownloadSheetState();
@@ -606,10 +640,7 @@ class _SeriesDownloadSheetState extends State<_SeriesDownloadSheet> {
             margin: const EdgeInsets.symmetric(vertical: 8),
             width: 40,
             height: 4,
-            decoration: BoxDecoration(
-              color: isDark ? Colors.grey.shade600 : Colors.grey.shade400,
-              borderRadius: BorderRadius.circular(2),
-            ),
+            decoration: BoxDecoration(color: isDark ? Colors.grey.shade600 : Colors.grey.shade400, borderRadius: BorderRadius.circular(2)),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
@@ -617,17 +648,12 @@ class _SeriesDownloadSheetState extends State<_SeriesDownloadSheet> {
               children: [
                 Icon(Icons.download_rounded, color: isDark ? const Color(0xFFF5C518) : const Color(0xFFD4A817)),
                 const SizedBox(width: 8),
-                Text('All Download Links', style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 20,
-                  color: isDark ? Colors.white : Colors.black87,
-                )),
+                Text('All Download Links', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20, color: isDark ? Colors.white : Colors.black87)),
               ],
             ),
           ),
           Divider(height: 1, color: isDark ? Colors.white12 : Colors.grey.shade300),
 
-          // Season selector - improved contrast
           if (seasons.isNotEmpty) ...[
             Container(
               height: 48,
@@ -642,29 +668,11 @@ class _SeriesDownloadSheetState extends State<_SeriesDownloadSheet> {
                     child: ChoiceChip(
                       label: Text(seasons[index].name),
                       selected: isSelected,
-                      onSelected: (_) {
-                        setState(() {
-                          _selectedSeasonIndex = index;
-                          _selectedEpisodeIndex = null;
-                        });
-                      },
-                      selectedColor: isDark
-                          ? const Color(0xFFE50914).withOpacity(0.35)
-                          : const Color(0xFFE50914).withOpacity(0.15),
+                      onSelected: (_) { setState(() { _selectedSeasonIndex = index; _selectedEpisodeIndex = null; }); },
+                      selectedColor: isDark ? const Color(0xFFE50914).withOpacity(0.35) : const Color(0xFFE50914).withOpacity(0.15),
                       backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
-                      side: BorderSide(
-                        color: isSelected
-                            ? const Color(0xFFE50914)
-                            : (isDark ? Colors.white24 : Colors.grey.shade400),
-                        width: isSelected ? 1.5 : 1.0,
-                      ),
-                      labelStyle: TextStyle(
-                        color: isSelected
-                            ? (isDark ? Colors.white : Colors.black87)
-                            : (isDark ? Colors.white70 : Colors.black54),
-                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                        fontSize: 12,
-                      ),
+                      side: BorderSide(color: isSelected ? const Color(0xFFE50914) : (isDark ? Colors.white24 : Colors.grey.shade400), width: isSelected ? 1.5 : 1.0),
+                      labelStyle: TextStyle(color: isSelected ? (isDark ? Colors.white : Colors.black87) : (isDark ? Colors.white70 : Colors.black54), fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal, fontSize: 12),
                     ),
                   );
                 },
@@ -673,7 +681,6 @@ class _SeriesDownloadSheetState extends State<_SeriesDownloadSheet> {
             Divider(height: 1, color: isDark ? Colors.white12 : Colors.grey.shade300),
           ],
 
-          // Episode list - improved contrast
           if (_selectedSeasonIndex != null && seasons[_selectedSeasonIndex!].episodes.isNotEmpty) ...[
             Container(
               height: 44,
@@ -689,26 +696,11 @@ class _SeriesDownloadSheetState extends State<_SeriesDownloadSheet> {
                     child: ChoiceChip(
                       label: Text(episode.name),
                       selected: isSelected,
-                      onSelected: (_) {
-                        setState(() => _selectedEpisodeIndex = index);
-                      },
-                      selectedColor: isDark
-                          ? const Color(0xFFF5C518).withOpacity(0.35)
-                          : const Color(0xFFF5C518).withOpacity(0.15),
+                      onSelected: (_) { setState(() => _selectedEpisodeIndex = index); },
+                      selectedColor: isDark ? const Color(0xFFF5C518).withOpacity(0.35) : const Color(0xFFF5C518).withOpacity(0.15),
                       backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
-                      side: BorderSide(
-                        color: isSelected
-                            ? const Color(0xFFF5C518)
-                            : (isDark ? Colors.white24 : Colors.grey.shade400),
-                        width: isSelected ? 1.5 : 1.0,
-                      ),
-                      labelStyle: TextStyle(
-                        color: isSelected
-                            ? (isDark ? Colors.white : Colors.black87)
-                            : (isDark ? Colors.white70 : Colors.black54),
-                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                        fontSize: 12,
-                      ),
+                      side: BorderSide(color: isSelected ? const Color(0xFFF5C518) : (isDark ? Colors.white24 : Colors.grey.shade400), width: isSelected ? 1.5 : 1.0),
+                      labelStyle: TextStyle(color: isSelected ? (isDark ? Colors.white : Colors.black87) : (isDark ? Colors.white70 : Colors.black54), fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal, fontSize: 12),
                     ),
                   );
                 },
@@ -717,25 +709,14 @@ class _SeriesDownloadSheetState extends State<_SeriesDownloadSheet> {
             Divider(height: 1, color: isDark ? Colors.white12 : Colors.grey.shade300),
           ],
 
-          // Download links table
           if (_selectedSeasonIndex != null && _selectedEpisodeIndex != null)
-            Expanded(
-              child: _buildLinksTable(seasons[_selectedSeasonIndex!].episodes[_selectedEpisodeIndex!].downloadLinks, scrollController),
-            )
+            Expanded(child: _buildLinksTable(seasons[_selectedSeasonIndex!].episodes[_selectedEpisodeIndex!].downloadLinks, scrollController))
           else if (_selectedSeasonIndex == null && widget.detail.downloadLinks.isNotEmpty)
-            Expanded(
-              child: _buildLinksTable(widget.detail.downloadLinks, scrollController),
-            )
+            Expanded(child: _buildLinksTable(widget.detail.downloadLinks, scrollController))
           else
             Expanded(
-              child: Center(
-                child: Text(
-                  _selectedSeasonIndex == null
-                      ? 'Select a season'
-                      : 'Select an episode',
-                  style: TextStyle(color: isDark ? Colors.white54 : Colors.black45),
-                ),
-              ),
+              child: Center(child: Text(_selectedSeasonIndex == null ? 'Select a season' : 'Select an episode',
+                style: TextStyle(color: isDark ? Colors.white54 : Colors.black45))),
             ),
         ],
       ),
@@ -744,21 +725,18 @@ class _SeriesDownloadSheetState extends State<_SeriesDownloadSheet> {
 
   Widget _buildLinksTable(List<MovieDownloadLink> links, ScrollController controller) {
     final isDark = widget.isDark;
-
     return Column(
       children: [
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           color: isDark ? Colors.white10 : Colors.grey.shade200,
-          child: Row(
-            children: [
-              _tableCell('No', 40, isHeader: true, isDark: isDark),
-              _tableCell('Server', 80, isHeader: true, isDark: isDark),
-              _tableCell('Quality', 70, isHeader: true, isDark: isDark),
-              _tableCell('Size', 70, isHeader: true, isDark: isDark),
-              _tableCell('Link', 80, isHeader: true, isDark: isDark),
-            ],
-          ),
+          child: Row(children: [
+            _tableCell('No', 40, isHeader: true, isDark: isDark),
+            _tableCell('Server', 80, isHeader: true, isDark: isDark),
+            _tableCell('Quality', 70, isHeader: true, isDark: isDark),
+            _tableCell('Size', 70, isHeader: true, isDark: isDark),
+            _tableCell('Link', 80, isHeader: true, isDark: isDark),
+          ]),
         ),
         Expanded(
           child: links.isEmpty
@@ -770,27 +748,22 @@ class _SeriesDownloadSheetState extends State<_SeriesDownloadSheet> {
                     final link = links[index];
                     return Container(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                      decoration: BoxDecoration(
-                        border: Border(bottom: BorderSide(color: isDark ? Colors.white10 : Colors.grey.shade200)),
-                      ),
-                      child: Row(
-                        children: [
-                          _tableCell('${index + 1}', 40, isDark: isDark),
-                          _tableCell(link.serverName, 80, isDark: isDark),
-                          _tableCell(link.quality ?? '-', 70, isDark: isDark),
-                          _tableCell(link.size ?? '-', 70, isDark: isDark),
-                          SizedBox(
-                            width: 80,
-                            child: link.url.isNotEmpty
-                                ? TextButton(
-                                    onPressed: () => widget.onLaunchUrl(link.url),
-                                    style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: Size.zero, tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                                    child: Text('Open', style: TextStyle(color: isDark ? const Color(0xFFF5C518) : const Color(0xFFD4A817), fontSize: 12)),
-                                  )
-                                : Text('-', style: TextStyle(fontSize: 12, color: isDark ? Colors.white54 : Colors.black45)),
-                          ),
-                        ],
-                      ),
+                      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: isDark ? Colors.white10 : Colors.grey.shade200))),
+                      child: Row(children: [
+                        _tableCell('${index + 1}', 40, isDark: isDark),
+                        _tableCell(link.serverName, 80, isDark: isDark),
+                        _tableCell(link.quality ?? '-', 70, isDark: isDark),
+                        _tableCell(link.size ?? '-', 70, isDark: isDark),
+                        SizedBox(
+                          width: 80,
+                          child: link.url.isNotEmpty
+                              ? InkWell(
+                                  onTap: () => widget.onLaunchUrl(link.url),
+                                  child: Text('Open', style: TextStyle(color: isDark ? const Color(0xFFF5C518) : const Color(0xFFD4A817), fontSize: 12, fontWeight: FontWeight.w600, decoration: TextDecoration.underline)),
+                                )
+                              : Text('-', style: TextStyle(fontSize: 12, color: isDark ? Colors.white54 : Colors.black45)),
+                        ),
+                      ]),
                     );
                   },
                 ),
@@ -802,17 +775,9 @@ class _SeriesDownloadSheetState extends State<_SeriesDownloadSheet> {
   Widget _tableCell(String text, double width, {bool isHeader = false, bool isDark = true}) {
     return SizedBox(
       width: width,
-      child: Text(
-        text,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: isHeader ? FontWeight.bold : FontWeight.normal,
-          color: isHeader
-              ? (isDark ? Colors.white : Colors.black87)
-              : (isDark ? Colors.white70 : Colors.black87),
-        ),
-        overflow: TextOverflow.ellipsis,
-      ),
+      child: Text(text, style: TextStyle(fontSize: 12, fontWeight: isHeader ? FontWeight.bold : FontWeight.normal,
+        color: isHeader ? (isDark ? Colors.white : Colors.black87) : (isDark ? Colors.white70 : Colors.black87)),
+        overflow: TextOverflow.ellipsis),
     );
   }
 }
@@ -824,12 +789,7 @@ class _SeriesWatchSheet extends StatefulWidget {
   final ThemeData theme;
   final Function(String) onLaunchUrl;
 
-  const _SeriesWatchSheet({
-    required this.detail,
-    required this.isDark,
-    required this.theme,
-    required this.onLaunchUrl,
-  });
+  const _SeriesWatchSheet({required this.detail, required this.isDark, required this.theme, required this.onLaunchUrl});
 
   @override
   State<_SeriesWatchSheet> createState() => _SeriesWatchSheetState();
@@ -855,10 +815,7 @@ class _SeriesWatchSheetState extends State<_SeriesWatchSheet> {
             margin: const EdgeInsets.symmetric(vertical: 8),
             width: 40,
             height: 4,
-            decoration: BoxDecoration(
-              color: isDark ? Colors.grey.shade600 : Colors.grey.shade400,
-              borderRadius: BorderRadius.circular(2),
-            ),
+            decoration: BoxDecoration(color: isDark ? Colors.grey.shade600 : Colors.grey.shade400, borderRadius: BorderRadius.circular(2)),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
@@ -866,11 +823,7 @@ class _SeriesWatchSheetState extends State<_SeriesWatchSheet> {
               children: [
                 Icon(Icons.play_circle_filled, color: isDark ? const Color(0xFFF5C518) : const Color(0xFFD4A817)),
                 const SizedBox(width: 8),
-                Text('Watch Online', style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 20,
-                  color: isDark ? Colors.white : Colors.black87,
-                )),
+                Text('Watch Online', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20, color: isDark ? Colors.white : Colors.black87)),
               ],
             ),
           ),
@@ -890,29 +843,11 @@ class _SeriesWatchSheetState extends State<_SeriesWatchSheet> {
                     child: ChoiceChip(
                       label: Text(seasons[index].name),
                       selected: isSelected,
-                      onSelected: (_) {
-                        setState(() {
-                          _selectedSeasonIndex = index;
-                          _selectedEpisodeIndex = null;
-                        });
-                      },
-                      selectedColor: isDark
-                          ? const Color(0xFFE50914).withOpacity(0.35)
-                          : const Color(0xFFE50914).withOpacity(0.15),
+                      onSelected: (_) { setState(() { _selectedSeasonIndex = index; _selectedEpisodeIndex = null; }); },
+                      selectedColor: isDark ? const Color(0xFFE50914).withOpacity(0.35) : const Color(0xFFE50914).withOpacity(0.15),
                       backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
-                      side: BorderSide(
-                        color: isSelected
-                            ? const Color(0xFFE50914)
-                            : (isDark ? Colors.white24 : Colors.grey.shade400),
-                        width: isSelected ? 1.5 : 1.0,
-                      ),
-                      labelStyle: TextStyle(
-                        color: isSelected
-                            ? (isDark ? Colors.white : Colors.black87)
-                            : (isDark ? Colors.white70 : Colors.black54),
-                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                        fontSize: 12,
-                      ),
+                      side: BorderSide(color: isSelected ? const Color(0xFFE50914) : (isDark ? Colors.white24 : Colors.grey.shade400), width: isSelected ? 1.5 : 1.0),
+                      labelStyle: TextStyle(color: isSelected ? (isDark ? Colors.white : Colors.black87) : (isDark ? Colors.white70 : Colors.black54), fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal, fontSize: 12),
                     ),
                   );
                 },
@@ -936,26 +871,11 @@ class _SeriesWatchSheetState extends State<_SeriesWatchSheet> {
                     child: ChoiceChip(
                       label: Text(episode.name),
                       selected: isSelected,
-                      onSelected: (_) {
-                        setState(() => _selectedEpisodeIndex = index);
-                      },
-                      selectedColor: isDark
-                          ? const Color(0xFFF5C518).withOpacity(0.35)
-                          : const Color(0xFFF5C518).withOpacity(0.15),
+                      onSelected: (_) { setState(() => _selectedEpisodeIndex = index); },
+                      selectedColor: isDark ? const Color(0xFFF5C518).withOpacity(0.35) : const Color(0xFFF5C518).withOpacity(0.15),
                       backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
-                      side: BorderSide(
-                        color: isSelected
-                            ? const Color(0xFFF5C518)
-                            : (isDark ? Colors.white24 : Colors.grey.shade400),
-                        width: isSelected ? 1.5 : 1.0,
-                      ),
-                      labelStyle: TextStyle(
-                        color: isSelected
-                            ? (isDark ? Colors.white : Colors.black87)
-                            : (isDark ? Colors.white70 : Colors.black54),
-                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                        fontSize: 12,
-                      ),
+                      side: BorderSide(color: isSelected ? const Color(0xFFF5C518) : (isDark ? Colors.white24 : Colors.grey.shade400), width: isSelected ? 1.5 : 1.0),
+                      labelStyle: TextStyle(color: isSelected ? (isDark ? Colors.white : Colors.black87) : (isDark ? Colors.white70 : Colors.black54), fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal, fontSize: 12),
                     ),
                   );
                 },
@@ -965,23 +885,13 @@ class _SeriesWatchSheetState extends State<_SeriesWatchSheet> {
           ],
 
           if (_selectedSeasonIndex != null && _selectedEpisodeIndex != null)
-            Expanded(
-              child: _buildLinksTable(seasons[_selectedSeasonIndex!].episodes[_selectedEpisodeIndex!].downloadLinks, scrollController),
-            )
+            Expanded(child: _buildLinksTable(seasons[_selectedSeasonIndex!].episodes[_selectedEpisodeIndex!].downloadLinks, scrollController))
           else if (_selectedSeasonIndex == null && widget.detail.downloadLinks.isNotEmpty)
-            Expanded(
-              child: _buildLinksTable(widget.detail.downloadLinks, scrollController),
-            )
+            Expanded(child: _buildLinksTable(widget.detail.downloadLinks, scrollController))
           else
             Expanded(
-              child: Center(
-                child: Text(
-                  _selectedSeasonIndex == null
-                      ? 'Select a season'
-                      : 'Select an episode',
-                  style: TextStyle(color: isDark ? Colors.white54 : Colors.black45),
-                ),
-              ),
+              child: Center(child: Text(_selectedSeasonIndex == null ? 'Select a season' : 'Select an episode',
+                style: TextStyle(color: isDark ? Colors.white54 : Colors.black45))),
             ),
         ],
       ),
@@ -990,21 +900,18 @@ class _SeriesWatchSheetState extends State<_SeriesWatchSheet> {
 
   Widget _buildLinksTable(List<MovieDownloadLink> links, ScrollController controller) {
     final isDark = widget.isDark;
-
     return Column(
       children: [
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           color: isDark ? Colors.white10 : Colors.grey.shade200,
-          child: Row(
-            children: [
-              _tableCell('No', 40, isHeader: true, isDark: isDark),
-              _tableCell('Server', 80, isHeader: true, isDark: isDark),
-              _tableCell('Quality', 70, isHeader: true, isDark: isDark),
-              _tableCell('Size', 70, isHeader: true, isDark: isDark),
-              _tableCell('Link', 80, isHeader: true, isDark: isDark),
-            ],
-          ),
+          child: Row(children: [
+            _tableCell('No', 40, isHeader: true, isDark: isDark),
+            _tableCell('Server', 80, isHeader: true, isDark: isDark),
+            _tableCell('Quality', 70, isHeader: true, isDark: isDark),
+            _tableCell('Size', 70, isHeader: true, isDark: isDark),
+            _tableCell('Link', 80, isHeader: true, isDark: isDark),
+          ]),
         ),
         Expanded(
           child: links.isEmpty
@@ -1016,27 +923,22 @@ class _SeriesWatchSheetState extends State<_SeriesWatchSheet> {
                     final link = links[index];
                     return Container(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                      decoration: BoxDecoration(
-                        border: Border(bottom: BorderSide(color: isDark ? Colors.white10 : Colors.grey.shade200)),
-                      ),
-                      child: Row(
-                        children: [
-                          _tableCell('${index + 1}', 40, isDark: isDark),
-                          _tableCell(link.serverName, 80, isDark: isDark),
-                          _tableCell(link.quality ?? '-', 70, isDark: isDark),
-                          _tableCell(link.size ?? '-', 70, isDark: isDark),
-                          SizedBox(
-                            width: 80,
-                            child: link.url.isNotEmpty
-                                ? TextButton(
-                                    onPressed: () => widget.onLaunchUrl(link.url),
-                                    style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: Size.zero, tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                                    child: Text('Watch', style: TextStyle(color: isDark ? const Color(0xFFF5C518) : const Color(0xFFD4A817), fontSize: 12)),
-                                  )
-                                : Text('-', style: TextStyle(fontSize: 12, color: isDark ? Colors.white54 : Colors.black45)),
-                          ),
-                        ],
-                      ),
+                      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: isDark ? Colors.white10 : Colors.grey.shade200))),
+                      child: Row(children: [
+                        _tableCell('${index + 1}', 40, isDark: isDark),
+                        _tableCell(link.serverName, 80, isDark: isDark),
+                        _tableCell(link.quality ?? '-', 70, isDark: isDark),
+                        _tableCell(link.size ?? '-', 70, isDark: isDark),
+                        SizedBox(
+                          width: 80,
+                          child: link.url.isNotEmpty
+                              ? InkWell(
+                                  onTap: () => widget.onLaunchUrl(link.url),
+                                  child: Text('Watch', style: TextStyle(color: isDark ? const Color(0xFFF5C518) : const Color(0xFFD4A817), fontSize: 12, fontWeight: FontWeight.w600, decoration: TextDecoration.underline)),
+                                )
+                              : Text('-', style: TextStyle(fontSize: 12, color: isDark ? Colors.white54 : Colors.black45)),
+                        ),
+                      ]),
                     );
                   },
                 ),
@@ -1048,17 +950,9 @@ class _SeriesWatchSheetState extends State<_SeriesWatchSheet> {
   Widget _tableCell(String text, double width, {bool isHeader = false, bool isDark = true}) {
     return SizedBox(
       width: width,
-      child: Text(
-        text,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: isHeader ? FontWeight.bold : FontWeight.normal,
-          color: isHeader
-              ? (isDark ? Colors.white : Colors.black87)
-              : (isDark ? Colors.white70 : Colors.black87),
-        ),
-        overflow: TextOverflow.ellipsis,
-      ),
+      child: Text(text, style: TextStyle(fontSize: 12, fontWeight: isHeader ? FontWeight.bold : FontWeight.normal,
+        color: isHeader ? (isDark ? Colors.white : Colors.black87) : (isDark ? Colors.white70 : Colors.black87)),
+        overflow: TextOverflow.ellipsis),
     );
   }
 }

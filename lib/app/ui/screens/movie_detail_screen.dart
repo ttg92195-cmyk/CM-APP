@@ -95,10 +95,8 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
         SnackBar(
           content: Text(
             bookmarked
-                ? Provider.of<AppConfig>(context, listen: false)
-                    .translate('bookmark_added')
-                : Provider.of<AppConfig>(context, listen: false)
-                    .translate('bookmark_removed'),
+                ? Provider.of<AppConfig>(context, listen: false).translate('bookmark_added')
+                : Provider.of<AppConfig>(context, listen: false).translate('bookmark_removed'),
           ),
           duration: const Duration(seconds: 2),
         ),
@@ -107,9 +105,16 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
   }
 
   Future<void> _launchUrl(String url) async {
+    if (url.isEmpty) return;
     final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    try {
+      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched) {
+        // Fallback: try in-app web view mode
+        await launchUrl(uri, mode: LaunchMode.platformDefault);
+      }
+    } catch (e) {
+      debugPrint('Could not launch URL: $url - $e');
     }
   }
 
@@ -154,7 +159,6 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
         expand: false,
         builder: (_, scrollController) => Column(
           children: [
-            // Handle
             Container(
               margin: const EdgeInsets.symmetric(vertical: 8),
               width: 40,
@@ -164,7 +168,6 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
-            // Title
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
               child: Row(
@@ -183,7 +186,6 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
               ),
             ),
             Divider(height: 1, color: isDark ? Colors.white12 : Colors.grey.shade300),
-            // Table header
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               color: isDark ? Colors.white10 : Colors.grey.shade200,
@@ -197,15 +199,12 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                 ],
               ),
             ),
-            // Table rows
             Expanded(
               child: detail.downloadLinks.isEmpty
                   ? Center(
                       child: Text(
                         'No download links available',
-                        style: TextStyle(
-                          color: isDark ? Colors.white54 : Colors.black45,
-                        ),
+                        style: TextStyle(color: isDark ? Colors.white54 : Colors.black45),
                       ),
                     )
                   : ListView.builder(
@@ -217,9 +216,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                           decoration: BoxDecoration(
                             border: Border(
-                              bottom: BorderSide(
-                                color: isDark ? Colors.white10 : Colors.grey.shade200,
-                              ),
+                              bottom: BorderSide(color: isDark ? Colors.white10 : Colors.grey.shade200),
                             ),
                           ),
                           child: Row(
@@ -231,18 +228,15 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                               SizedBox(
                                 width: 80,
                                 child: link.url.isNotEmpty
-                                    ? TextButton(
-                                        onPressed: () => _launchUrl(link.url),
-                                        style: TextButton.styleFrom(
-                                          padding: EdgeInsets.zero,
-                                          minimumSize: Size.zero,
-                                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                        ),
+                                    ? InkWell(
+                                        onTap: () => _launchUrl(link.url),
                                         child: Text(
                                           'Open',
                                           style: TextStyle(
                                             color: isDark ? const Color(0xFFF5C518) : const Color(0xFFD4A817),
                                             fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                            decoration: TextDecoration.underline,
                                           ),
                                         ),
                                       )
@@ -325,9 +319,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                   ? Center(
                       child: Text(
                         'No watch links available',
-                        style: TextStyle(
-                          color: isDark ? Colors.white54 : Colors.black45,
-                        ),
+                        style: TextStyle(color: isDark ? Colors.white54 : Colors.black45),
                       ),
                     )
                   : ListView.builder(
@@ -339,9 +331,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                           decoration: BoxDecoration(
                             border: Border(
-                              bottom: BorderSide(
-                                color: isDark ? Colors.white10 : Colors.grey.shade200,
-                              ),
+                              bottom: BorderSide(color: isDark ? Colors.white10 : Colors.grey.shade200),
                             ),
                           ),
                           child: Row(
@@ -353,18 +343,15 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                               SizedBox(
                                 width: 80,
                                 child: link.url.isNotEmpty
-                                    ? TextButton(
-                                        onPressed: () => _launchUrl(link.url),
-                                        style: TextButton.styleFrom(
-                                          padding: EdgeInsets.zero,
-                                          minimumSize: Size.zero,
-                                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                        ),
+                                    ? InkWell(
+                                        onTap: () => _launchUrl(link.url),
                                         child: Text(
                                           'Watch',
                                           style: TextStyle(
                                             color: isDark ? const Color(0xFFF5C518) : const Color(0xFFD4A817),
                                             fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                            decoration: TextDecoration.underline,
                                           ),
                                         ),
                                       )
@@ -435,20 +422,24 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
     // Adaptive colors
     final sectionHeaderColor = isDark ? const Color(0xFFF5C518) : const Color(0xFFB8960F);
     final bodyTextColor = isDark ? Colors.white70 : Colors.black87;
-    final chipBgColor = isDark ? Colors.white12 : const Color(0xFFE8E8E8);
-    final chipTextColor = isDark ? Colors.white70 : const Color(0xFF333333);
+    final metaTextColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
+    final tagBorderColor = isDark ? Colors.grey.shade600 : Colors.grey.shade400;
+    final tagTextColor = isDark ? Colors.grey.shade300 : Colors.grey.shade700;
+    final cardBgColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
 
     return Scaffold(
+      backgroundColor: isDark ? const Color(0xFF0A0A0A) : const Color(0xFFF5F5F5),
       body: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ===== Poster Backdrop Section =====
+            // ===== Header: Backdrop + Poster + Info =====
             Stack(
+              clipBehavior: Clip.none,
               children: [
-                // Backdrop image (or poster as fallback)
+                // Backdrop image (shorter height, ~200px)
                 SizedBox(
-                  height: 300,
+                  height: 220,
                   width: double.infinity,
                   child: (detail.fullBackdropUrl.isNotEmpty
                           ? CachedNetworkImage(
@@ -458,32 +449,20 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                                   detail.fullPosterUrl.isNotEmpty
                                       ? CachedNetworkImage(imageUrl: detail.fullPosterUrl, fit: BoxFit.cover)
                                       : Container(
-                                          color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade300,
-                                          child: Icon(Icons.movie, size: 64, color: isDark ? Colors.white24 : Colors.black12),
+                                          color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade400,
                                         ),
                             )
                           : detail.fullPosterUrl.isNotEmpty
                               ? CachedNetworkImage(imageUrl: detail.fullPosterUrl, fit: BoxFit.cover)
-                              : Container(
-                                  color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade300,
-                                  child: Icon(Icons.movie, size: 64, color: isDark ? Colors.white24 : Colors.black12),
-                                )
+                              : Container(color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade400)
                       ),
                 ),
 
-                // Gradient overlay - stronger gradient to ensure text readability
+                // Dark overlay on backdrop (0.7 opacity)
                 Container(
-                  height: 300,
+                  height: 220,
                   decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.black.withOpacity(0.2),
-                        Colors.black.withOpacity(0.5),
-                        Colors.black.withOpacity(0.95),
-                      ],
-                    ),
+                    color: Colors.black.withOpacity(0.7),
                   ),
                 ),
 
@@ -512,95 +491,140 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                     ),
                   ),
                 ),
-
-                // Movie info overlay at bottom
-                Positioned(
-                  left: 16,
-                  right: 16,
-                  bottom: 16,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        detail.title,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          shadows: [Shadow(offset: Offset(0, 1), blurRadius: 4, color: Colors.black87)],
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      // Rating + Year + Duration + Type badge
-                      Row(
-                        children: [
-                          if (detail.rating != null && detail.rating!.isNotEmpty)
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                              decoration: BoxDecoration(
-                                color: Colors.black54,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(Icons.star, size: 14, color: Colors.amber),
-                                  const SizedBox(width: 3),
-                                  Text(
-                                    detail.rating!,
-                                    style: const TextStyle(color: Colors.amber, fontSize: 13, fontWeight: FontWeight.w600),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          if (detail.rating != null && detail.rating!.isNotEmpty)
-                            const SizedBox(width: 10),
-                          if (detail.year != null && detail.year!.isNotEmpty)
-                            Text(detail.year!, style: const TextStyle(color: Colors.white70, fontSize: 14)),
-                          if (detail.year != null && detail.year!.isNotEmpty)
-                            const SizedBox(width: 10),
-                          if (detail.duration != null && detail.duration!.isNotEmpty)
-                            Text('${detail.duration} min', style: const TextStyle(color: Colors.white70, fontSize: 14)),
-                          if (detail.duration != null && detail.duration!.isNotEmpty)
-                            const SizedBox(width: 10),
-                          if (detail.type != null)
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFE50914).withOpacity(0.85),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                detail.type == 'series' ? 'Series' : 'Movie',
-                                style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
-                              ),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      if (detail.categories.isNotEmpty)
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 4,
-                          children: detail.categories.take(4).map((cat) => Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.white24,
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(color: Colors.white38, width: 0.5),
-                            ),
-                            child: Text(cat, style: const TextStyle(color: Colors.white, fontSize: 11)),
-                          )).toList(),
-                        ),
-                    ],
-                  ),
-                ),
               ],
             ),
 
+            // Poster + Title/Info row (overlaps up into backdrop)
+            Transform.translate(
+              offset: const Offset(0, -60),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    // Poster thumbnail
+                    Container(
+                      width: 110,
+                      height: 160,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.5),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: detail.fullPosterUrl.isNotEmpty
+                            ? CachedNetworkImage(
+                                imageUrl: detail.fullPosterUrl,
+                                fit: BoxFit.cover,
+                                errorWidget: (context, url, error) => Container(
+                                  color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade300,
+                                  child: Icon(Icons.movie, size: 40, color: isDark ? Colors.white24 : Colors.black12),
+                                ),
+                              )
+                            : Container(
+                                color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade300,
+                                child: Icon(Icons.movie, size: 40, color: isDark ? Colors.white24 : Colors.black12),
+                              ),
+                      ),
+                    ),
+
+                    const SizedBox(width: 14),
+
+                    // Title + Meta info
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Title
+                            Text(
+                              detail.title,
+                              style: TextStyle(
+                                color: isDark ? Colors.white : Colors.black87,
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                height: 1.2,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 8),
+
+                            // Rating + Year + Duration row
+                            Row(
+                              children: [
+                                if (detail.rating != null && detail.rating!.isNotEmpty) ...[
+                                  const Icon(Icons.star, size: 16, color: Colors.amber),
+                                  const SizedBox(width: 3),
+                                  Text(
+                                    detail.rating!,
+                                    style: TextStyle(color: Colors.amber, fontSize: 13, fontWeight: FontWeight.w600),
+                                  ),
+                                  const SizedBox(width: 12),
+                                ],
+                                if (detail.year != null && detail.year!.isNotEmpty) ...[
+                                  Text(detail.year!, style: TextStyle(color: metaTextColor, fontSize: 13)),
+                                  const SizedBox(width: 12),
+                                ],
+                                if (detail.duration != null && detail.duration!.isNotEmpty) ...[
+                                  Text('${detail.duration} min', style: TextStyle(color: metaTextColor, fontSize: 13)),
+                                ],
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+
+                            // Type badge
+                            if (detail.type != null)
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFE50914).withOpacity(0.85),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  detail.type == 'series' ? 'Series' : 'Movie',
+                                  style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // Categories - outline style tags
+            if (detail.categories.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: detail.categories.take(5).map((cat) => Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: tagBorderColor, width: 1),
+                    ),
+                    child: Text(cat, style: TextStyle(color: tagTextColor, fontSize: 11)),
+                  )).toList(),
+                ),
+              ),
+
+            const SizedBox(height: 16),
+
             // ===== Action Buttons =====
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
               child: Row(
                 children: [
                   Expanded(
@@ -640,24 +664,20 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
               ),
             ),
 
-            // Tags row - improved contrast for light mode
+            // Tags row - outline style
             if (detail.tags.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                 child: Wrap(
-                  spacing: 6,
-                  runSpacing: 4,
+                  spacing: 8,
+                  runSpacing: 6,
                   children: detail.tags.take(6).map((tag) => Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                     decoration: BoxDecoration(
-                      color: chipBgColor,
                       borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: isDark ? Colors.white24 : Colors.grey.shade400,
-                        width: 0.5,
-                      ),
+                      border: Border.all(color: tagBorderColor, width: 1),
                     ),
-                    child: Text(tag, style: TextStyle(color: chipTextColor, fontSize: 11)),
+                    child: Text(tag, style: TextStyle(color: tagTextColor, fontSize: 11)),
                   )).toList(),
                 ),
               ),
@@ -736,7 +756,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                       children: detail.directors.map((d) => Container(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                         decoration: BoxDecoration(
-                          color: chipBgColor,
+                          color: isDark ? Colors.white12 : Colors.grey.shade200,
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
                             color: isDark ? Colors.white12 : Colors.grey.shade400,
@@ -782,28 +802,18 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                                             fit: BoxFit.cover,
                                             width: 64,
                                             height: 64,
-                                            placeholder: (context, url) => const Center(
-                                              child: CircularProgressIndicator(strokeWidth: 2),
-                                            ),
+                                            placeholder: (context, url) => const Center(child: CircularProgressIndicator(strokeWidth: 2)),
                                             errorWidget: (context, url, error) => Center(
                                               child: Text(
                                                 cast.name.isNotEmpty ? cast.name[0].toUpperCase() : '?',
-                                                style: TextStyle(
-                                                  color: isDark ? Colors.white54 : Colors.black54,
-                                                  fontSize: 22,
-                                                  fontWeight: FontWeight.bold,
-                                                ),
+                                                style: TextStyle(color: isDark ? Colors.white54 : Colors.black54, fontSize: 22, fontWeight: FontWeight.bold),
                                               ),
                                             ),
                                           )
                                         : Center(
                                             child: Text(
                                               cast.name.isNotEmpty ? cast.name[0].toUpperCase() : '?',
-                                              style: TextStyle(
-                                                color: isDark ? Colors.white54 : Colors.black54,
-                                                fontSize: 22,
-                                                fontWeight: FontWeight.bold,
-                                              ),
+                                              style: TextStyle(color: isDark ? Colors.white54 : Colors.black54, fontSize: 22, fontWeight: FontWeight.bold),
                                             ),
                                           ),
                                   ),
@@ -816,11 +826,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                                     maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
                                     textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w500,
-                                      color: bodyTextColor,
-                                    ),
+                                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: bodyTextColor),
                                   ),
                                 ),
                               ],
@@ -848,7 +854,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Card(
                         margin: EdgeInsets.zero,
-                        color: isDark ? null : Colors.white,
+                        color: cardBgColor,
                         child: InkWell(
                           onTap: link.url.isNotEmpty ? () => _launchUrl(link.url) : null,
                           borderRadius: BorderRadius.circular(12),
