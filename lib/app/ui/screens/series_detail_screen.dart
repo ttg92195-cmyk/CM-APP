@@ -1002,189 +1002,161 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
           }),
 
         // Direct download links (without seasons)
-        if (hasDirectLinks && !hasSeasons) ...[
-          // Group by server
-          ...() {
-            final Map<String, List<MovieDownloadLink>> serverGroups = {};
-            for (final link in detail.downloadLinks) {
-              final serverName =
-                  link.serverName.isNotEmpty ? link.serverName : 'Server';
-              serverGroups.putIfAbsent(serverName, () => []).add(link);
-            }
-            return serverGroups.entries.map((entry) {
-              final serverName = entry.key;
-              final links = entry.value;
+        if (hasDirectLinks && !hasSeasons)
+          ..._buildServerGroupWidgets(detail.downloadLinks, isDark, accentColor, metaTextColor),
+      ],
+    );
+  }
+
+  // Helper: Build server group widgets for download tab
+  List<Widget> _buildServerGroupWidgets(
+    List<MovieDownloadLink> downloadLinks,
+    bool isDark,
+    Color accentColor,
+    Color metaTextColor,
+  ) {
+    final Map<String, List<MovieDownloadLink>> serverGroups = {};
+    for (final link in downloadLinks) {
+      final serverName = link.serverName.isNotEmpty ? link.serverName : 'Server';
+      serverGroups.putIfAbsent(serverName, () => []).add(link);
+    }
+    return serverGroups.entries.map((entry) {
+      final serverName = entry.key;
+      final links = entry.value;
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Container(
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isDark ? Colors.white12 : Colors.grey.shade300,
+              width: 0.5,
+            ),
+          ),
+          child: ExpansionTile(
+            tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+            childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+            collapsedIconColor: metaTextColor,
+            iconColor: accentColor,
+            collapsedBackgroundColor: Colors.transparent,
+            backgroundColor: Colors.transparent,
+            leading: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: accentColor.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(Icons.dns_outlined, color: accentColor, size: 22),
+            ),
+            title: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(serverName,
+                    style: TextStyle(
+                        color: isDark ? Colors.white : Colors.black87,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600)),
+                const SizedBox(height: 2),
+                Text(
+                  links.map((l) => l.quality ?? l.resolution ?? 'Link').join(', '),
+                  style: TextStyle(color: metaTextColor, fontSize: 11),
+                ),
+              ],
+            ),
+            subtitle: Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: isDark ? Colors.white10 : Colors.grey.shade200,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '${links.length} ${links.length == 1 ? 'quality' : 'qualities'}',
+                  style: TextStyle(
+                      color: isDark ? Colors.blue.shade300 : Colors.blue,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w500),
+                ),
+              ),
+            ),
+            children: links.map((link) {
+              final qualityLabel = link.quality ?? link.resolution ?? 'Standard';
+              final qualityBadgeColor = _getQualityBadgeColor(qualityLabel);
               return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.only(bottom: 10),
                 child: Container(
                   decoration: BoxDecoration(
-                    color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-                    borderRadius: BorderRadius.circular(12),
+                    color: isDark ? Colors.white.withOpacity(0.05) : Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(10),
                     border: Border.all(
-                      color: isDark ? Colors.white12 : Colors.grey.shade300,
+                      color: isDark ? Colors.white10 : Colors.grey.shade200,
                       width: 0.5,
                     ),
                   ),
-                  child: ExpansionTile(
-                    tilePadding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 4),
-                    childrenPadding:
-                        const EdgeInsets.fromLTRB(14, 0, 14, 12),
-                    collapsedIconColor: metaTextColor,
-                    iconColor: accentColor,
-                    collapsedBackgroundColor: Colors.transparent,
-                    backgroundColor: Colors.transparent,
-                    leading: Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: accentColor.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Icon(Icons.dns_outlined,
-                          color: accentColor, size: 22),
-                    ),
-                    title: Column(
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(serverName,
-                            style: TextStyle(
-                                color: isDark ? Colors.white : Colors.black87,
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600)),
-                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: qualityBadgeColor,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(qualityLabel,
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w700)),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              _getQualityDescription(qualityLabel),
+                              style: TextStyle(
+                                  color: isDark ? Colors.white : Colors.black87,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
                         Text(
-                          links
-                              .map((l) =>
-                                  l.quality ?? l.resolution ?? 'Link')
-                              .join(', '),
-                          style: TextStyle(
-                              color: metaTextColor, fontSize: 11),
+                          'MKV · Myanmar Subtitle (Hardsub)${link.size != null ? ' · ${link.size}' : ''}',
+                          style: TextStyle(color: metaTextColor, fontSize: 11),
+                        ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: link.url.isNotEmpty ? () => _launchUrl(link.url) : null,
+                            icon: const Icon(Icons.download, size: 16),
+                            label: Text('Download $qualityLabel'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: accentColor,
+                              foregroundColor: Colors.white,
+                              disabledBackgroundColor: isDark ? Colors.grey.shade700 : Colors.grey.shade400,
+                              disabledForegroundColor: isDark ? Colors.grey.shade500 : Colors.grey.shade600,
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                            ),
+                          ),
                         ),
                       ],
                     ),
-                    subtitle: Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                          color:
-                              isDark ? Colors.white10 : Colors.grey.shade200,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          '${links.length} ${links.length == 1 ? 'quality' : 'qualities'}',
-                          style: TextStyle(
-                              color: isDark ? Colors.blue.shade300 : Colors.blue,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w500),
-                        ),
-                      ),
-                    ),
-                    children: links.map((link) {
-                      final qualityLabel =
-                          link.quality ?? link.resolution ?? 'Standard';
-                      final qualityBadgeColor =
-                          _getQualityBadgeColor(qualityLabel);
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: isDark
-                                ? Colors.white.withOpacity(0.05)
-                                : Colors.grey.shade50,
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                              color: isDark
-                                  ? Colors.white10
-                                  : Colors.grey.shade200,
-                              width: 0.5,
-                            ),
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(10),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 8, vertical: 3),
-                                      decoration: BoxDecoration(
-                                        color: qualityBadgeColor,
-                                        borderRadius:
-                                            BorderRadius.circular(4),
-                                      ),
-                                      child: Text(qualityLabel,
-                                          style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.w700)),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      _getQualityDescription(qualityLabel),
-                                      style: TextStyle(
-                                          color: isDark
-                                              ? Colors.white
-                                              : Colors.black87,
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w500),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'MKV · Myanmar Subtitle (Hardsub)${link.size != null ? ' · ${link.size}' : ''}',
-                                  style: TextStyle(
-                                      color: metaTextColor, fontSize: 11),
-                                ),
-                                const SizedBox(height: 8),
-                                SizedBox(
-                                  width: double.infinity,
-                                  child: ElevatedButton.icon(
-                                    onPressed: link.url.isNotEmpty
-                                        ? () => _launchUrl(link.url)
-                                        : null,
-                                    icon: const Icon(Icons.download,
-                                        size: 16),
-                                    label:
-                                        Text('Download $qualityLabel'),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: accentColor,
-                                      foregroundColor: Colors.white,
-                                      disabledBackgroundColor: isDark
-                                          ? Colors.grey.shade700
-                                          : Colors.grey.shade400,
-                                      disabledForegroundColor: isDark
-                                          ? Colors.grey.shade500
-                                          : Colors.grey.shade600,
-                                      padding: const EdgeInsets.symmetric(
-                                          vertical: 10),
-                                      shape: RoundedRectangleBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(8)),
-                                      textStyle: const TextStyle(
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 13),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
-                    }).toList(),
                   ),
                 ),
               );
-            };
-          }(),
-        ],
-      ],
-    );
+            }).toList(),
+          ),
+        ),
+      );
+    }).toList();
   }
 
   Color _getQualityBadgeColor(String quality) {
