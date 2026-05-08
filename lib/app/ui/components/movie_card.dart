@@ -167,8 +167,8 @@ class MovieCard extends StatelessWidget {
                   ),
               ],
             ),
-            const SizedBox(height: 4),
-            // Title - use Flexible to prevent overflow
+            const SizedBox(height: 6),
+            // Title
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 2),
               child: Text(
@@ -177,12 +177,11 @@ class MovieCard extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.bodySmall?.copyWith(
                   fontWeight: FontWeight.w600,
-                  height: 1.2,
+                  height: 1.3,
                 ),
               ),
             ),
-            const SizedBox(height: 1),
-            // Year + Rating inline below title
+            // Year below title
             if (movie.year != null && movie.year!.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 2),
@@ -190,7 +189,7 @@ class MovieCard extends StatelessWidget {
                   movie.year!,
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: theme.colorScheme.onSurface.withOpacity(0.6),
-                    fontSize: 10,
+                    fontSize: 11,
                   ),
                 ),
               ),

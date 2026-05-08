@@ -14,12 +14,11 @@ import 'package:cm_movies/app/ui/screens/profile_page.dart';
 import 'package:cm_movies/app/ui/screens/search_screen.dart';
 import 'package:cm_movies/app/ui/screens/admin_panel_page.dart';
 
-// Bottom nav tab indices
+// Bottom nav tab indices (4 tabs)
 const int kHomeTab = 0;
 const int kMoviesTab = 1;
 const int kSeriesTab = 2;
-const int kRecentTab = 3;
-const int kSettingsTab = 4;
+const int kSettingsTab = 3;
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -34,21 +33,19 @@ class _HomePageState extends State<HomePage> {
   // Global keys for tab pages to allow refresh
   final GlobalKey<State<MoviesPage>> _moviesKey = GlobalKey();
   final GlobalKey<State<SeriesPage>> _seriesKey = GlobalKey();
-  final GlobalKey<State<RecentPage>> _recentKey = GlobalKey();
 
   @override
   Widget build(BuildContext context) {
     final appConfig = Provider.of<AppConfig>(context);
     final theme = Theme.of(context);
 
-    // Bottom Nav pages (5 main tabs: Home, Movies, Series, Recent, Settings)
+    // Bottom Nav pages (4 main tabs: Home, Movies, Series, Settings)
     final List<Widget> bottomNavPages = [
       HomeScreen(onNavigateToTab: (index) {
         setState(() => _currentIndex = index);
       }),
       MoviesPage(key: _moviesKey),
       SeriesPage(key: _seriesKey),
-      RecentPage(key: _recentKey),
       const SettingsPage(),
     ];
 
@@ -128,11 +125,6 @@ class _HomePageState extends State<HomePage> {
             icon: Icon(Icons.tv_outlined, color: isDark ? Colors.grey : Colors.grey.shade600),
             selectedIcon: const Icon(Icons.tv, color: Color(0xFFE50914)),
             label: appConfig.translate('series'),
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.history_outlined, color: isDark ? Colors.grey : Colors.grey.shade600),
-            selectedIcon: const Icon(Icons.history, color: Color(0xFFE50914)),
-            label: appConfig.translate('recent'),
           ),
           NavigationDestination(
             icon: Icon(Icons.settings_outlined, color: isDark ? Colors.grey : Colors.grey.shade600),
@@ -217,7 +209,7 @@ class _HomePageState extends State<HomePage> {
               child: ListView(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 children: [
-                  // Bookmark (moved from bottom nav to drawer)
+                  // Bookmark
                   _buildDrawerItem(
                     icon: Icons.bookmark_outline,
                     activeIcon: Icons.bookmark,
@@ -240,7 +232,10 @@ class _HomePageState extends State<HomePage> {
                     isDark: isDark,
                     onTap: () {
                       Navigator.pop(context);
-                      setState(() => _currentIndex = kRecentTab);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const RecentPage()),
+                      );
                     },
                   ),
 

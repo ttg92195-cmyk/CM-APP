@@ -183,10 +183,28 @@ class _HomeScreenState extends State<HomeScreen> {
       body: RefreshIndicator(
         onRefresh: _loadData,
         child: _isLoading
-            ? const Center(child: CircularProgressIndicator())
+            ? _buildSkeletonLoading(theme, appConfig)
             : _error != null
                 ? _buildErrorWidget(appConfig)
                 : _buildContent(appConfig, theme),
+      ),
+    );
+  }
+
+  /// Skeleton loading with shimmer effect - one poster per section
+  Widget _buildSkeletonLoading(ThemeData theme, AppConfig appConfig) {
+    return SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const TrendingMovieSkeleton(title: 'Movies'),
+          const SizedBox(height: 8),
+          const TrendingMovieSkeleton(title: 'Series'),
+          const SizedBox(height: 8),
+          const TrendingMovieSkeleton(title: 'Trending'),
+          const SizedBox(height: 16),
+        ],
       ),
     );
   }
@@ -404,7 +422,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
 
-          const SizedBox(height: 80),
+          const SizedBox(height: 16),
         ],
       ),
     );
