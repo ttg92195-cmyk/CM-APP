@@ -29,6 +29,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
 
   bool _isLoading = true;
   String _searchQuery = '';
+  int _genresTagsSubTabIndex = 0;
 
   @override
   void initState() {
@@ -345,8 +346,11 @@ class _AdminPanelPageState extends State<AdminPanelPage>
       length: 3,
       child: Column(
         children: [
-          const TabBar(
-            tabs: [
+          TabBar(
+            onTap: (index) {
+              setState(() => _genresTagsSubTabIndex = index);
+            },
+            tabs: const [
               Tab(text: 'Genres'),
               Tab(text: 'Tags'),
               Tab(text: 'Collections'),
@@ -412,9 +416,15 @@ class _AdminPanelPageState extends State<AdminPanelPage>
       ),
     ).then((result) async {
       if (result == true && controller.text.trim().isNotEmpty) {
-        // Add to all three for simplicity
-        await _contentService.addGenre(controller.text.trim());
-        await _contentService.addTag(controller.text.trim());
+        // Add based on current sub-tab in Genres/Tags tab
+        final genresTagsSubTab = _genresTagsSubTabIndex;
+        if (genresTagsSubTab == 0) {
+          await _contentService.addGenre(controller.text.trim());
+        } else if (genresTagsSubTab == 1) {
+          await _contentService.addTag(controller.text.trim());
+        } else if (genresTagsSubTab == 2) {
+          await _contentService.addCollection(controller.text.trim());
+        }
         _loadData();
       }
     });

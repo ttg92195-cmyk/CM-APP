@@ -5,8 +5,8 @@ import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/ui/components/movie_card.dart';
-import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
 import 'package:cm_movies/app/ui/screens/series_detail_screen.dart';
+import 'package:cm_movies/app/ui/home/trending_movie_component.dart';
 
 class SeriesPage extends StatefulWidget {
   const SeriesPage({super.key});
@@ -91,7 +91,7 @@ class _SeriesPageState extends State<SeriesPage> {
 
     return Scaffold(
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? _buildSkeletonLoading()
           : RefreshIndicator(
               onRefresh: _loadSeries,
               child: CustomScrollView(
@@ -172,6 +172,22 @@ class _SeriesPageState extends State<SeriesPage> {
                 ],
               ),
             ),
+    );
+  }
+
+  Widget _buildSkeletonLoading() {
+    return GridView.builder(
+      padding: const EdgeInsets.all(8),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        childAspectRatio: 0.55,
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 8,
+      ),
+      itemCount: 9,
+      itemBuilder: (context, index) {
+        return const MovieCardSkeleton();
+      },
     );
   }
 }

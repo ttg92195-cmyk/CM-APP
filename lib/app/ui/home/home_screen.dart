@@ -191,18 +191,18 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// Skeleton loading with shimmer effect - one poster per section
+  /// Skeleton loading matching expected number of sections
   Widget _buildSkeletonLoading(ThemeData theme, AppConfig appConfig) {
     return SingleChildScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const TrendingMovieSkeleton(title: 'Movies'),
+          TrendingMovieSkeleton(title: appConfig.translate('movies'), count: 5),
           const SizedBox(height: 8),
-          const TrendingMovieSkeleton(title: 'Series'),
+          TrendingMovieSkeleton(title: appConfig.translate('series'), count: 5),
           const SizedBox(height: 8),
-          const TrendingMovieSkeleton(title: 'Trending'),
+          TrendingMovieSkeleton(title: appConfig.translate('trending_movies'), count: 5),
           const SizedBox(height: 16),
         ],
       ),

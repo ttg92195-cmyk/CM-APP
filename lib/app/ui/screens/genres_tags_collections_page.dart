@@ -27,22 +27,29 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
   List<TagAndGenres> _collections = [];
   bool _isLoading = true;
 
+  // Sub-tab controllers for Genres and Tags
+  late TabController _genresSubTabController;
+  late TabController _tagsSubTabController;
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _genresSubTabController = TabController(length: 2, vsync: this);
+    _tagsSubTabController = TabController(length: 2, vsync: this);
     _loadData();
   }
 
   @override
   void dispose() {
     _tabController.dispose();
+    _genresSubTabController.dispose();
+    _tagsSubTabController.dispose();
     super.dispose();
   }
 
   Future<void> _loadData() async {
     try {
-      // Load each independently
       List<TagAndGenres> genres = [];
       List<TagAndGenres> tags = [];
       List<TagAndGenres> collections = [];
@@ -96,7 +103,7 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
         ),
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? _buildSkeletonGrid()
           : TabBarView(
               controller: _tabController,
               children: [
@@ -108,25 +115,190 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
     );
   }
 
-  // ==================== GENRES TAB ====================
+  Widget _buildSkeletonGrid() {
+    return GridView.builder(
+      padding: const EdgeInsets.all(12),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        childAspectRatio: 2.2,
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 8,
+      ),
+      itemCount: 9,
+      itemBuilder: (context, index) {
+        return Container(
+          decoration: BoxDecoration(
+            color: Theme.of(context).brightness == Brightness.dark
+                ? const Color(0xFF2A2A2A)
+                : const Color(0xFFE0E0E0),
+            borderRadius: BorderRadius.circular(10),
+          ),
+        );
+      },
+    );
+  }
+
+  // ==================== GENRES TAB (with Movies/Series sub-tabs) ====================
   Widget _buildGenresTab(AppConfig appConfig, ThemeData theme) {
     if (_genres.isEmpty) {
       return Center(child: Text(appConfig.translate('no_results')));
     }
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(12),
-      child: _buildNeonGrid(theme, _genres.map((g) => g.name).toList(), filterType: 'genre'),
+    return Column(
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface,
+            border: Border(
+              bottom: BorderSide(
+                color: const Color(0xFFE50914).withOpacity(0.2),
+                width: 1,
+              ),
+            ),
+          ),
+          child: TabBar(
+            controller: _genresSubTabController,
+            labelColor: const Color(0xFFE50914),
+            unselectedLabelColor: theme.colorScheme.onSurface.withOpacity(0.5),
+            indicatorColor: const Color(0xFFE50914),
+            indicatorSize: TabBarIndicatorSize.label,
+            tabs: const [
+              Tab(text: 'Movies'),
+              Tab(text: 'Series'),
+            ],
+          ),
+        ),
+        Expanded(
+          child: TabBarView(
+            controller: _genresSubTabController,
+            children: [
+              // Movies Genres
+              SingleChildScrollView(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        'Movies',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: const Color(0xFFE50914),
+                        ),
+                      ),
+                    ),
+                    _buildNeonGrid(theme, _genres.map((g) => g.name).toList(),
+                        filterType: 'genre', typeFilter: 'movie'),
+                  ],
+                ),
+              ),
+              // Series Genres
+              SingleChildScrollView(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        'Series',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: const Color(0xFFE50914),
+                        ),
+                      ),
+                    ),
+                    _buildNeonGrid(theme, _genres.map((g) => g.name).toList(),
+                        filterType: 'genre', typeFilter: 'series'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
-  // ==================== TAGS TAB ====================
+  // ==================== TAGS TAB (with Movies/Series sub-tabs) ====================
   Widget _buildTagsTab(AppConfig appConfig, ThemeData theme) {
     if (_tags.isEmpty) {
       return Center(child: Text(appConfig.translate('no_results')));
     }
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(12),
-      child: _buildNeonGrid(theme, _tags.map((t) => t.name).toList(), filterType: 'tag'),
+    return Column(
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface,
+            border: Border(
+              bottom: BorderSide(
+                color: const Color(0xFFE50914).withOpacity(0.2),
+                width: 1,
+              ),
+            ),
+          ),
+          child: TabBar(
+            controller: _tagsSubTabController,
+            labelColor: const Color(0xFFE50914),
+            unselectedLabelColor: theme.colorScheme.onSurface.withOpacity(0.5),
+            indicatorColor: const Color(0xFFE50914),
+            indicatorSize: TabBarIndicatorSize.label,
+            tabs: const [
+              Tab(text: 'Movies'),
+              Tab(text: 'Series'),
+            ],
+          ),
+        ),
+        Expanded(
+          child: TabBarView(
+            controller: _tagsSubTabController,
+            children: [
+              // Movies Tags
+              SingleChildScrollView(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        'Movies',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: const Color(0xFFE50914),
+                        ),
+                      ),
+                    ),
+                    _buildNeonGrid(theme, _tags.map((t) => t.name).toList(),
+                        filterType: 'tag', typeFilter: 'movie'),
+                  ],
+                ),
+              ),
+              // Series Tags
+              SingleChildScrollView(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        'Series',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: const Color(0xFFE50914),
+                        ),
+                      ),
+                    ),
+                    _buildNeonGrid(theme, _tags.map((t) => t.name).toList(),
+                        filterType: 'tag', typeFilter: 'series'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -137,14 +309,15 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
     }
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
-      child: _buildNeonGrid(theme, _collections.map((c) => c.name).toList(), filterType: 'collection'),
+      child: _buildNeonGrid(theme, _collections.map((c) => c.name).toList(),
+          filterType: 'collection'),
     );
   }
 
   // ==================== SHARED WIDGETS ====================
 
   Widget _buildNeonGrid(ThemeData theme, List<String> items,
-      {required String filterType}) {
+      {required String filterType, String? typeFilter}) {
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -169,6 +342,7 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
                   genreName: filterType == 'genre' ? item : null,
                   tagName: filterType == 'tag' ? item : null,
                   collectionName: filterType == 'collection' ? item : null,
+                  typeFilter: typeFilter,
                 ),
               ),
             );
@@ -277,12 +451,13 @@ class _NeonGlowButtonState extends State<_NeonGlowButton> {
   }
 }
 
-// ==================== FILTER RESULT PAGE (public for home_screen) ====================
+// ==================== FILTER RESULT PAGE (public) ====================
 class FilterResultPage extends StatefulWidget {
   final String title;
   final String? genreName;
   final String? tagName;
   final String? collectionName;
+  final String? typeFilter; // 'movie' or 'series'
 
   const FilterResultPage({
     super.key,
@@ -290,6 +465,7 @@ class FilterResultPage extends StatefulWidget {
     this.genreName,
     this.tagName,
     this.collectionName,
+    this.typeFilter,
   });
 
   @override
@@ -300,6 +476,7 @@ class _FilterResultPageState extends State<FilterResultPage> {
   final FirestoreContentService _contentService = FirestoreContentService();
 
   List<Movie> _movies = [];
+  List<Movie> _filteredMovies = [];
   DocumentSnapshot? _lastDoc;
   bool _hasMore = true;
   bool _isLoading = true;
@@ -316,18 +493,31 @@ class _FilterResultPageState extends State<FilterResultPage> {
     try {
       Map<String, dynamic> result;
       if (widget.genreName != null) {
-        result = await _contentService.getMoviesByGenre(widget.genreName!, limit: 20);
+        result = await _contentService.getMoviesByGenre(widget.genreName!, limit: 50);
       } else if (widget.tagName != null) {
-        result = await _contentService.getMoviesByTag(widget.tagName!, limit: 20);
+        result = await _contentService.getMoviesByTag(widget.tagName!, limit: 50);
       } else if (widget.collectionName != null) {
-        result = await _contentService.getMoviesByCollection(widget.collectionName!, limit: 20);
+        result = await _contentService.getMoviesByCollection(widget.collectionName!, limit: 50);
       } else {
-        result = await _contentService.getMovies(limit: 20);
+        result = await _contentService.getMovies(limit: 50);
       }
 
       if (mounted) {
+        final allMovies = result['movies'] as List<Movie>;
+
+        // Apply type filter if specified (Movies or Series sub-tab)
+        List<Movie> filtered;
+        if (widget.typeFilter != null) {
+          filtered = allMovies
+              .where((m) => m.type == widget.typeFilter)
+              .toList();
+        } else {
+          filtered = allMovies;
+        }
+
         setState(() {
-          _movies = result['movies'] as List<Movie>;
+          _movies = allMovies;
+          _filteredMovies = filtered;
           _hasMore = result['hasMore'] as bool;
           _lastDoc = result['lastDoc'] as DocumentSnapshot?;
           _isLoading = false;
@@ -361,8 +551,19 @@ class _FilterResultPageState extends State<FilterResultPage> {
       }
 
       if (mounted) {
+        final newMovies = result['movies'] as List<Movie>;
+        List<Movie> filtered;
+        if (widget.typeFilter != null) {
+          filtered = newMovies
+              .where((m) => m.type == widget.typeFilter)
+              .toList();
+        } else {
+          filtered = newMovies;
+        }
+
         setState(() {
-          _movies.addAll(result['movies'] as List<Movie>);
+          _movies.addAll(newMovies);
+          _filteredMovies.addAll(filtered);
           _hasMore = result['hasMore'] as bool;
           _lastDoc = result['lastDoc'] as DocumentSnapshot?;
           _isLoadingMore = false;
@@ -380,7 +581,7 @@ class _FilterResultPageState extends State<FilterResultPage> {
     return Scaffold(
       appBar: AppBar(title: Text(widget.title)),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? _buildSkeletonGrid()
           : RefreshIndicator(
               onRefresh: _loadMovies,
               child: NotificationListener<ScrollNotification>(
@@ -393,7 +594,7 @@ class _FilterResultPageState extends State<FilterResultPage> {
                   }
                   return false;
                 },
-                child: _movies.isEmpty
+                child: _filteredMovies.isEmpty
                     ? Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
@@ -421,12 +622,12 @@ class _FilterResultPageState extends State<FilterResultPage> {
                           crossAxisSpacing: 8,
                           mainAxisSpacing: 8,
                         ),
-                        itemCount: _movies.length + (_isLoadingMore ? 6 : 0),
+                        itemCount: _filteredMovies.length + (_isLoadingMore ? 6 : 0),
                         itemBuilder: (context, index) {
-                          if (index >= _movies.length) {
+                          if (index >= _filteredMovies.length) {
                             return const Center(child: CircularProgressIndicator());
                           }
-                          final movie = _movies[index];
+                          final movie = _filteredMovies[index];
                           return MovieCard(
                             movie: movie,
                             onTap: () {
@@ -444,6 +645,29 @@ class _FilterResultPageState extends State<FilterResultPage> {
                       ),
               ),
             ),
+    );
+  }
+
+  Widget _buildSkeletonGrid() {
+    return GridView.builder(
+      padding: const EdgeInsets.all(8),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        childAspectRatio: 0.55,
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 8,
+      ),
+      itemCount: 9,
+      itemBuilder: (context, index) {
+        return Container(
+          decoration: BoxDecoration(
+            color: Theme.of(context).brightness == Brightness.dark
+                ? const Color(0xFF2A2A2A)
+                : const Color(0xFFE0E0E0),
+            borderRadius: BorderRadius.circular(8),
+          ),
+        );
+      },
     );
   }
 }

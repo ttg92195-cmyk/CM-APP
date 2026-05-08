@@ -4,6 +4,7 @@ import 'package:cm_movies/app/core/services/recent_service.dart';
 import 'package:cm_movies/app/ui/components/movie_card.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
 import 'package:cm_movies/app/ui/screens/series_detail_screen.dart';
+import 'package:cm_movies/app/ui/home/trending_movie_component.dart';
 
 class RecentPage extends StatefulWidget {
   const RecentPage({super.key});
@@ -50,8 +51,11 @@ class _RecentPageState extends State<RecentPage> {
     final theme = Theme.of(context);
 
     return Scaffold(
+      appBar: AppBar(
+        title: const Text('Recent'),
+      ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? _buildSkeletonLoading()
           : _recentMovies.isEmpty
               ? Center(
                   child: Column(
@@ -73,7 +77,10 @@ class _RecentPageState extends State<RecentPage> {
                   ),
                 )
               : RefreshIndicator(
-                  onRefresh: _loadRecents,
+                  onRefresh: () async {
+                    setState(() => _isLoading = true);
+                    await _loadRecents();
+                  },
                   child: CustomScrollView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     slivers: [
@@ -126,6 +133,22 @@ class _RecentPageState extends State<RecentPage> {
                     ],
                   ),
                 ),
+    );
+  }
+
+  Widget _buildSkeletonLoading() {
+    return GridView.builder(
+      padding: const EdgeInsets.all(8),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        childAspectRatio: 0.55,
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 8,
+      ),
+      itemCount: 6,
+      itemBuilder: (context, index) {
+        return const MovieCardSkeleton();
+      },
     );
   }
 }

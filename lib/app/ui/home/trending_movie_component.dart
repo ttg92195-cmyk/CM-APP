@@ -157,11 +157,12 @@ class _MovieCardSkeletonState extends State<MovieCardSkeleton>
   }
 }
 
-/// Skeleton loading for a horizontal section (one row with one poster)
+/// Skeleton loading for a horizontal section (one row with multiple posters)
 class TrendingMovieSkeleton extends StatelessWidget {
   final String title;
+  final int count;
 
-  const TrendingMovieSkeleton({super.key, required this.title});
+  const TrendingMovieSkeleton({super.key, required this.title, this.count = 5});
 
   @override
   Widget build(BuildContext context) {
@@ -181,12 +182,13 @@ class TrendingMovieSkeleton extends StatelessWidget {
         ),
         SizedBox(
           height: 250,
-          child: ListView(
+          child: ListView.builder(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 12),
-            children: const [
-              MovieCardSkeleton(),
-            ],
+            itemCount: count,
+            itemBuilder: (context, index) {
+              return const MovieCardSkeleton();
+            },
           ),
         ),
       ],
