@@ -289,24 +289,24 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                               color: isDark
                                   ? const Color(0xFF1A1A2E)
                                   : Colors.grey.shade400)),
-                  // Gradient overlay - dark at bottom
+                  // Gradient overlay - darker at bottom for tab bar visibility
                   Container(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
                         colors: [
-                          Colors.black.withOpacity(0.3),
-                          Colors.black.withOpacity(0.7),
+                          Colors.black.withOpacity(0.2),
+                          Colors.black.withOpacity(0.85),
                           bgColor,
                         ],
-                        stops: const [0.0, 0.7, 1.0],
+                        stops: const [0.0, 0.65, 1.0],
                       ),
                     ),
                   ),
                   // Floating Poster + Title info
                   Positioned(
-                    left: 16,
+                    left: 20,
                     bottom: 16,
                     right: 16,
                     child: Row(
@@ -620,12 +620,11 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                     if (detail.duration != null && detail.duration!.isNotEmpty)
                       _buildDivider(isDark),
                     _buildDetailRow('Subtitle', 'Myanmar Subtitle', isDark),
-                    _buildDivider(isDark),
-                    if (detail.directors.isNotEmpty)
+                    if (detail.directors.isNotEmpty) ...[
+                      _buildDivider(isDark),
                       _buildDetailRow(
                           'Director', detail.directors.join(', '), isDark),
-                    if (detail.directors.isEmpty)
-                      _buildDetailRow('Director', '-', isDark),
+                    ],
                   ],
                 ),
               ),
@@ -1019,10 +1018,20 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
             : _relatedMovies.isEmpty
                 ? Center(
                     child: Padding(
-                      padding: const EdgeInsets.only(top: 40),
-                      child: Text('No related movies found',
-                          style: TextStyle(
-                              color: isDark ? Colors.white54 : Colors.black45)),
+                      padding: const EdgeInsets.only(top: 60),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.movie_outlined,
+                              size: 56,
+                              color: isDark ? Colors.white24 : Colors.black12),
+                          const SizedBox(height: 12),
+                          Text('No related movies found',
+                              style: TextStyle(
+                                  color: isDark ? Colors.white54 : Colors.black45,
+                                  fontSize: 14)),
+                        ],
+                      ),
                     ),
                   )
                 : GridView.builder(
@@ -1202,10 +1211,10 @@ class _TabBarDelegate extends SliverPersistentHeaderDelegate {
   });
 
   @override
-  double get minExtent => 48;
+  double get minExtent => 52;
 
   @override
-  double get maxExtent => 48;
+  double get maxExtent => 52;
 
   @override
   bool shouldRebuild(covariant _TabBarDelegate oldDelegate) {
@@ -1230,9 +1239,9 @@ class _TabBarDelegate extends SliverPersistentHeaderDelegate {
         unselectedLabelStyle:
             const TextStyle(fontSize: 14, fontWeight: FontWeight.normal),
         tabs: const [
-          Tab(text: 'Detail'),
-          Tab(text: 'Download'),
-          Tab(text: 'Explore'),
+          Tab(icon: Icon(Icons.info_outline, size: 20), text: 'Detail'),
+          Tab(icon: Icon(Icons.file_download_outlined, size: 20), text: 'Download'),
+          Tab(icon: Icon(Icons.explore_outlined, size: 20), text: 'Explore'),
         ],
       ),
     );
