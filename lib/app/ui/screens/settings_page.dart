@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
-import 'package:cm_movies/app/core/services/notification_service.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
@@ -31,98 +30,6 @@ class SettingsPage extends StatelessWidget {
           value: appConfig.isDarkMode,
           onChanged: (val) {
             appConfig.setThemeMode(val ? ThemeMode.dark : ThemeMode.light);
-          },
-        ),
-        const Divider(),
-
-        // Notification Section
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-          child: Text(
-            appConfig.translate('notifications'),
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ),
-        Consumer<NotificationService>(
-          builder: (context, notifService, _) {
-            return Column(
-              children: [
-                SwitchListTile(
-                  secondary: const Icon(Icons.notifications_outlined),
-                  title: Text(appConfig.translate('notifications_toggle')),
-                  subtitle: Text(
-                    appConfig.translate('notifications_toggle_desc'),
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurface.withOpacity(0.5),
-                    ),
-                  ),
-                  value: notifService.notificationsEnabled,
-                  onChanged: (val) {
-                    notifService.setNotificationsEnabled(val);
-                  },
-                ),
-                // New Movies notification sub-toggle
-                AnimatedCrossFade(
-                  firstChild: Padding(
-                    padding: const EdgeInsets.only(left: 16),
-                    child: SwitchListTile(
-                      secondary: const Icon(Icons.movie_filter_outlined),
-                      title: Text(appConfig.translate('new_movies_notif')),
-                      subtitle: Text(
-                        appConfig.translate('new_movies_notif_desc'),
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurface.withOpacity(0.5),
-                        ),
-                      ),
-                      value: notifService.newMoviesEnabled,
-                      onChanged: notifService.notificationsEnabled
-                          ? (val) {
-                              notifService.setNewMoviesEnabled(val);
-                            }
-                          : null,
-                    ),
-                  ),
-                  secondChild: const SizedBox.shrink(),
-                  crossFadeState: notifService.notificationsEnabled
-                      ? CrossFadeState.showFirst
-                      : CrossFadeState.showSecond,
-                  duration: const Duration(milliseconds: 300),
-                ),
-                // Test notification button
-                if (notifService.notificationsEnabled)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                    child: ListTile(
-                      leading: const Icon(Icons.send_outlined),
-                      title: Text(appConfig.translate('test_notification')),
-                      trailing: const Icon(Icons.chevron_right),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        side: BorderSide(
-                          color: theme.colorScheme.primary.withOpacity(0.2),
-                        ),
-                      ),
-                      onTap: () async {
-                        await notifService.showTestNotification();
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(appConfig.translate('test_notification_sent')),
-                              backgroundColor: const Color(0xFFE50914),
-                              behavior: SnackBarBehavior.floating,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                            ),
-                          );
-                        }
-                      },
-                    ),
-                  ),
-              ],
-            );
           },
         ),
         const Divider(),
@@ -261,8 +168,6 @@ class _AboutCMMoviesPage extends StatelessWidget {
             _buildFeatureCard(theme, Icons.search, 'Smart Search', 'Find movies by title, genre, or tag'),
             const SizedBox(height: 12),
             _buildFeatureCard(theme, Icons.bookmark, 'Bookmarks', 'Save your favorite movies for later'),
-            const SizedBox(height: 12),
-            _buildFeatureCard(theme, Icons.notifications_active, 'Push Notifications', 'Get notified when new movies arrive'),
             const SizedBox(height: 12),
             _buildFeatureCard(theme, Icons.cloud_done, 'Cloud Sync', 'Sync bookmarks across devices with Firebase'),
             const SizedBox(height: 12),
