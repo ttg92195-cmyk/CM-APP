@@ -221,7 +221,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
         headerSliverBuilder: (context, innerBoxIsScrolled) => [
           // Header: Backdrop + Poster overlay
           SliverAppBar(
-            expandedHeight: 240,
+            expandedHeight: 280,
             pinned: true,
             floating: false,
             backgroundColor: isDark ? const Color(0xFF0A0A0A) : bgColor,
@@ -325,7 +325,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                   // Floating Poster + Title info
                   Positioned(
                     left: 20,
-                    bottom: 8,
+                    bottom: -20,
                     right: 16,
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.end,
@@ -452,14 +452,16 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                                                       horizontal: 10,
                                                       vertical: 3),
                                               decoration: BoxDecoration(
-                                                color: const Color(0xFF1A237E)
-                                                    .withOpacity(0.8),
+                                                border: Border.all(
+                                                  color: Colors.white54,
+                                                  width: 0.8,
+                                                ),
                                                 borderRadius:
                                                     BorderRadius.circular(12),
                                               ),
                                               child: Text(cat,
                                                   style: const TextStyle(
-                                                      color: Colors.white,
+                                                      color: Colors.white70,
                                                       fontSize: 10,
                                                       fontWeight:
                                                           FontWeight.w500)),
@@ -538,7 +540,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                     );
                     final textPainter = TextPainter(
                       text: textSpan,
-                      maxLines: 2,
+                      maxLines: 4,
                       textDirection: TextDirection.ltr,
                     );
                     textPainter.layout(maxWidth: constraints.maxWidth);
@@ -549,7 +551,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                       children: [
                         Text(
                           detail.overview!,
-                          maxLines: _overviewExpanded ? null : 2,
+                          maxLines: _overviewExpanded ? null : 4,
                           overflow: _overviewExpanded
                               ? TextOverflow.visible
                               : TextOverflow.ellipsis,
@@ -561,7 +563,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                             onTap: () => setState(
                                 () => _overviewExpanded = !_overviewExpanded),
                             child: Padding(
-                              padding: const EdgeInsets.only(top: 2),
+                              padding: const EdgeInsets.only(top: 4),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
@@ -1345,6 +1347,7 @@ class _SeriesTabBarDelegate extends SliverPersistentHeaderDelegate {
         labelColor: accentColor,
         unselectedLabelColor: isDark ? Colors.grey.shade500 : Colors.grey.shade600,
         indicator: const BoxDecoration(),
+        dividerColor: Colors.transparent,
         labelStyle:
             const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
         unselectedLabelStyle:
