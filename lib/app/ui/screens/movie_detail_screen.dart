@@ -7,8 +7,11 @@ import 'package:cm_movies/app/core/models/movie_detail.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/core/services/bookmark_service.dart';
+import 'package:cm_movies/app/core/services/watchlist_service.dart';
 import 'package:cm_movies/app/core/services/recent_service.dart';
+import 'package:cm_movies/app/core/services/download_manager_service.dart';
 import 'package:cm_movies/app/ui/screens/category_page.dart';
+import 'package:cm_movies/app/ui/components/age_rating_gate.dart';
 
 class MovieDetailScreen extends StatefulWidget {
   final String slug;
@@ -23,12 +26,16 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
     with SingleTickerProviderStateMixin {
   final FirestoreContentService _contentService = FirestoreContentService();
   final BookmarkService _bookmarkService = BookmarkService();
+  final WatchlistService _watchlistService = WatchlistService();
   final RecentService _recentService = RecentService();
+  final DownloadManagerService _downloadManager = DownloadManagerService();
 
   MovieDetail? _movieDetail;
   bool _isLoading = true;
   String? _error;
   bool _isBookmarked = false;
+  bool _isInWatchlist = false;
+  bool _ageVerified = false;
   bool _overviewExpanded = false;
 
   late TabController _tabController;
@@ -56,6 +63,20 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
     try {
       final detail = await _contentService.getMovieBySlug(widget.slug);
       if (detail != null && mounted) {
+        // Age gate check for adult content
+        if (detail.isAdult != null && detail.isAdult != 0) {
+          final verified = await AgeRatingGate.checkAndShowGate(
+            context,
+            isAdult: detail.isAdult,
+            movieTitle: detail.title,
+          );
+          if (!verified) {
+            if (mounted) Navigator.pop(context);
+            return;
+          }
+          _ageVerified = true;
+        }
+
         final movie = Movie(
           id: detail.id,
           title: detail.title,
@@ -67,10 +88,12 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
         );
         await _recentService.addRecent(movie);
         final bookmarked = await _bookmarkService.isBookmarked(detail.id);
+        final inWatchlist = await _watchlistService.isInWatchlist(detail.id);
 
         setState(() {
           _movieDetail = detail;
           _isBookmarked = bookmarked;
+          _isInWatchlist = inWatchlist;
           _isLoading = false;
         });
 
@@ -156,6 +179,58 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                 : Provider.of<AppConfig>(context, listen: false)
                     .translate('bookmark_removed'),
           ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  Future<void> _toggleWatchlist() async {
+    if (_movieDetail == null) return;
+    final movie = Movie(
+      id: _movieDetail!.id,
+      title: _movieDetail!.title,
+      slug: _movieDetail!.slug,
+      year: _movieDetail!.year,
+      poster: _movieDetail!.poster,
+      type: _movieDetail!.type,
+      isTrending: _movieDetail!.isTrending,
+    );
+    await _watchlistService.toggleWatchlist(movie);
+    final inWatchlist = await _watchlistService.isInWatchlist(_movieDetail!.id);
+    if (mounted) {
+      setState(() => _isInWatchlist = inWatchlist);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            inWatchlist
+                ? Provider.of<AppConfig>(context, listen: false)
+                    .translate('watchlist_added')
+                : Provider.of<AppConfig>(context, listen: false)
+                    .translate('watchlist_removed'),
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  Future<void> _startInAppDownload(MovieDownloadLink link) async {
+    if (_movieDetail == null) return;
+    await _downloadManager.addTask(
+      movieId: _movieDetail!.id,
+      movieTitle: _movieDetail!.title,
+      moviePoster: _movieDetail!.poster,
+      url: link.url,
+      quality: link.quality ?? link.resolution ?? 'Standard',
+      size: link.size,
+      serverName: link.serverName,
+    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(Provider.of<AppConfig>(context, listen: false)
+              .translate('downloading')),
           duration: const Duration(seconds: 2),
         ),
       );
@@ -259,6 +334,33 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                 ),
               ),
             actions: [
+              // Watchlist button
+              Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
+                    shape: BoxShape.circle,
+                  ),
+                  child: IconButton(
+                    icon: Icon(
+                      _isInWatchlist
+                          ? Icons.watch_later
+                          : Icons.watch_later_outlined,
+                      color: _isInWatchlist
+                          ? const Color(0xFF4CAF50)
+                          : (isDark ? Colors.white : Colors.black54),
+                      size: 18,
+                    ),
+                    onPressed: _toggleWatchlist,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  ),
+                ),
+              ),
+              // Bookmark button
               Padding(
                 padding: const EdgeInsets.only(right: 8),
                 child: Container(
@@ -841,29 +943,58 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                                   color: metaTextColor, fontSize: 11),
                             ),
                             const SizedBox(height: 8),
-                            SizedBox(
-                              width: double.infinity,
-                              child: ElevatedButton.icon(
-                                onPressed: link.url.isNotEmpty
-                                    ? () => _launchUrl(link.url)
-                                    : null,
-                                icon: const Icon(Icons.download, size: 16),
-                                label: Text('Download $qualityLabel'),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: accentColor,
-                                  foregroundColor: Colors.white,
-                                  disabledBackgroundColor:
-                                      isDark ? Colors.grey.shade700 : Colors.grey.shade400,
-                                  disabledForegroundColor:
-                                      isDark ? Colors.grey.shade500 : Colors.grey.shade600,
-                                  padding:
-                                      const EdgeInsets.symmetric(vertical: 10),
-                                  shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8)),
-                                  textStyle: const TextStyle(
-                                      fontWeight: FontWeight.w600, fontSize: 13),
+                            // Download buttons row
+                            Row(
+                              children: [
+                                // In-app download
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    onPressed: link.url.isNotEmpty
+                                        ? () => _startInAppDownload(link)
+                                        : null,
+                                    icon: const Icon(Icons.downloading, size: 16),
+                                    label: Text('Save $qualityLabel'),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFF4CAF50),
+                                      foregroundColor: Colors.white,
+                                      disabledBackgroundColor:
+                                          isDark ? Colors.grey.shade700 : Colors.grey.shade400,
+                                      disabledForegroundColor:
+                                          isDark ? Colors.grey.shade500 : Colors.grey.shade600,
+                                      padding: const EdgeInsets.symmetric(vertical: 10),
+                                      shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(8)),
+                                      textStyle: const TextStyle(
+                                          fontWeight: FontWeight.w600, fontSize: 12),
+                                    ),
+                                  ),
                                 ),
-                              ),
+                                const SizedBox(width: 8),
+                                // External download
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: link.url.isNotEmpty
+                                        ? () => _launchUrl(link.url)
+                                        : null,
+                                    icon: const Icon(Icons.open_in_new, size: 16),
+                                    label: Text('Open $qualityLabel'),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: accentColor,
+                                      disabledForegroundColor:
+                                          isDark ? Colors.grey.shade500 : Colors.grey.shade600,
+                                      padding: const EdgeInsets.symmetric(vertical: 10),
+                                      shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(8)),
+                                      side: BorderSide(
+                                          color: link.url.isNotEmpty
+                                              ? accentColor
+                                              : (isDark ? Colors.grey.shade700 : Colors.grey.shade400)),
+                                      textStyle: const TextStyle(
+                                          fontWeight: FontWeight.w600, fontSize: 12),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),

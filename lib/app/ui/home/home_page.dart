@@ -13,6 +13,7 @@ import 'package:cm_movies/app/ui/screens/login_page.dart';
 import 'package:cm_movies/app/ui/screens/profile_page.dart';
 import 'package:cm_movies/app/ui/screens/search_screen.dart';
 import 'package:cm_movies/app/ui/screens/admin_panel_page.dart';
+import 'package:cm_movies/app/ui/screens/watchlist_screen.dart';
 
 // Bottom nav tab indices (4 tabs)
 const int kHomeTab = 0;
@@ -220,6 +221,21 @@ class _HomePageState extends State<HomePage> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(builder: (_) => const MovieBookmarkScreen()),
+                      );
+                    },
+                  ),
+
+                  // Watchlist
+                  _buildDrawerItem(
+                    icon: Icons.watch_later_outlined,
+                    activeIcon: Icons.watch_later,
+                    title: appConfig.translate('watchlist'),
+                    isDark: isDark,
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const WatchlistScreen()),
                       );
                     },
                   ),

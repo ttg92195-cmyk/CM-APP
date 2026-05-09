@@ -7,8 +7,11 @@ import 'package:cm_movies/app/core/models/movie_detail.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/core/services/bookmark_service.dart';
+import 'package:cm_movies/app/core/services/watchlist_service.dart';
 import 'package:cm_movies/app/core/services/recent_service.dart';
+import 'package:cm_movies/app/core/services/download_manager_service.dart';
 import 'package:cm_movies/app/ui/screens/category_page.dart';
+import 'package:cm_movies/app/ui/components/age_rating_gate.dart';
 
 class SeriesDetailScreen extends StatefulWidget {
   final String slug;
@@ -23,12 +26,16 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
     with SingleTickerProviderStateMixin {
   final FirestoreContentService _contentService = FirestoreContentService();
   final BookmarkService _bookmarkService = BookmarkService();
+  final WatchlistService _watchlistService = WatchlistService();
   final RecentService _recentService = RecentService();
+  final DownloadManagerService _downloadManager = DownloadManagerService();
 
   MovieDetail? _seriesDetail;
   bool _isLoading = true;
   String? _error;
   bool _isBookmarked = false;
+  bool _isInWatchlist = false;
+  bool _ageVerified = false;
   bool _overviewExpanded = false;
 
   late TabController _tabController;
@@ -56,6 +63,20 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
     try {
       final detail = await _contentService.getMovieBySlug(widget.slug);
       if (detail != null && mounted) {
+        // Age gate check for adult content
+        if (detail.isAdult != null && detail.isAdult != 0) {
+          final verified = await AgeRatingGate.checkAndShowGate(
+            context,
+            isAdult: detail.isAdult,
+            movieTitle: detail.title,
+          );
+          if (!verified) {
+            if (mounted) Navigator.pop(context);
+            return;
+          }
+          _ageVerified = true;
+        }
+
         final movie = Movie(
           id: detail.id,
           title: detail.title,
@@ -67,10 +88,12 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
         );
         await _recentService.addRecent(movie);
         final bookmarked = await _bookmarkService.isBookmarked(detail.id);
+        final inWatchlist = await _watchlistService.isInWatchlist(detail.id);
 
         setState(() {
           _seriesDetail = detail;
           _isBookmarked = bookmarked;
+          _isInWatchlist = inWatchlist;
           _isLoading = false;
         });
 
@@ -156,6 +179,58 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                 : Provider.of<AppConfig>(context, listen: false)
                     .translate('bookmark_removed'),
           ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  Future<void> _toggleWatchlist() async {
+    if (_seriesDetail == null) return;
+    final movie = Movie(
+      id: _seriesDetail!.id,
+      title: _seriesDetail!.title,
+      slug: _seriesDetail!.slug,
+      year: _seriesDetail!.year,
+      poster: _seriesDetail!.poster,
+      type: _seriesDetail!.type,
+      isTrending: _seriesDetail!.isTrending,
+    );
+    await _watchlistService.toggleWatchlist(movie);
+    final inWatchlist = await _watchlistService.isInWatchlist(_seriesDetail!.id);
+    if (mounted) {
+      setState(() => _isInWatchlist = inWatchlist);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            inWatchlist
+                ? Provider.of<AppConfig>(context, listen: false)
+                    .translate('watchlist_added')
+                : Provider.of<AppConfig>(context, listen: false)
+                    .translate('watchlist_removed'),
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  Future<void> _startInAppDownload(MovieDownloadLink link) async {
+    if (_seriesDetail == null) return;
+    await _downloadManager.addTask(
+      movieId: _seriesDetail!.id,
+      movieTitle: _seriesDetail!.title,
+      moviePoster: _seriesDetail!.poster,
+      url: link.url,
+      quality: link.quality ?? link.resolution ?? 'Standard',
+      size: link.size,
+      serverName: link.serverName,
+    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(Provider.of<AppConfig>(context, listen: false)
+              .translate('downloading')),
           duration: const Duration(seconds: 2),
         ),
       );
@@ -259,6 +334,33 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                 ),
               ),
             actions: [
+              // Watchlist button
+              Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
+                    shape: BoxShape.circle,
+                  ),
+                  child: IconButton(
+                    icon: Icon(
+                      _isInWatchlist
+                          ? Icons.watch_later
+                          : Icons.watch_later_outlined,
+                      color: _isInWatchlist
+                          ? const Color(0xFF4CAF50)
+                          : (isDark ? Colors.white : Colors.black54),
+                      size: 18,
+                    ),
+                    onPressed: _toggleWatchlist,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  ),
+                ),
+              ),
+              // Bookmark button
               Padding(
                 padding: const EdgeInsets.only(right: 8),
                 child: Container(
