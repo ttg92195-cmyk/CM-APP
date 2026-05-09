@@ -19,7 +19,6 @@ class _EditMoviePageState extends State<EditMoviePage> {
   final _titleController = TextEditingController();
   final _yearController = TextEditingController();
   final _posterController = TextEditingController();
-  final _backdropController = TextEditingController();
   final _overviewController = TextEditingController();
   final _ratingController = TextEditingController();
   final _resolutionController = TextEditingController();
@@ -52,7 +51,6 @@ class _EditMoviePageState extends State<EditMoviePage> {
     _titleController.dispose();
     _yearController.dispose();
     _posterController.dispose();
-    _backdropController.dispose();
     _overviewController.dispose();
     _ratingController.dispose();
     _resolutionController.dispose();
@@ -78,7 +76,6 @@ class _EditMoviePageState extends State<EditMoviePage> {
           _titleController.text = detail.title;
           _yearController.text = detail.year ?? '';
           _posterController.text = detail.poster ?? '';
-          _backdropController.text = detail.backdrop ?? '';
           _overviewController.text = detail.overview ?? '';
           _ratingController.text = detail.rating ?? '';
           _resolutionController.text = detail.resolution ?? '';
@@ -121,7 +118,7 @@ class _EditMoviePageState extends State<EditMoviePage> {
         'title': _titleController.text.trim(),
         'year': _yearController.text.trim().isEmpty ? null : _yearController.text.trim(),
         'poster': _posterController.text.trim().isEmpty ? null : _posterController.text.trim(),
-        'backdrop': _backdropController.text.trim().isEmpty ? null : _backdropController.text.trim(),
+        'backdrop': null,
         'overview': _overviewController.text.trim().isEmpty ? null : _overviewController.text.trim(),
         'rating': _ratingController.text.trim().isEmpty ? null : _ratingController.text.trim(),
         'resolution': _resolutionController.text.trim().isEmpty ? null : _resolutionController.text.trim(),
@@ -274,25 +271,11 @@ class _EditMoviePageState extends State<EditMoviePage> {
                     ),
                     const SizedBox(height: 16),
 
-                    // Poster + Backdrop
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextFormField(
-                            controller: _posterController,
-                            decoration: const InputDecoration(labelText: 'Poster URL', hintText: 'https://...'),
-                            keyboardType: TextInputType.url,
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: TextFormField(
-                            controller: _backdropController,
-                            decoration: const InputDecoration(labelText: 'Backdrop URL', hintText: 'https://...'),
-                            keyboardType: TextInputType.url,
-                          ),
-                        ),
-                      ],
+                    // Poster
+                    TextFormField(
+                      controller: _posterController,
+                      decoration: const InputDecoration(labelText: 'Poster URL', hintText: 'https://...'),
+                      keyboardType: TextInputType.url,
                     ),
                     const SizedBox(height: 16),
 
@@ -333,6 +316,21 @@ class _EditMoviePageState extends State<EditMoviePage> {
                       child: Row(
                         children: [
                           Expanded(child: Text(entry.value)),
+                          IconButton(icon: const Icon(Icons.edit, size: 20), onPressed: () async {
+                            final controller = TextEditingController(text: entry.value);
+                            final result = await showDialog<String>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: const Text('Edit Director'),
+                                content: TextField(controller: controller, decoration: const InputDecoration(labelText: 'Director Name'), autofocus: true),
+                                actions: [
+                                  TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                                  ElevatedButton(onPressed: () => Navigator.pop(ctx, controller.text.trim()), child: const Text('Save')),
+                                ],
+                              ),
+                            );
+                            if (result != null && result.isNotEmpty) setState(() => _directors[entry.key] = result);
+                          }),
                           IconButton(icon: const Icon(Icons.delete, size: 20), onPressed: () => setState(() => _directors.removeAt(entry.key))),
                         ],
                       ),
@@ -384,6 +382,36 @@ class _EditMoviePageState extends State<EditMoviePage> {
                                 ],
                               ),
                             ),
+                            IconButton(icon: const Icon(Icons.edit, size: 20), onPressed: () async {
+                              final nameController = TextEditingController(text: cast.name);
+                              final profileController = TextEditingController(text: cast.profilePath ?? '');
+                              final result = await showDialog<bool>(
+                                context: context,
+                                builder: (ctx) => AlertDialog(
+                                  title: const Text('Edit Cast Member'),
+                                  content: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      TextField(controller: nameController, decoration: const InputDecoration(labelText: 'Name *'), autofocus: true),
+                                      const SizedBox(height: 8),
+                                      TextField(controller: profileController, decoration: const InputDecoration(labelText: 'Profile Photo URL')),
+                                    ],
+                                  ),
+                                  actions: [
+                                    TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                                    ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
+                                  ],
+                                ),
+                              );
+                              if (result == true && nameController.text.trim().isNotEmpty) {
+                                setState(() {
+                                  _casts[entry.key] = CastMember(
+                                    name: nameController.text.trim(),
+                                    profilePath: profileController.text.trim().isEmpty ? null : profileController.text.trim(),
+                                  );
+                                });
+                              }
+                            }),
                             IconButton(icon: const Icon(Icons.delete, size: 20), onPressed: () => setState(() => _casts.removeAt(entry.key))),
                           ],
                         ),

@@ -146,21 +146,14 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
     return Column(
       children: [
         Container(
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
-            border: Border(
-              bottom: BorderSide(
-                color: const Color(0xFFE50914).withOpacity(0.2),
-                width: 1,
-              ),
-            ),
-          ),
+          color: theme.colorScheme.surface,
           child: TabBar(
             controller: _genresSubTabController,
             labelColor: const Color(0xFFE50914),
             unselectedLabelColor: theme.colorScheme.onSurface.withOpacity(0.5),
             indicatorColor: const Color(0xFFE50914),
             indicatorSize: TabBarIndicatorSize.label,
+            dividerColor: Colors.transparent,
             tabs: const [
               Tab(text: 'Movies'),
               Tab(text: 'Series'),
@@ -228,21 +221,14 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
     return Column(
       children: [
         Container(
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
-            border: Border(
-              bottom: BorderSide(
-                color: const Color(0xFFE50914).withOpacity(0.2),
-                width: 1,
-              ),
-            ),
-          ),
+          color: theme.colorScheme.surface,
           child: TabBar(
             controller: _tagsSubTabController,
             labelColor: const Color(0xFFE50914),
             unselectedLabelColor: theme.colorScheme.onSurface.withOpacity(0.5),
             indicatorColor: const Color(0xFFE50914),
             indicatorSize: TabBarIndicatorSize.label,
+            dividerColor: Colors.transparent,
             tabs: const [
               Tab(text: 'Movies'),
               Tab(text: 'Series'),

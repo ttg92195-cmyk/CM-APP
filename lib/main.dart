@@ -47,7 +47,7 @@ class CMMoviesApp extends StatelessWidget {
     final appConfig = Provider.of<AppConfig>(context);
 
     return MaterialApp(
-      title: 'CM Movies',
+      title: 'KMM',
       debugShowCheckedModeBanner: false,
       theme: _buildLightTheme(),
       darkTheme: _buildDarkTheme(),

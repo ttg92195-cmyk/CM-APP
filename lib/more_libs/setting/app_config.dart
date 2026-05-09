@@ -319,7 +319,7 @@ class AppConfig extends ChangeNotifier {
   Map<String, String> _getDefaultTranslations(String code) {
     if (code == 'en') {
       return {
-        'app_name': 'CM Movies',
+        'app_name': 'KMM',
         'home': 'Home',
         'movies': 'Movies',
         'series': 'Series',
@@ -384,7 +384,7 @@ class AppConfig extends ChangeNotifier {
         'register_success': 'Registration successful',
         'register_failed': 'Username already exists',
         'privacy_policy': 'Privacy and Policy',
-        'about_cm_movies': 'About CM Movies',
+        'about_cm_movies': 'About KMM',
         'download_toggle': 'Show Download Links',
         'download_toggle_desc': 'Enable to show download links in movie details',
         'download_disabled_msg': 'Download links are currently disabled. Go to Download settings to enable them.',
@@ -451,12 +451,12 @@ class AppConfig extends ChangeNotifier {
         'create_account': 'Create Account',
         'already_have_account': 'Already have an account?',
         'dont_have_account': "Don't have an account?",
-        'privacy_policy_text': 'Privacy Policy\n\nCM Movies is committed to protecting your privacy. This Privacy Policy explains how we collect, use, and safeguard your information when you use our application.\n\nInformation We Collect:\n- Usage data and preferences\n- Bookmark and history data (stored locally)\n- App settings and configuration\n\nHow We Use Your Information:\n- To provide and improve our services\n- To personalize your experience\n- To maintain your bookmarks and viewing history\n\nData Storage:\nAll your personal data including bookmarks, viewing history, and settings are stored locally on your device. We do not transmit your personal data to external servers.\n\nThird-Party Services:\nOur app may use third-party services that have their own privacy policies. We encourage you to review their privacy policies.\n\nContact Us:\nIf you have any questions about this Privacy Policy, please contact us through the app settings.\n\nLast updated: 2026',
-        'about_cm_movies_text': 'CM Movies\n\nYour ultimate movie and series companion app. Browse, search, and discover movies and TV series from around the world.\n\nFeatures:\n- Browse trending movies and TV shows\n- Search by title, genre, or tag\n- Bookmark your favorites\n- Download management\n- Multi-language support (Myanmar & English)\n- Dark & Light theme\n\nVersion 1.0.0\nDeveloped with love for movie enthusiasts.',
+        'privacy_policy_text': 'Privacy Policy\n\nKMM is committed to protecting your privacy. This Privacy Policy explains how we collect, use, and safeguard your information when you use our application.\n\nInformation We Collect:\n- Usage data and preferences\n- Bookmark and history data (stored locally)\n- App settings and configuration\n\nHow We Use Your Information:\n- To provide and improve our services\n- To personalize your experience\n- To maintain your bookmarks and viewing history\n\nData Storage:\nAll your personal data including bookmarks, viewing history, and settings are stored locally on your device. We do not transmit your personal data to external servers.\n\nThird-Party Services:\nOur app may use third-party services that have their own privacy policies. We encourage you to review their privacy policies.\n\nContact Us:\nIf you have any questions about this Privacy Policy, please contact us through the app settings.\n\nLast updated: 2026',
+        'about_cm_movies_text': 'KMM\n\nYour ultimate movie and series companion app. Browse, search, and discover movies and TV series from around the world.\n\nFeatures:\n- Browse trending movies and TV shows\n- Search by title, genre, or tag\n- Bookmark your favorites\n- Download management\n- Multi-language support (Myanmar & English)\n- Dark & Light theme\n\nVersion 1.0.0\nDeveloped with love for movie enthusiasts.',
       };
     }
     return {
-      'app_name': 'CM Movies',
+      'app_name': 'KMM',
       'home': 'ပင်မ',
       'movies': 'ရုပ်ရှင်များ',
       'series': 'ဇာတ်လမ်းတွဲများ',
@@ -521,7 +521,7 @@ class AppConfig extends ChangeNotifier {
       'register_success': 'မှတ်ပုံတင်ပြီးပါပြီ',
       'register_failed': 'အသုံးပြုသူအမည် ရှိပီးသားဖြစ်ပါသည်',
       'privacy_policy': 'Privacy and Policy',
-      'about_cm_movies': 'CM Movies အကြောင်း',
+      'about_cm_movies': 'KMM အကြောင်း',
       'download_toggle': 'Download Link များ ပြသရန်',
       'download_toggle_desc': 'Movie အသေးစိတ်တွင် Download Link များ ပြသလိုပါက ဖွင့်ပါ',
       'download_disabled_msg': 'Download Link များကို လက်ရှိ ပိတ်ထားပါသည်။ Download Settings တွင် ဖွင့်ပါ။',
@@ -588,8 +588,8 @@ class AppConfig extends ChangeNotifier {
       'create_account': 'အကောင့်သစ် ဖွင့်ရန်',
       'already_have_account': 'အကောင့်ရှိပီးသားလား?',
       'dont_have_account': 'အကောင့်မရှိသေးဘူးလား?',
-      'privacy_policy_text': 'ကိုယ်ရေးအချက်အလက် မူဝါဒ\n\nCM Movies သည် သင့်ကိုယ်ရေးအချက်အလက်များကို ကာကွယ်ရန် ကတိကဝတ် ပြုထားပါသည်။ ဤ ကိုယ်ရေးအချက်အလက် မူဝါဒသည် သင် App ကို အသုံးပြုသောအခါ သင့်အချက်အလက်များကို မည်သို့ စုဆောင်း၊ အသုံးပြု၊ ကာကွယ်သည်ကို ရှင်းပြပါသည်။\n\nစုဆောင်းသော အချက်အလက်များ:\n- အသုံးပြုမှုဒေတာနှင့် ကိုယ်ကြိုက်ဆန္ဒများ\n- သိမ်းဆည်းမှုနှင့် ကြည့်ရှုမှတ်တမ်းဒေတာ (ဒေသန္တရသိုလ်တွင် သိမ်းဆည်း)\n- App ဆက်တင်နှင့် ပြင်ဆင်မှုများ\n\nအချက်အလက် အသုံးပြုပုံ:\n- ဝန်ဆောင်မှုများ ပေးရန်နှင့် တိုးတက်စေရန်\n- သင့်အတွေ့အကြုံကို ပိုမိုကောင်းမွန်စေရန်\n- သိမ်းဆည်းမှုနှင့် ကြည့်ရှုမှတ်တမ်းကို ထိန်းသိမ်းရန်\n\nဒေတာ သိမ်းဆည်းမှု:\nသင့်ကိုယ်ရေးအချက်အလက်အားလုံးကို သင့်စက်ပေါ်တွင်သာ ဒေသန္တရအားဖြင့် သိမ်းဆည်းထားပါသည်။ ကျွန်တော်တို့သည် သင့်ကိုယ်ရေးအချက်အလက်ကို ပြင်ပဆာဗာများသို့ မထုတ်ပိုးပါ။\n\nနောက်ဆုံး အသစ်ပြင်ဆင်ချက်: ၂၀၂၆',
-      'about_cm_movies_text': 'CM Movies\n\nရုပ်ရှင်နှင့် ဇာတ်လမ်းတွဲများ ကြည့်ရှုရန် အကောင်းဆုံး App ဖြစ်ပါသည်။ ကမ္ဘာအနှံ့ရုပ်ရှင်နှင့် TV ဇာတ်လမ်းတွဲများကို ရှာဖွေ၊ ကြည့်ရှုနိုင်ပါသည်။\n\nအသွင်အပြင်များ:\n- လူကြိုက်များရုပ်ရှင်နှင့် TV ရှိုးများ ကြည့်ရှုရန်\n- ခေါင်းစဉ်၊ အမျိုးအစား၊ တက်ဂ်အလိုက် ရှာဖွေရန်\n- နှစ်သက်ရာများ သိမ်းဆည်းရန်\n- Download စီမံခန့်ခွဲရန်\n- ဘာသာစကား ၂ မျိုး ပံ့ပိုးမှု (မြန်မာ & English)\n- အမှောင်နှင့် အလင်း Theme\n\nဗားရှင်း 1.0.0\nရုပ်ရှင်ချစ်သူများအတွက် ချစ်ခြင်းမေတ္တာဖြင့် ဖန်တီးထားပါသည်။',
+      'privacy_policy_text': 'ကိုယ်ရေးအချက်အလက် မူဝါဒ\n\nKMM သည် သင့်ကိုယ်ရေးအချက်အလက်များကို ကာကွယ်ရန် ကတိကဝတ် ပြုထားပါသည်။ ဤ ကိုယ်ရေးအချက်အလက် မူဝါဒသည် သင် App ကို အသုံးပြုသောအခါ သင့်အချက်အလက်များကို မည်သို့ စုဆောင်း၊ အသုံးပြု၊ ကာကွယ်သည်ကို ရှင်းပြပါသည်။\n\nစုဆောင်းသော အချက်အလက်များ:\n- အသုံးပြုမှုဒေတာနှင့် ကိုယ်ကြိုက်ဆန္ဒများ\n- သိမ်းဆည်းမှုနှင့် ကြည့်ရှုမှတ်တမ်းဒေတာ (ဒေသန္တရသိုလ်တွင် သိမ်းဆည်း)\n- App ဆက်တင်နှင့် ပြင်ဆင်မှုများ\n\nအချက်အလက် အသုံးပြုပုံ:\n- ဝန်ဆောင်မှုများ ပေးရန်နှင့် တိုးတက်စေရန်\n- သင့်အတွေ့အကြုံကို ပိုမိုကောင်းမွန်စေရန်\n- သိမ်းဆည်းမှုနှင့် ကြည့်ရှုမှတ်တမ်းကို ထိန်းသိမ်းရန်\n\nဒေတာ သိမ်းဆည်းမှု:\nသင့်ကိုယ်ရေးအချက်အလက်အားလုံးကို သင့်စက်ပေါ်တွင်သာ ဒေသန္တရအားဖြင့် သိမ်းဆည်းထားပါသည်။ ကျွန်တော်တို့သည် သင့်ကိုယ်ရေးအချက်အလက်ကို ပြင်ပဆာဗာများသို့ မထုတ်ပိုးပါ။\n\nနောက်ဆုံး အသစ်ပြင်ဆင်ချက်: ၂၀၂၆',
+      'about_cm_movies_text': 'KMM\n\nရုပ်ရှင်နှင့် ဇာတ်လမ်းတွဲများ ကြည့်ရှုရန် အကောင်းဆုံး App ဖြစ်ပါသည်။ ကမ္ဘာအနှံ့ရုပ်ရှင်နှင့် TV ဇာတ်လမ်းတွဲများကို ရှာဖွေ၊ ကြည့်ရှုနိုင်ပါသည်။\n\nအသွင်အပြင်များ:\n- လူကြိုက်များရုပ်ရှင်နှင့် TV ရှိုးများ ကြည့်ရှုရန်\n- ခေါင်းစဉ်၊ အမျိုးအစား၊ တက်ဂ်အလိုက် ရှာဖွေရန်\n- နှစ်သက်ရာများ သိမ်းဆည်းရန်\n- Download စီမံခန့်ခွဲရန်\n- ဘာသာစကား ၂ မျိုး ပံ့ပိုးမှု (မြန်မာ & English)\n- အမှောင်နှင့် အလင်း Theme\n\nဗားရှင်း 1.0.0\nရုပ်ရှင်ချစ်သူများအတွက် ချစ်ခြင်းမေတ္တာဖြင့် ဖန်တီးထားပါသည်။',
     };
   }
 }

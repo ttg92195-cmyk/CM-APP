@@ -75,7 +75,7 @@ class SettingsPage extends StatelessWidget {
           ),
         ),
 
-        // CM Movies - About
+        // KMM - About
         ListTile(
           leading: const Icon(Icons.info_outline),
           title: Text(appConfig.translate('about_cm_movies')),
@@ -135,7 +135,7 @@ class _AboutCMMoviesPage extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             Text(
-              'CM Movies',
+              'KMM',
               style: theme.textTheme.headlineMedium?.copyWith(
                 fontWeight: FontWeight.bold,
               ),

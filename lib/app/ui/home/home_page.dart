@@ -186,7 +186,7 @@ class _HomePageState extends State<HomePage> {
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    'CM Movies',
+                    'KMM',
                     style: TextStyle(
                       color: textColor,
                       fontSize: 22,
@@ -378,7 +378,7 @@ class _HomePageState extends State<HomePage> {
             Padding(
               padding: const EdgeInsets.all(16),
               child: Text(
-                'CM Movies v1.0.0',
+                'KMM v1.0.0',
                 style: TextStyle(
                   color: subTextColor,
                   fontSize: 11,
