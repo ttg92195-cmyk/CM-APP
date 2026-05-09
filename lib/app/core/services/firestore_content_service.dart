@@ -518,6 +518,179 @@ class FirestoreContentService {
     }
   }
 
+  /// Search movies with multiple filters (client-side for reliability)
+  /// Supports: keyword, genre, type, year, rating, and sorting
+  Future<Map<String, dynamic>> searchMoviesWithFilters({
+    String? keyword,
+    String? genre,
+    String? type, // 'movie' or 'series'
+    String? year,
+    String? rating, // e.g. '7', '8' - minimum rating
+    String? sortBy, // 'latest', 'rating', 'name'
+    int limit = 50,
+  }) async {
+    try {
+      Query query = _moviesRef;
+
+      // Apply server-side filters where possible
+      if (type != null && type.isNotEmpty) {
+        query = query.where('type', isEqualTo: type);
+      }
+      if (genre != null && genre.isNotEmpty) {
+        query = query.where('categories', arrayContains: genre);
+      }
+
+      // Order by - only if we don't have genre filter (composite index issue)
+      if (sortBy == 'rating') {
+        query = query.orderBy('rating', descending: true);
+      } else if (sortBy == 'name') {
+        query = query.orderBy('title');
+      } else {
+        // Default: latest first - only if no genre filter (needs composite index)
+        if (genre == null || genre.isEmpty) {
+          query = query.orderBy('createdAt', descending: true);
+        }
+      }
+
+      query = query.limit(500);
+
+      final snapshot = await query.get();
+      var allMovies = snapshot.docs
+          .map((doc) => Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              ))
+          .toList();
+
+      // Client-side filtering for fields that can't be queried together in Firestore
+      var filtered = allMovies;
+
+      // Keyword filter
+      if (keyword != null && keyword.trim().isNotEmpty) {
+        final lowerKeyword = keyword.toLowerCase().trim();
+        filtered = filtered
+            .where((m) => m.title.toLowerCase().contains(lowerKeyword))
+            .toList();
+      }
+
+      // Type filter (client-side fallback if not applied server-side)
+      if (type != null && type.isNotEmpty && genre != null && genre.isNotEmpty) {
+        filtered = filtered.where((m) => m.type == type).toList();
+      }
+
+      // Year filter
+      if (year != null && year.isNotEmpty) {
+        filtered = filtered.where((m) => m.year == year).toList();
+      }
+
+      // Rating filter (minimum rating)
+      if (rating != null && rating.isNotEmpty) {
+        final minRating = double.tryParse(rating) ?? 0.0;
+        filtered = filtered.where((m) {
+          final movieRating = double.tryParse(m.rating ?? '0') ?? 0.0;
+          return movieRating >= minRating;
+        }).toList();
+      }
+
+      // Client-side sort fallback for genre queries
+      if (genre != null && genre.isNotEmpty) {
+        if (sortBy == 'rating') {
+          filtered.sort((a, b) =>
+              (double.tryParse(b.rating ?? '0') ?? 0.0)
+              .compareTo(double.tryParse(a.rating ?? '0') ?? 0.0));
+        } else if (sortBy == 'name') {
+          filtered.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+        } else {
+          filtered.sort((a, b) => (b.createdAt ?? DateTime(2000))
+              .compareTo(a.createdAt ?? DateTime(2000)));
+        }
+      }
+
+      return {
+        'movies': filtered.take(limit).toList(),
+        'hasMore': filtered.length > limit,
+        'lastDoc': null,
+      };
+    } catch (e) {
+      debugPrint('searchMoviesWithFilters failed: $e');
+      // Fallback: fetch all and filter entirely client-side
+      try {
+        final snapshot = await _moviesRef.limit(500).get();
+        var allMovies = snapshot.docs
+            .map((doc) => Movie.fromMap(
+                  doc.data() as Map<String, dynamic>,
+                  docId: doc.id,
+                ))
+            .toList();
+
+        var filtered = allMovies;
+
+        if (keyword != null && keyword.trim().isNotEmpty) {
+          final lowerKeyword = keyword.toLowerCase().trim();
+          filtered = filtered
+              .where((m) => m.title.toLowerCase().contains(lowerKeyword))
+              .toList();
+        }
+        if (genre != null && genre.isNotEmpty) {
+          filtered = filtered
+              .where((m) => m.categories.contains(genre))
+              .toList();
+        }
+        if (type != null && type.isNotEmpty) {
+          filtered = filtered.where((m) => m.type == type).toList();
+        }
+        if (year != null && year.isNotEmpty) {
+          filtered = filtered.where((m) => m.year == year).toList();
+        }
+        if (rating != null && rating.isNotEmpty) {
+          final minRating = double.tryParse(rating) ?? 0.0;
+          filtered = filtered.where((m) {
+            final movieRating = double.tryParse(m.rating ?? '0') ?? 0.0;
+            return movieRating >= minRating;
+          }).toList();
+        }
+
+        // Default sort: latest first
+        filtered.sort((a, b) => (b.createdAt ?? DateTime(2000))
+            .compareTo(a.createdAt ?? DateTime(2000)));
+
+        return {
+          'movies': filtered.take(limit).toList(),
+          'hasMore': filtered.length > limit,
+          'lastDoc': null,
+        };
+      } catch (e2) {
+        debugPrint('searchMoviesWithFilters fallback also failed: $e2');
+        return {
+          'movies': <Movie>[],
+          'hasMore': false,
+          'lastDoc': null,
+        };
+      }
+    }
+  }
+
+  /// Get available years from movies collection
+  Future<List<String>> getAvailableYears() async {
+    try {
+      final snapshot = await _moviesRef.limit(500).get();
+      final years = <String>{};
+      for (final doc in snapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final year = data['year']?.toString();
+        if (year != null && year.isNotEmpty && year != 'null') {
+          years.add(year);
+        }
+      }
+      final sortedYears = years.toList()
+        ..sort((a, b) => b.compareTo(a)); // Descending: newest first
+      return sortedYears;
+    } catch (e) {
+      debugPrint('getAvailableYears failed: $e');
+      return [];
+    }
+  }
+
   /// Get all genres
   Future<List<TagAndGenres>> getGenres() async {
     final snapshot = await _genresRef.orderBy('name').get();
