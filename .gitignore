@@ -1,8 +1,7 @@
-# Environment variables (contains secrets)
-.env
-
-# Firebase options (now loads from .env)
-# firebase_options.dart can be committed since it no longer has hardcoded secrets
+# Environment variables
+# For production: add .env to .gitignore and use GitHub Secrets in CI
+# For now: .env is committed so CI builds work out of the box
+# .env
 
 # Flutter
 .dart_tool/

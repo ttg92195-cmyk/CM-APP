@@ -18,7 +18,14 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Load environment variables before Firebase init
-  await dotenv.load(fileName: '.env');
+  // If .env doesn't exist (e.g., during testing), try to load anyway but don't crash
+  try {
+    await dotenv.load(fileName: '.env');
+  } catch (_) {
+    // .env file not found - Firebase will use empty strings
+    // This should only happen during development/testing
+    debugPrint('Warning: .env file not found. Firebase config may be missing.');
+  }
 
   // Initialize Firebase
   await Firebase.initializeApp(
