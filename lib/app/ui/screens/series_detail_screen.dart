@@ -8,6 +8,7 @@ import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/core/services/bookmark_service.dart';
 import 'package:cm_movies/app/core/services/recent_service.dart';
+import 'package:cm_movies/app/ui/screens/category_page.dart';
 
 class SeriesDetailScreen extends StatefulWidget {
   final String slug;
@@ -221,7 +222,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
         headerSliverBuilder: (context, innerBoxIsScrolled) => [
           // Header: Poster + Title info (no backdrop)
           SliverAppBar(
-            expandedHeight: 195,
+            expandedHeight: 210,
             pinned: true,
             floating: false,
             backgroundColor: isDark ? const Color(0xFF0A0A0A) : bgColor,
@@ -242,31 +243,47 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
             ),
             leading: Padding(
               padding: const EdgeInsets.only(left: 8),
-              child: IconButton(
-                icon: Icon(Icons.arrow_back,
-                    color: isDark ? Colors.white : Colors.black87,
-                    size: 20),
-                onPressed: () => Navigator.pop(context),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              child: Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
+                  shape: BoxShape.circle,
+                ),
+                child: IconButton(
+                  icon: Icon(Icons.arrow_back,
+                      color: isDark ? Colors.white : Colors.black87,
+                      size: 18),
+                  onPressed: () => Navigator.pop(context),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                ),
               ),
             ),
             actions: [
               Padding(
                 padding: const EdgeInsets.only(right: 8),
-                child: IconButton(
-                  icon: Icon(
-                    _isBookmarked
-                        ? Icons.bookmark
-                        : Icons.bookmark_outline,
-                    color: _isBookmarked
-                        ? accentColor
-                        : (isDark ? Colors.white : Colors.black54),
-                    size: 20,
+                child: Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
+                    shape: BoxShape.circle,
                   ),
-                  onPressed: _toggleBookmark,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  child: IconButton(
+                    icon: Icon(
+                      _isBookmarked
+                          ? Icons.bookmark
+                          : Icons.bookmark_outline,
+                      color: _isBookmarked
+                          ? accentColor
+                          : (isDark ? Colors.white : Colors.black54),
+                      size: 18,
+                    ),
+                    onPressed: _toggleBookmark,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                  ),
                 ),
               ),
             ],
@@ -275,14 +292,14 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                 color: bgColor,
                 child: Padding(
                   padding: const EdgeInsets.only(
-                      left: 16, right: 16, top: 48, bottom: 12),
+                      left: 16, right: 16, top: 56, bottom: 12),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       // Poster thumbnail
                       Container(
-                        width: 105,
-                        height: 150,
+                        width: 110,
+                        height: 155,
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(8),
                           boxShadow: [
@@ -382,15 +399,51 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                                 ],
                               ),
                               const SizedBox(height: 8),
-                              // Category tags - plain text comma-separated
+                              // Category tags - tappable pill chips
                               if (detail.categories.isNotEmpty)
-                                Text(
-                                  detail.categories.take(3).join(', '),
-                                  style: TextStyle(
-                                    color: metaTextColor,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w500,
-                                  ),
+                                Wrap(
+                                  spacing: 6,
+                                  runSpacing: 4,
+                                  children: detail.categories.take(3).map((cat) {
+                                    return GestureDetector(
+                                      onTap: () {
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (_) => CategoryPage(
+                                              title: cat,
+                                              filterType: CategoryFilterType.genre,
+                                              filterValue: cat,
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 10, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: isDark
+                                              ? Colors.white.withOpacity(0.08)
+                                              : Colors.black.withOpacity(0.06),
+                                          borderRadius: BorderRadius.circular(14),
+                                          border: Border.all(
+                                            color: isDark
+                                                ? Colors.white12
+                                                : Colors.grey.shade300,
+                                            width: 0.5,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          cat,
+                                          style: TextStyle(
+                                            color: isDark ? Colors.white70 : Colors.black87,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }).toList(),
                                 ),
                             ],
                           ),
@@ -464,7 +517,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                     );
                     final textPainter = TextPainter(
                       text: textSpan,
-                      maxLines: 8,
+                      maxLines: 10,
                       textDirection: TextDirection.ltr,
                     );
                     textPainter.layout(maxWidth: constraints.maxWidth);
@@ -475,7 +528,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                       children: [
                         Text(
                           detail.overview!,
-                          maxLines: _overviewExpanded ? null : 8,
+                          maxLines: _overviewExpanded ? null : 10,
                           overflow: _overviewExpanded
                               ? TextOverflow.visible
                               : TextOverflow.ellipsis,
