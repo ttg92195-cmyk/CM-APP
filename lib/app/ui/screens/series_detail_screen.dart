@@ -221,7 +221,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
         headerSliverBuilder: (context, innerBoxIsScrolled) => [
           // Header: Poster + Title info (no backdrop)
           SliverAppBar(
-            expandedHeight: 220,
+            expandedHeight: 195,
             pinned: true,
             floating: false,
             backgroundColor: isDark ? const Color(0xFF0A0A0A) : bgColor,
@@ -275,14 +275,14 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                 color: bgColor,
                 child: Padding(
                   padding: const EdgeInsets.only(
-                      left: 16, right: 16, top: 56, bottom: 16),
+                      left: 16, right: 16, top: 48, bottom: 12),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       // Poster thumbnail
                       Container(
-                        width: 110,
-                        height: 160,
+                        width: 105,
+                        height: 150,
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(8),
                           boxShadow: [
@@ -439,6 +439,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
     Color accentColor,
   ) {
     return ListView(
+      physics: const ClampingScrollPhysics(),
       padding: const EdgeInsets.only(bottom: 30),
       children: [
         // Overview Section
@@ -463,7 +464,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                     );
                     final textPainter = TextPainter(
                       text: textSpan,
-                      maxLines: 6,
+                      maxLines: 8,
                       textDirection: TextDirection.ltr,
                     );
                     textPainter.layout(maxWidth: constraints.maxWidth);
@@ -474,7 +475,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                       children: [
                         Text(
                           detail.overview!,
-                          maxLines: _overviewExpanded ? null : 6,
+                          maxLines: _overviewExpanded ? null : 8,
                           overflow: _overviewExpanded
                               ? TextOverflow.visible
                               : TextOverflow.ellipsis,
@@ -649,6 +650,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
     }
 
     return ListView(
+      physics: const ClampingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 30),
       children: [
         Text('Download Options',
@@ -1033,6 +1035,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
     Color cardBgColor,
   ) {
     return ListView(
+      physics: const ClampingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 30),
       children: [
         Text('You may also like',
