@@ -61,11 +61,24 @@ class FirebaseService {
     }
   }
 
-  // Login as Admin (special email pattern)
+  // Login as Admin - verifies admin role from Firestore after auth
   Future<UserCredential?> loginAsAdmin(String username, String password) async {
     try {
-      // Admin uses a special email: admin@cm-movies.app
-      final adminEmail = 'admin@cm-movies.app';
+      // Resolve admin email from Firestore config/admin_emails document
+      String adminEmail;
+      try {
+        final configDoc = await _firestore.collection('config').doc('admin_emails').get();
+        if (configDoc.exists) {
+          final mappings = Map<String, String>.from(configDoc.data()?['mappings'] ?? {});
+          adminEmail = mappings[username.toLowerCase()] ?? '$username@cmmovies.app';
+        } else {
+          adminEmail = '$username@cmmovies.app';
+        }
+      } catch (_) {
+        // Fallback to standard email format if Firestore config is unavailable
+        adminEmail = '${username.toLowerCase()}@cmmovies.app';
+      }
+
       final credential = await _auth.signInWithEmailAndPassword(
         email: adminEmail,
         password: password,

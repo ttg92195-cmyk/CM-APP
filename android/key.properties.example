@@ -1,0 +1,8 @@
+# Release signing configuration
+# Copy this file to key.properties and fill in your values
+# NEVER commit key.properties or your .jks/.keystore files to git!
+
+storePassword=YOUR_STORE_PASSWORD
+keyPassword=YOUR_KEY_PASSWORD
+keyAlias=YOUR_KEY_ALIAS
+storeFile=/path/to/your/keystore.jks

@@ -30,15 +30,30 @@ class AppConfig extends ChangeNotifier {
   bool get isCurrentUserAdmin => _currentUser?['isAdmin'] == true;
   bool get isLoadingAuth => _isLoadingAuth;
 
-  // Admin email mapping - maps admin username to their actual Firebase Auth email
-  static const Map<String, String> _adminEmailMap = {
-    'chitminzaw': 'guyg20985@gmail.com',
-  };
+  // Cached admin email map loaded from Firestore (config/admin_emails)
+  Map<String, String> _adminEmailMap = {};
+  bool _adminEmailsLoaded = false;
+
+  // Load admin email mappings from Firestore instead of hardcoding in client
+  Future<void> _loadAdminEmailMap() async {
+    if (_adminEmailsLoaded) return;
+    try {
+      final doc = await _firestore.collection('config').doc('admin_emails').get();
+      if (doc.exists) {
+        final data = doc.data()!;
+        _adminEmailMap = Map<String, String>.from(data['mappings'] ?? {});
+      }
+    } catch (e) {
+      debugPrint('Error loading admin email map: $e');
+    }
+    _adminEmailsLoaded = true;
+  }
 
   // Helper to convert username to email format for Firebase Auth
-  // If username is an admin, use their mapped email; otherwise use internal email
-  String _usernameToEmail(String username) {
+  // Checks Firestore config for admin email mappings; otherwise uses internal email
+  Future<String> _usernameToEmail(String username) async {
     final lowerUsername = username.toLowerCase();
+    await _loadAdminEmailMap();
     if (_adminEmailMap.containsKey(lowerUsername)) {
       return _adminEmailMap[lowerUsername]!;
     }
@@ -116,6 +131,8 @@ class AppConfig extends ChangeNotifier {
             username = email.replaceAll('@cmmovies.app', '');
           } else {
             // For external emails (like gmail), check if admin
+            // Look up admin username from cached admin email map
+            await _loadAdminEmailMap();
             final adminEntry = _adminEmailMap.entries.where((e) => e.value.toLowerCase() == email.toLowerCase()).toList();
             username = adminEntry.isNotEmpty ? adminEntry.first.key : email.split('@').first;
           }
@@ -180,7 +197,7 @@ class AppConfig extends ChangeNotifier {
   // Register a new user with Firebase Auth
   Future<bool> registerUser(String username, String password) async {
     try {
-      final email = _usernameToEmail(username);
+      final email = await _usernameToEmail(username);
 
       // Create user in Firebase Auth
       final userCredential = await _auth.createUserWithEmailAndPassword(
@@ -227,7 +244,7 @@ class AppConfig extends ChangeNotifier {
   // Login user with Firebase Auth (regular or admin)
   Future<bool> loginUser(String username, String password) async {
     try {
-      final email = _usernameToEmail(username);
+      final email = await _usernameToEmail(username);
 
       // Sign in with Firebase Auth
       final userCredential = await _auth.signInWithEmailAndPassword(
