@@ -226,20 +226,28 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
             floating: false,
             backgroundColor: isDark ? const Color(0xFF0A0A0A) : bgColor,
             centerTitle: true,
-            title: Text(
-              detail.title,
-              style: TextStyle(
-                color: isDark ? Colors.white : Colors.black87,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
+            title: AnimatedOpacity(
+              opacity: innerBoxIsScrolled ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 200),
+              child: Text(
+                detail.title,
+                style: TextStyle(
+                  color: isDark ? Colors.white : Colors.black87,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
             ),
             leading: Padding(
               padding: const EdgeInsets.only(left: 8),
               child: IconButton(
-                icon: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
+                icon: Icon(Icons.arrow_back,
+                    color: innerBoxIsScrolled
+                        ? (isDark ? Colors.white : Colors.black87)
+                        : Colors.white,
+                    size: 20),
                 onPressed: () => Navigator.pop(context),
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -253,7 +261,11 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                     _isBookmarked
                         ? Icons.bookmark
                         : Icons.bookmark_outline,
-                    color: _isBookmarked ? accentColor : Colors.white,
+                    color: _isBookmarked
+                        ? accentColor
+                        : (innerBoxIsScrolled
+                            ? (isDark ? Colors.white : Colors.black54)
+                            : Colors.white),
                     size: 20,
                   ),
                   onPressed: _toggleBookmark,
@@ -289,7 +301,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                               color: isDark
                                   ? const Color(0xFF1A1A2E)
                                   : Colors.grey.shade400)),
-                  // Gradient overlay - adapt to light/dark mode
+                  // Gradient overlay - dark gradient for both modes
                   Container(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
@@ -298,12 +310,12 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                         colors: isDark
                             ? [
                                 Colors.transparent,
-                                Colors.black.withOpacity(0.55),
+                                Colors.black.withOpacity(0.6),
                                 bgColor,
                               ]
                             : [
-                                Colors.transparent,
-                                Colors.black.withOpacity(0.2),
+                                Colors.black.withOpacity(0.05),
+                                Colors.black.withOpacity(0.45),
                                 bgColor,
                               ],
                         stops: const [0.0, 0.55, 1.0],
@@ -313,7 +325,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                   // Floating Poster + Title info
                   Positioned(
                     left: 20,
-                    bottom: 16,
+                    bottom: 8,
                     right: 16,
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.end,
@@ -393,11 +405,11 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                                     if (detail.year != null &&
                                         detail.year!.isNotEmpty) ...[
                                       Icon(Icons.calendar_today,
-                                          size: 13, color: metaTextColor),
+                                          size: 13, color: Colors.white70),
                                       const SizedBox(width: 4),
                                       Text(detail.year!,
-                                          style: TextStyle(
-                                              color: metaTextColor,
+                                          style: const TextStyle(
+                                              color: Colors.white70,
                                               fontSize: 12)),
                                       const SizedBox(width: 10),
                                     ],
@@ -415,12 +427,12 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                                     ],
                                     if (detail.duration != null &&
                                         detail.duration!.isNotEmpty) ...[
-                                      Icon(Icons.access_time,
-                                          size: 13, color: metaTextColor),
+                                      const Icon(Icons.access_time,
+                                          size: 13, color: Colors.white70),
                                       const SizedBox(width: 4),
                                       Text('${detail.duration} min',
-                                          style: TextStyle(
-                                              color: metaTextColor,
+                                          style: const TextStyle(
+                                              color: Colors.white70,
                                               fontSize: 12)),
                                     ],
                                   ],
@@ -506,10 +518,16 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
         // Overview Section
         if (detail.overview != null && detail.overview!.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Text('Overview',
+                    style: TextStyle(
+                        color: bodyTextColor,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600)),
+                const SizedBox(height: 6),
                 LayoutBuilder(
                   builder: (context, constraints) {
                     final textSpan = TextSpan(
@@ -1135,7 +1153,12 @@ class _TabBarDelegate extends SliverPersistentHeaderDelegate {
   Widget build(
       BuildContext context, double shrinkOffset, bool overlapsContent) {
     return Container(
-      color: isDark ? const Color(0xFF0A0A0A) : const Color(0xFFF5F5F5),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF0A0A0A) : const Color(0xFFF5F5F5),
+        border: Border(
+          bottom: BorderSide(color: Colors.transparent, width: 0),
+        ),
+      ),
       child: TabBar(
         controller: tabController,
         labelColor: accentColor,
