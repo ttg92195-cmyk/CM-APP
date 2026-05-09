@@ -839,7 +839,6 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                   iconColor: accentColor,
                   collapsedBackgroundColor: Colors.transparent,
                   backgroundColor: Colors.transparent,
-                  dividerColor: Colors.transparent,
                   leading: Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
@@ -896,7 +895,6 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                           iconColor: accentColor,
                           collapsedBackgroundColor: Colors.transparent,
                           backgroundColor: Colors.transparent,
-                          dividerColor: Colors.transparent,
                           leading: Icon(Icons.play_circle_outline,
                               color: isDark ? Colors.white54 : Colors.black54,
                               size: 20),
@@ -1046,7 +1044,6 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
             iconColor: accentColor,
             collapsedBackgroundColor: Colors.transparent,
             backgroundColor: Colors.transparent,
-            dividerColor: Colors.transparent,
             leading: Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
