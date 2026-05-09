@@ -228,22 +228,27 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
             floating: false,
             backgroundColor: isDark ? const Color(0xFF0A0A0A) : bgColor,
             leading: Padding(
-              padding: const EdgeInsets.only(left: 4),
+              padding: const EdgeInsets.only(left: 6),
               child: Container(
+                width: 34,
+                height: 34,
                 decoration: BoxDecoration(
                   color: Colors.black.withOpacity(0.35),
                   shape: BoxShape.circle,
                 ),
                 child: IconButton(
-                  icon: const Icon(Icons.arrow_back, color: Colors.white),
+                  icon: const Icon(Icons.arrow_back, color: Colors.white, size: 18),
                   onPressed: () => Navigator.pop(context),
+                  padding: EdgeInsets.zero,
                 ),
               ),
             ),
             actions: [
               Padding(
-                padding: const EdgeInsets.only(right: 4),
+                padding: const EdgeInsets.only(right: 6),
                 child: Container(
+                  width: 34,
+                  height: 34,
                   decoration: BoxDecoration(
                     color: Colors.black.withOpacity(0.35),
                     shape: BoxShape.circle,
@@ -251,11 +256,13 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                   child: IconButton(
                     icon: Icon(
                       _isBookmarked
-                          ? Icons.favorite
-                          : Icons.favorite_border,
-                      color: _isBookmarked ? Colors.red : Colors.white,
+                          ? Icons.bookmark
+                          : Icons.bookmark_outline,
+                      color: _isBookmarked ? accentColor : Colors.white,
+                      size: 18,
                     ),
                     onPressed: _toggleBookmark,
+                    padding: EdgeInsets.zero,
                   ),
                 ),
               ),
@@ -287,18 +294,24 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                               color: isDark
                                   ? const Color(0xFF1A1A2E)
                                   : Colors.grey.shade400)),
-                  // Gradient overlay - darker at bottom for tab bar visibility
+                  // Gradient overlay - adapt to light/dark mode
                   Container(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.black.withOpacity(0.2),
-                          Colors.black.withOpacity(0.85),
-                          bgColor,
-                        ],
-                        stops: const [0.0, 0.65, 1.0],
+                        colors: isDark
+                            ? [
+                                Colors.black.withOpacity(0.1),
+                                Colors.black.withOpacity(0.65),
+                                bgColor,
+                              ]
+                            : [
+                                Colors.white.withOpacity(0.0),
+                                Colors.white.withOpacity(0.4),
+                                bgColor,
+                              ],
+                        stops: const [0.0, 0.6, 1.0],
                       ),
                     ),
                   ),
@@ -405,21 +418,17 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                                               fontWeight: FontWeight.w600)),
                                       const SizedBox(width: 10),
                                     ],
-                                    // Series badge
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 8, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: accentColor,
-                                        borderRadius:
-                                            BorderRadius.circular(4),
-                                      ),
-                                      child: const Text('Series',
+                                    // Duration instead of Series badge
+                                    if (detail.duration != null &&
+                                        detail.duration!.isNotEmpty) ...[
+                                      Icon(Icons.access_time,
+                                          size: 13, color: metaTextColor),
+                                      const SizedBox(width: 4),
+                                      Text('${detail.duration} min',
                                           style: TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.w600)),
-                                    ),
+                                              color: metaTextColor,
+                                              fontSize: 12)),
+                                    ],
                                   ],
                                 ),
                                 const SizedBox(height: 6),
@@ -1418,15 +1427,15 @@ class _SeriesTabBarDelegate extends SliverPersistentHeaderDelegate {
         controller: tabController,
         labelColor: accentColor,
         unselectedLabelColor: isDark ? Colors.grey.shade500 : Colors.grey.shade600,
-        indicatorColor: accentColor,
+        indicatorColor: Colors.transparent,
         indicatorSize: TabBarIndicatorSize.label,
-        indicatorWeight: 3,
+        indicatorWeight: 0,
         labelStyle:
             const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
         unselectedLabelStyle:
             const TextStyle(fontSize: 14, fontWeight: FontWeight.normal),
         tabs: const [
-          Tab(icon: Icon(Icons.info_outline, size: 20), text: 'Detail'),
+          Tab(icon: Icon(Icons.info_outline, size: 22)),
           Tab(icon: Icon(Icons.file_download_outlined, size: 20), text: 'Download'),
           Tab(icon: Icon(Icons.explore_outlined, size: 20), text: 'Explore'),
         ],
