@@ -28,7 +28,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
   final BookmarkService _bookmarkService = BookmarkService();
   final WatchlistService _watchlistService = WatchlistService();
   final RecentService _recentService = RecentService();
-  final DownloadManagerService _downloadManager = DownloadManagerService();
+  final DownloadManagerService _downloadManager = DownloadManagerService.instance;
 
   MovieDetail? _movieDetail;
   bool _isLoading = true;
@@ -46,6 +46,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _downloadManager.init(); // Ensure download state is loaded (singleton: only runs once)
     _loadMovieDetail();
   }
 

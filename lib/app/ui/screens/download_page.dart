@@ -12,7 +12,7 @@ class DownloadPage extends StatefulWidget {
 }
 
 class _DownloadPageState extends State<DownloadPage> {
-  final DownloadManagerService _downloadManager = DownloadManagerService();
+  final DownloadManagerService _downloadManager = DownloadManagerService.instance;
 
   @override
   void initState() {

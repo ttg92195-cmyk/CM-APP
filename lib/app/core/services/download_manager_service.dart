@@ -140,12 +140,27 @@ class DownloadTask {
 }
 
 /// Download Manager Service - handles all download operations
+/// Uses singleton pattern so all screens share the same download state
 class DownloadManagerService extends ChangeNotifier {
+  static DownloadManagerService? _instance;
   static const String _tasksKey = 'download_tasks';
   final Dio _dio = Dio();
 
   final Map<String, CancelToken> _cancelTokens = {};
   List<DownloadTask> _tasks = [];
+  bool _isInitialized = false;
+
+  /// Singleton factory constructor - always returns the same instance
+  factory DownloadManagerService() {
+    _instance ??= DownloadManagerService._internal();
+    return _instance!;
+  }
+
+  /// Private internal constructor
+  DownloadManagerService._internal();
+
+  /// Convenience getter for the singleton instance
+  static DownloadManagerService get instance => DownloadManagerService();
 
   List<DownloadTask> get tasks => _tasks;
   List<DownloadTask> get activeTasks => _tasks.where((t) =>
@@ -153,8 +168,10 @@ class DownloadManagerService extends ChangeNotifier {
   List<DownloadTask> get completedTasks => _tasks.where((t) =>
       t.status == DownloadStatus.completed).toList();
 
-  /// Initialize - load saved tasks
+  /// Initialize - load saved tasks (only runs once)
   Future<void> init() async {
+    if (_isInitialized) return;
+    _isInitialized = true;
     await _loadTasks();
   }
 

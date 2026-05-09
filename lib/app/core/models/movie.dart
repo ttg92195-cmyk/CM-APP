@@ -65,6 +65,7 @@ class Movie {
       'categories': categories,
       'type': type,
       'isTrending': isTrending,
+      'createdAt': createdAt?.toIso8601String(),
     };
   }
 
