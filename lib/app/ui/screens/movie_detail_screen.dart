@@ -222,7 +222,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
         headerSliverBuilder: (context, innerBoxIsScrolled) => [
           // Header: Poster + Title info (no backdrop)
           SliverAppBar(
-            expandedHeight: 210,
+            expandedHeight: 235,
             pinned: true,
             floating: false,
             backgroundColor: isDark ? const Color(0xFF0A0A0A) : bgColor,
@@ -292,7 +292,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                 color: bgColor,
                 child: Padding(
                   padding: const EdgeInsets.only(
-                      left: 16, right: 16, top: 56, bottom: 12),
+                      left: 16, right: 16, top: 60, bottom: 8),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -464,19 +464,22 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
             ),
           ),
         ],
-        body: TabBarView(
-          controller: _tabController,
-          children: [
-            // ===== Detail Tab =====
-            _buildDetailTab(
-                detail, isDark, bodyTextColor, metaTextColor, accentColor),
-            // ===== Download Tab =====
-            _buildDownloadTab(
-                detail, isDark, accentColor, cardBgColor, metaTextColor, bodyTextColor),
-            // ===== Explore Tab =====
-            _buildExploreTab(
-                isDark, accentColor, metaTextColor, cardBgColor),
-          ],
+        body: Container(
+          color: bgColor,
+          child: TabBarView(
+            controller: _tabController,
+            children: [
+              // ===== Detail Tab =====
+              _buildDetailTab(
+                  detail, isDark, bodyTextColor, metaTextColor, accentColor),
+              // ===== Download Tab =====
+              _buildDownloadTab(
+                  detail, isDark, accentColor, cardBgColor, metaTextColor, bodyTextColor),
+              // ===== Explore Tab =====
+              _buildExploreTab(
+                  isDark, accentColor, metaTextColor, cardBgColor),
+            ],
+          ),
         ),
       ),
     );
@@ -492,7 +495,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
   ) {
     return ListView(
       physics: const ClampingScrollPhysics(),
-      padding: const EdgeInsets.only(bottom: 30),
+      padding: const EdgeInsets.only(bottom: 8),
       children: [
         // Overview Section
         if (detail.overview != null && detail.overview!.isNotEmpty)
@@ -572,7 +575,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
             ),
           ),
 
-        const SizedBox(height: 12),
+        const SizedBox(height: 6),
 
         // Cast Section
         if (detail.casts.isNotEmpty)
@@ -586,7 +589,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                         color: bodyTextColor,
                         fontSize: 14,
                         fontWeight: FontWeight.w600)),
-                const SizedBox(height: 12),
+                const SizedBox(height: 8),
                 SizedBox(
                   height: 110,
                   child: ListView.builder(
@@ -707,7 +710,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
 
     return ListView(
       physics: const ClampingScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 30),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
       children: [
         Text('Download Options',
             style: TextStyle(
@@ -908,7 +911,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
   ) {
     return ListView(
       physics: const ClampingScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 30),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
       children: [
         Text('You may also like',
             style: TextStyle(
