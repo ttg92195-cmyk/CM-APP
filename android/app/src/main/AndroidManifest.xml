@@ -2,6 +2,12 @@
 
     <!-- Internet permission for API calls -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Notification permission for Android 13+ -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Boot receiver for rescheduling notifications -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <!-- Vibrate for notifications -->
+    <uses-permission android:name="android.permission.VIBRATE"/>
 
     <application
         android:label="CM Movies"
@@ -31,5 +37,31 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- FCM default notification channel -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="new_movies" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_name"
+            android:value="New Movies" />
+        <!-- FCM default icon (uses app icon) -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@mipmap/ic_launcher" />
+        <!-- FCM default color -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/launch_background" />
+
+        <!-- Firebase Messaging Service -->
+        <service
+            android:name="com.google.firebase.messaging.FirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
     </application>
 </manifest>

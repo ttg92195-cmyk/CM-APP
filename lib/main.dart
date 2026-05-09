@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
+import 'package:cm_movies/app/core/services/notification_service.dart';
 import 'package:cm_movies/app/ui/home/home_page.dart';
 import 'firebase_options.dart';
 
@@ -13,6 +15,13 @@ const Color kDarkBg = Color(0xFF0A0A0A);
 const Color kDarkSurface = Color(0xFF121212);
 const Color kDarkCard = Color(0xFF1E1E1E);
 
+// Background message handler (must be top-level, before main)
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  debugPrint('📱 Background FCM message: ${message.messageId}');
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -20,6 +29,13 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // Register background message handler
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+  // Initialize Notification Service
+  final notificationService = NotificationService();
+  await notificationService.init();
 
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
@@ -32,8 +48,11 @@ void main() async {
     DeviceOrientation.portraitDown,
   ]);
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => AppConfig(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => AppConfig()),
+        ChangeNotifierProvider.value(value: notificationService),
+      ],
       child: const CMMoviesApp(),
     ),
   );
