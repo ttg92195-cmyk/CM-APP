@@ -210,8 +210,6 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
     final isDark = theme.brightness == Brightness.dark;
 
     final accentColor = const Color(0xFFE50914);
-    final sectionHeaderColor =
-        isDark ? const Color(0xFFF5C518) : const Color(0xFFB8960F);
     final bodyTextColor = isDark ? Colors.white70 : Colors.black87;
     final metaTextColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
     final bgColor = isDark ? const Color(0xFF0A0A0A) : const Color(0xFFF5F5F5);
@@ -223,47 +221,44 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
         headerSliverBuilder: (context, innerBoxIsScrolled) => [
           // Header: Backdrop + Poster overlay
           SliverAppBar(
-            expandedHeight: 280,
+            expandedHeight: 240,
             pinned: true,
             floating: false,
             backgroundColor: isDark ? const Color(0xFF0A0A0A) : bgColor,
+            centerTitle: true,
+            title: Text(
+              detail.title,
+              style: TextStyle(
+                color: isDark ? Colors.white : Colors.black87,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
             leading: Padding(
-              padding: const EdgeInsets.only(left: 6),
-              child: Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.35),
-                  shape: BoxShape.circle,
-                ),
-                child: IconButton(
-                  icon: const Icon(Icons.arrow_back, color: Colors.white, size: 18),
-                  onPressed: () => Navigator.pop(context),
-                  padding: EdgeInsets.zero,
-                ),
+              padding: const EdgeInsets.only(left: 8),
+              child: IconButton(
+                icon: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
+                onPressed: () => Navigator.pop(context),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               ),
             ),
             actions: [
               Padding(
-                padding: const EdgeInsets.only(right: 6),
-                child: Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.35),
-                    shape: BoxShape.circle,
+                padding: const EdgeInsets.only(right: 8),
+                child: IconButton(
+                  icon: Icon(
+                    _isBookmarked
+                        ? Icons.bookmark
+                        : Icons.bookmark_outline,
+                    color: _isBookmarked ? accentColor : Colors.white,
+                    size: 20,
                   ),
-                  child: IconButton(
-                    icon: Icon(
-                      _isBookmarked
-                          ? Icons.bookmark
-                          : Icons.bookmark_outline,
-                      color: _isBookmarked ? accentColor : Colors.white,
-                      size: 18,
-                    ),
-                    onPressed: _toggleBookmark,
-                    padding: EdgeInsets.zero,
-                  ),
+                  onPressed: _toggleBookmark,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                 ),
               ),
             ],
@@ -302,16 +297,16 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                         end: Alignment.bottomCenter,
                         colors: isDark
                             ? [
-                                Colors.black.withOpacity(0.1),
-                                Colors.black.withOpacity(0.65),
+                                Colors.transparent,
+                                Colors.black.withOpacity(0.55),
                                 bgColor,
                               ]
                             : [
-                                Colors.white.withOpacity(0.0),
-                                Colors.white.withOpacity(0.4),
+                                Colors.transparent,
+                                Colors.black.withOpacity(0.2),
                                 bgColor,
                               ],
-                        stops: const [0.0, 0.6, 1.0],
+                        stops: const [0.0, 0.55, 1.0],
                       ),
                     ),
                   ),
@@ -485,7 +480,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
           children: [
             // ===== Detail Tab =====
             _buildDetailTab(
-                detail, isDark, sectionHeaderColor, bodyTextColor, metaTextColor, cardBgColor),
+                detail, isDark, bodyTextColor, metaTextColor, accentColor),
             // ===== Download Tab =====
             _buildDownloadTab(
                 detail, isDark, accentColor, cardBgColor, metaTextColor, bodyTextColor),
@@ -502,10 +497,9 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
   Widget _buildDetailTab(
     MovieDetail detail,
     bool isDark,
-    Color sectionHeaderColor,
     Color bodyTextColor,
     Color metaTextColor,
-    Color cardBgColor,
+    Color accentColor,
   ) {
     return ListView(
       padding: const EdgeInsets.only(bottom: 30),
@@ -513,26 +507,20 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
         // Overview Section
         if (detail.overview != null && detail.overview!.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Overview',
-                    style: TextStyle(
-                        color: sectionHeaderColor,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
                 LayoutBuilder(
                   builder: (context, constraints) {
                     final textSpan = TextSpan(
                       text: detail.overview!,
                       style:
-                          TextStyle(fontSize: 14, height: 1.6, color: bodyTextColor),
+                          TextStyle(fontSize: 13, height: 1.5, color: bodyTextColor),
                     );
                     final textPainter = TextPainter(
                       text: textSpan,
-                      maxLines: 3,
+                      maxLines: 2,
                       textDirection: TextDirection.ltr,
                     );
                     textPainter.layout(maxWidth: constraints.maxWidth);
@@ -543,19 +531,19 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                       children: [
                         Text(
                           detail.overview!,
-                          maxLines: _overviewExpanded ? null : 3,
+                          maxLines: _overviewExpanded ? null : 2,
                           overflow: _overviewExpanded
                               ? TextOverflow.visible
                               : TextOverflow.ellipsis,
                           style: TextStyle(
-                              fontSize: 14, height: 1.6, color: bodyTextColor),
+                              fontSize: 13, height: 1.5, color: bodyTextColor),
                         ),
                         if (isOverflow)
                           GestureDetector(
                             onTap: () => setState(
                                 () => _overviewExpanded = !_overviewExpanded),
                             child: Padding(
-                              padding: const EdgeInsets.only(top: 4),
+                              padding: const EdgeInsets.only(top: 2),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
@@ -565,7 +553,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                                         : 'View More',
                                     style: TextStyle(
                                       color: const Color(0xFFE50914),
-                                      fontSize: 13,
+                                      fontSize: 12,
                                       fontWeight: FontWeight.w500,
                                     ),
                                   ),
@@ -574,7 +562,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                                         ? Icons.keyboard_arrow_up
                                         : Icons.keyboard_arrow_down,
                                     color: const Color(0xFFE50914),
-                                    size: 18,
+                                    size: 16,
                                   ),
                                 ],
                               ),
@@ -588,67 +576,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
             ),
           ),
 
-        const SizedBox(height: 20),
-
-        // Technical Details Section
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Details',
-                  style: TextStyle(
-                      color: sectionHeaderColor,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold)),
-              const SizedBox(height: 10),
-              Container(
-                decoration: BoxDecoration(
-                  color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: isDark ? Colors.white12 : Colors.grey.shade300,
-                    width: 0.5,
-                  ),
-                ),
-                child: Column(
-                  children: [
-                    if (detail.resolution != null &&
-                        detail.resolution!.isNotEmpty)
-                      _buildDetailRow('Quality', detail.resolution!, isDark),
-                    if (detail.resolution != null &&
-                        detail.resolution!.isNotEmpty)
-                      _buildDivider(isDark),
-                    if (detail.categories.isNotEmpty)
-                      _buildDetailRow(
-                          'Genre', detail.categories.join(', '), isDark),
-                    if (detail.categories.isNotEmpty)
-                      _buildDivider(isDark),
-                    if (detail.duration != null && detail.duration!.isNotEmpty)
-                      _buildDetailRow(
-                          'Duration', '${detail.duration} min', isDark),
-                    if (detail.duration != null && detail.duration!.isNotEmpty)
-                      _buildDivider(isDark),
-                    _buildDetailRow('Subtitle', 'Myanmar Subtitle', isDark),
-                    _buildDivider(isDark),
-                    if (detail.seasons.isNotEmpty)
-                      _buildDetailRow(
-                          'Seasons', '${detail.seasons.length} Season(s)', isDark),
-                    if (detail.seasons.isEmpty)
-                      _buildDetailRow('Seasons', '-', isDark),
-                    if (detail.directors.isNotEmpty) ...[
-                      _buildDivider(isDark),
-                      _buildDetailRow(
-                          'Director', detail.directors.join(', '), isDark),
-                    ],
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 20),
+        const SizedBox(height: 12),
 
         // Cast Section
         if (detail.casts.isNotEmpty)
@@ -659,9 +587,9 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
               children: [
                 Text('Casts',
                     style: TextStyle(
-                        color: sectionHeaderColor,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold)),
+                        color: bodyTextColor,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600)),
                 const SizedBox(height: 12),
                 SizedBox(
                   height: 110,
@@ -745,40 +673,6 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
             ),
           ),
       ],
-    );
-  }
-
-  Widget _buildDetailRow(String label, String value, bool isDark) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 80,
-            child: Text(label,
-                style: TextStyle(
-                    color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500)),
-          ),
-          Expanded(
-            child: Text(value,
-                style: TextStyle(
-                    color: isDark ? Colors.white : Colors.black87,
-                    fontSize: 13)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDivider(bool isDark) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      child: Divider(
-          height: 1,
-          color: isDark ? Colors.white10 : Colors.grey.shade200),
     );
   }
 
@@ -1427,15 +1321,13 @@ class _SeriesTabBarDelegate extends SliverPersistentHeaderDelegate {
         controller: tabController,
         labelColor: accentColor,
         unselectedLabelColor: isDark ? Colors.grey.shade500 : Colors.grey.shade600,
-        indicatorColor: Colors.transparent,
-        indicatorSize: TabBarIndicatorSize.label,
-        indicatorWeight: 0,
+        indicator: const BoxDecoration(),
         labelStyle:
             const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
         unselectedLabelStyle:
             const TextStyle(fontSize: 14, fontWeight: FontWeight.normal),
         tabs: const [
-          Tab(icon: Icon(Icons.info_outline, size: 22)),
+          Tab(icon: Icon(Icons.info_outline, size: 20), text: 'Detail'),
           Tab(icon: Icon(Icons.file_download_outlined, size: 20), text: 'Download'),
           Tab(icon: Icon(Icons.explore_outlined, size: 20), text: 'Explore'),
         ],
