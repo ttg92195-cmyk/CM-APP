@@ -222,9 +222,10 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
         headerSliverBuilder: (context, innerBoxIsScrolled) => [
           // Header: Poster + Title info (no backdrop)
           SliverAppBar(
-            expandedHeight: 235,
+            expandedHeight: MediaQuery.of(context).padding.top + kToolbarHeight + 172,
             pinned: true,
             floating: false,
+            leadingWidth: 46,
             backgroundColor: isDark ? const Color(0xFF0A0A0A) : bgColor,
             centerTitle: true,
             title: AnimatedOpacity(
@@ -241,11 +242,9 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            leading: Padding(
-              padding: const EdgeInsets.only(left: 8),
-              child: Container(
-                width: 34,
-                height: 34,
+            leading: Container(
+                width: 32,
+                height: 32,
                 decoration: BoxDecoration(
                   color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
                   shape: BoxShape.circle,
@@ -256,16 +255,15 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                       size: 18),
                   onPressed: () => Navigator.pop(context),
                   padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                 ),
               ),
-            ),
             actions: [
               Padding(
                 padding: const EdgeInsets.only(right: 8),
                 child: Container(
-                  width: 34,
-                  height: 34,
+                  width: 32,
+                  height: 32,
                   decoration: BoxDecoration(
                     color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
                     shape: BoxShape.circle,
@@ -282,7 +280,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                     ),
                     onPressed: _toggleBookmark,
                     padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                   ),
                 ),
               ),
@@ -291,8 +289,8 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
               background: Container(
                 color: bgColor,
                 child: Padding(
-                  padding: const EdgeInsets.only(
-                      left: 16, right: 16, top: 60, bottom: 8),
+                  padding: EdgeInsets.only(
+                      left: 16, right: 16, top: MediaQuery.of(context).padding.top + kToolbarHeight + 8, bottom: 8),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
