@@ -855,23 +855,45 @@ class FirestoreContentService {
     if (existingSnapshot.docs.isNotEmpty) {
       // A document with this slug already exists - update it instead
       final existingDoc = existingSnapshot.docs.first;
+      final existingData = existingDoc.data() as Map<String, dynamic>;
       debugPrint('Slug "$slug" already exists (doc: ${existingDoc.id}), updating instead of creating duplicate');
       data['updatedAt'] = FieldValue.serverTimestamp();
       // Don't overwrite createdAt if document exists
       data.remove('createdAt');
-      await existingDoc.reference.update(data);
 
-      // Update genre/tag counts for new selections
-      if (data.containsKey('categories')) {
-        for (final genreName in data['categories'] as List) {
-          await _incrementCount(_genresRef, genreName.toString());
+      // Calculate category/tag count changes (same logic as updateMovie)
+      final oldCategories = List<String>.from(existingData['categories'] ?? []);
+      final oldTags = List<String>.from(existingData['tags'] ?? []);
+      final newCategories = List<String>.from(data['categories'] ?? oldCategories);
+      final newTags = List<String>.from(data['tags'] ?? oldTags);
+
+      // Decrement old categories that are removed
+      for (final cat in oldCategories) {
+        if (!newCategories.contains(cat)) {
+          await _decrementCount(_genresRef, cat);
         }
       }
-      if (data.containsKey('tags')) {
-        for (final tagName in data['tags'] as List) {
-          await _incrementCount(_tagsRef, tagName.toString());
+      // Increment new categories that are added
+      for (final cat in newCategories) {
+        if (!oldCategories.contains(cat)) {
+          await _incrementCount(_genresRef, cat);
         }
       }
+
+      // Decrement old tags that are removed
+      for (final tag in oldTags) {
+        if (!newTags.contains(tag)) {
+          await _decrementCount(_tagsRef, tag);
+        }
+      }
+      // Increment new tags that are added
+      for (final tag in newTags) {
+        if (!oldTags.contains(tag)) {
+          await _incrementCount(_tagsRef, tag);
+        }
+      }
+
+      await existingDoc.reference.update(data);
 
       return existingDoc.id;
     }

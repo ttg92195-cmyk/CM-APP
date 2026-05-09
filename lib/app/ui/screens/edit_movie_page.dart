@@ -19,10 +19,13 @@ class _EditMoviePageState extends State<EditMoviePage> {
   final _titleController = TextEditingController();
   final _yearController = TextEditingController();
   final _posterController = TextEditingController();
+  final _backdropController = TextEditingController();
   final _overviewController = TextEditingController();
   final _ratingController = TextEditingController();
   final _resolutionController = TextEditingController();
   final _durationController = TextEditingController();
+
+  String? _existingBackdrop; // Preserve original backdrop if user leaves field empty
 
   String _type = 'movie';
   bool _isAdult = false;
@@ -51,6 +54,7 @@ class _EditMoviePageState extends State<EditMoviePage> {
     _titleController.dispose();
     _yearController.dispose();
     _posterController.dispose();
+    _backdropController.dispose();
     _overviewController.dispose();
     _ratingController.dispose();
     _resolutionController.dispose();
@@ -76,6 +80,8 @@ class _EditMoviePageState extends State<EditMoviePage> {
           _titleController.text = detail.title;
           _yearController.text = detail.year ?? '';
           _posterController.text = detail.poster ?? '';
+          _backdropController.text = detail.backdrop ?? '';
+          _existingBackdrop = detail.backdrop;
           _overviewController.text = detail.overview ?? '';
           _ratingController.text = detail.rating ?? '';
           _resolutionController.text = detail.resolution ?? '';
@@ -118,7 +124,7 @@ class _EditMoviePageState extends State<EditMoviePage> {
         'title': _titleController.text.trim(),
         'year': _yearController.text.trim().isEmpty ? null : _yearController.text.trim(),
         'poster': _posterController.text.trim().isEmpty ? null : _posterController.text.trim(),
-        'backdrop': null,
+        'backdrop': _backdropController.text.trim().isEmpty ? _existingBackdrop : _backdropController.text.trim(),
         'overview': _overviewController.text.trim().isEmpty ? null : _overviewController.text.trim(),
         'rating': _ratingController.text.trim().isEmpty ? null : _ratingController.text.trim(),
         'resolution': _resolutionController.text.trim().isEmpty ? null : _resolutionController.text.trim(),
@@ -275,6 +281,14 @@ class _EditMoviePageState extends State<EditMoviePage> {
                     TextFormField(
                       controller: _posterController,
                       decoration: const InputDecoration(labelText: 'Poster URL', hintText: 'https://...'),
+                      keyboardType: TextInputType.url,
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Backdrop
+                    TextFormField(
+                      controller: _backdropController,
+                      decoration: const InputDecoration(labelText: 'Backdrop URL', hintText: 'https://...'),
                       keyboardType: TextInputType.url,
                     ),
                     const SizedBox(height: 16),

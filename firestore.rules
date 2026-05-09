@@ -1,0 +1,93 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ============================================================
+    // HELPER: Check if the authenticated user is an admin
+    // Reads the user's document to verify role == 'admin' or isAdmin == true
+    // ============================================================
+    function isAdmin() {
+      return request.auth != null &&
+        let userId = request.auth.uid;
+        let userDoc = get(/databases/$(database)/documents/users/$(userId));
+        userDoc.data.role == 'admin' || userDoc.data.isAdmin == true;
+    }
+
+    // ============================================================
+    // CONFIG: Admin email mappings - readable by authenticated users (needed for login),
+    // writable only by admins
+    // ============================================================
+    match /config/{configDoc} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+
+    // ============================================================
+    // MOVIES: Anyone can read, only admins can write
+    // ============================================================
+    match /movies/{movieId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ============================================================
+    // GENRES: Anyone can read, only admins can write
+    // ============================================================
+    match /genres/{genreId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ============================================================
+    // TAGS: Anyone can read, only admins can write
+    // ============================================================
+    match /tags/{tagId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ============================================================
+    // COLLECTIONS: Anyone can read, only admins can write
+    // ============================================================
+    match /collections/{collectionId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ============================================================
+    // USERS: Users can read/write their own profile.
+    // Only admins can modify other users or change admin fields.
+    // ============================================================
+    match /users/{userId} {
+      // Users can read their own profile
+      allow read: if request.auth != null && request.auth.uid == userId;
+
+      // Users can create their own profile on registration
+      allow create: if request.auth != null && request.auth.uid == userId;
+
+      // Users can update their own profile, but NOT admin fields (isAdmin, role)
+      // Admin fields can only be changed by existing admins
+      allow update: if request.auth != null &&
+        request.auth.uid == userId &&
+        !('isAdmin' in request.resource.data.diff(resource.data).affectedKeys()) &&
+        !('role' in request.resource.data.diff(resource.data).affectedKeys())
+        || isAdmin();
+    }
+
+    // ============================================================
+    // USER SUB-COLLECTIONS (bookmarks, watchlist, etc.)
+    // Users can only access their own sub-collections
+    // ============================================================
+    match /users/{userId}/bookmarks/{bookmarkId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    match /users/{userId}/watchlist/{watchlistId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    match /users/{userId}/history/{historyId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}
