@@ -219,9 +219,9 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
       backgroundColor: bgColor,
       body: NestedScrollView(
         headerSliverBuilder: (context, innerBoxIsScrolled) => [
-          // Header: Backdrop + Poster overlay
+          // Header: Poster + Title info (no backdrop)
           SliverAppBar(
-            expandedHeight: 280,
+            expandedHeight: 220,
             pinned: true,
             floating: false,
             backgroundColor: isDark ? const Color(0xFF0A0A0A) : bgColor,
@@ -244,9 +244,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
               padding: const EdgeInsets.only(left: 8),
               child: IconButton(
                 icon: Icon(Icons.arrow_back,
-                    color: innerBoxIsScrolled
-                        ? (isDark ? Colors.white : Colors.black87)
-                        : Colors.white,
+                    color: isDark ? Colors.white : Colors.black87,
                     size: 20),
                 onPressed: () => Navigator.pop(context),
                 padding: EdgeInsets.zero,
@@ -263,9 +261,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                         : Icons.bookmark_outline,
                     color: _isBookmarked
                         ? accentColor
-                        : (innerBoxIsScrolled
-                            ? (isDark ? Colors.white : Colors.black54)
-                            : Colors.white),
+                        : (isDark ? Colors.white : Colors.black54),
                     size: 20,
                   ),
                   onPressed: _toggleBookmark,
@@ -275,94 +271,36 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
               ),
             ],
             flexibleSpace: FlexibleSpaceBar(
-              background: Stack(
-                fit: StackFit.expand,
-                children: [
-                  // Backdrop image
-                  (detail.fullBackdropUrl.isNotEmpty
-                      ? CachedNetworkImage(
-                          imageUrl: detail.fullBackdropUrl,
-                          fit: BoxFit.cover,
-                          errorWidget: (context, url, error) =>
-                              detail.fullPosterUrl.isNotEmpty
-                                  ? CachedNetworkImage(
-                                      imageUrl: detail.fullPosterUrl,
-                                      fit: BoxFit.cover)
-                                  : Container(
-                                      color: isDark
-                                          ? const Color(0xFF1A1A2E)
-                                          : Colors.grey.shade400),
-                        )
-                      : detail.fullPosterUrl.isNotEmpty
-                          ? CachedNetworkImage(
-                              imageUrl: detail.fullPosterUrl,
-                              fit: BoxFit.cover)
-                          : Container(
-                              color: isDark
-                                  ? const Color(0xFF1A1A2E)
-                                  : Colors.grey.shade400)),
-                  // Gradient overlay - dark gradient for both modes
-                  Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: isDark
-                            ? [
-                                Colors.transparent,
-                                Colors.black.withOpacity(0.6),
-                                bgColor,
-                              ]
-                            : [
-                                Colors.black.withOpacity(0.05),
-                                Colors.black.withOpacity(0.45),
-                                bgColor,
-                              ],
-                        stops: const [0.0, 0.55, 1.0],
-                      ),
-                    ),
-                  ),
-                  // Floating Poster + Title info
-                  Positioned(
-                    left: 20,
-                    bottom: -20,
-                    right: 16,
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        // Poster thumbnail
-                        Container(
-                          width: 100,
-                          height: 145,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(8),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.6),
-                                blurRadius: 12,
-                                offset: const Offset(0, 4),
-                              ),
-                            ],
-                          ),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: detail.fullPosterUrl.isNotEmpty
-                                ? CachedNetworkImage(
-                                    imageUrl: detail.fullPosterUrl,
-                                    fit: BoxFit.cover,
-                                    errorWidget: (context, url, error) =>
-                                        Container(
-                                      color: isDark
-                                          ? const Color(0xFF1A1A2E)
-                                          : Colors.grey.shade300,
-                                      child: Icon(Icons.tv,
-                                          size: 36,
-                                          color: isDark
-                                              ? Colors.white24
-                                              : Colors.black12),
-                                    ),
-                                  )
-                                : Container(
+              background: Container(
+                color: bgColor,
+                child: Padding(
+                  padding: const EdgeInsets.only(
+                      left: 16, right: 16, top: 56, bottom: 16),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Poster thumbnail
+                      Container(
+                        width: 110,
+                        height: 160,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.3),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: detail.fullPosterUrl.isNotEmpty
+                              ? CachedNetworkImage(
+                                  imageUrl: detail.fullPosterUrl,
+                                  fit: BoxFit.cover,
+                                  errorWidget: (context, url, error) =>
+                                      Container(
                                     color: isDark
                                         ? const Color(0xFF1A1A2E)
                                         : Colors.grey.shade300,
@@ -372,110 +310,95 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                                             ? Colors.white24
                                             : Colors.black12),
                                   ),
-                          ),
-                        ),
-                        const SizedBox(width: 14),
-                        // Title + Meta
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  detail.title,
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 19,
-                                    fontWeight: FontWeight.bold,
-                                    height: 1.2,
-                                    shadows: [
-                                      Shadow(
-                                        color: Colors.black.withOpacity(0.7),
-                                        blurRadius: 6,
-                                      ),
-                                    ],
-                                  ),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
+                                )
+                              : Container(
+                                  color: isDark
+                                      ? const Color(0xFF1A1A2E)
+                                      : Colors.grey.shade300,
+                                  child: Icon(Icons.tv,
+                                      size: 36,
+                                      color: isDark
+                                          ? Colors.white24
+                                          : Colors.black12),
                                 ),
-                                const SizedBox(height: 6),
-                                Row(
-                                  children: [
-                                    if (detail.year != null &&
-                                        detail.year!.isNotEmpty) ...[
-                                      Icon(Icons.calendar_today,
-                                          size: 13, color: Colors.white70),
-                                      const SizedBox(width: 4),
-                                      Text(detail.year!,
-                                          style: const TextStyle(
-                                              color: Colors.white70,
-                                              fontSize: 12)),
-                                      const SizedBox(width: 10),
-                                    ],
-                                    if (detail.rating != null &&
-                                        detail.rating!.isNotEmpty) ...[
-                                      const Icon(Icons.star,
-                                          size: 14, color: Colors.amber),
-                                      const SizedBox(width: 3),
-                                      Text(detail.rating!,
-                                          style: const TextStyle(
-                                              color: Colors.amber,
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w600)),
-                                      const SizedBox(width: 10),
-                                    ],
-                                    // Duration instead of Series badge
-                                    if (detail.duration != null &&
-                                        detail.duration!.isNotEmpty) ...[
-                                      const Icon(Icons.access_time,
-                                          size: 13, color: Colors.white70),
-                                      const SizedBox(width: 4),
-                                      Text('${detail.duration} min',
-                                          style: const TextStyle(
-                                              color: Colors.white70,
-                                              fontSize: 12)),
-                                    ],
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      // Title + Meta
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                detail.title,
+                                style: TextStyle(
+                                  color: isDark ? Colors.white : Colors.black87,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  height: 1.2,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  if (detail.year != null &&
+                                      detail.year!.isNotEmpty) ...[
+                                    Icon(Icons.calendar_today,
+                                        size: 13, color: metaTextColor),
+                                    const SizedBox(width: 4),
+                                    Text(detail.year!,
+                                        style: TextStyle(
+                                            color: metaTextColor,
+                                            fontSize: 12)),
+                                    const SizedBox(width: 10),
                                   ],
-                                ),
-                                const SizedBox(height: 6),
-                                // Category tags
-                                if (detail.categories.isNotEmpty)
-                                  Wrap(
-                                    spacing: 6,
-                                    runSpacing: 4,
-                                    children: detail.categories
-                                        .take(3)
-                                        .map((cat) => Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 10,
-                                                      vertical: 3),
-                                              decoration: BoxDecoration(
-                                                border: Border.all(
-                                                  color: Colors.white54,
-                                                  width: 0.8,
-                                                ),
-                                                borderRadius:
-                                                    BorderRadius.circular(12),
-                                              ),
-                                              child: Text(cat,
-                                                  style: const TextStyle(
-                                                      color: Colors.white70,
-                                                      fontSize: 10,
-                                                      fontWeight:
-                                                          FontWeight.w500)),
-                                            ))
-                                        .toList(),
+                                  if (detail.rating != null &&
+                                      detail.rating!.isNotEmpty) ...[
+                                    const Icon(Icons.star,
+                                        size: 14, color: Colors.amber),
+                                    const SizedBox(width: 3),
+                                    Text(detail.rating!,
+                                        style: const TextStyle(
+                                            color: Colors.amber,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600)),
+                                    const SizedBox(width: 10),
+                                  ],
+                                  // Duration instead of Series badge
+                                  if (detail.duration != null &&
+                                      detail.duration!.isNotEmpty) ...[
+                                    Icon(Icons.access_time,
+                                        size: 13, color: metaTextColor),
+                                    const SizedBox(width: 4),
+                                    Text('${detail.duration} min',
+                                        style: TextStyle(
+                                            color: metaTextColor,
+                                            fontSize: 12)),
+                                  ],
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              // Category tags - plain text comma-separated
+                              if (detail.categories.isNotEmpty)
+                                Text(
+                                  detail.categories.take(3).join(', '),
+                                  style: TextStyle(
+                                    color: metaTextColor,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
                                   ),
-                              ],
-                            ),
+                                ),
+                            ],
                           ),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
           ),
@@ -540,7 +463,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                     );
                     final textPainter = TextPainter(
                       text: textSpan,
-                      maxLines: 4,
+                      maxLines: 6,
                       textDirection: TextDirection.ltr,
                     );
                     textPainter.layout(maxWidth: constraints.maxWidth);
@@ -551,7 +474,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                       children: [
                         Text(
                           detail.overview!,
-                          maxLines: _overviewExpanded ? null : 4,
+                          maxLines: _overviewExpanded ? null : 6,
                           overflow: _overviewExpanded
                               ? TextOverflow.visible
                               : TextOverflow.ellipsis,
