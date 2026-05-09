@@ -1,0 +1,36 @@
+# Environment variables (contains secrets)
+.env
+
+# Firebase options (now loads from .env)
+# firebase_options.dart can be committed since it no longer has hardcoded secrets
+
+# Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+*.lock
+
+# Android
+key.properties
+*.jks
+android/app/debug
+android/app/profile
+android/app/release
+
+# iOS
+ios/Pods/
+ios/.symlinks/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated
+*.g.dart
+*.freezed.dart

@@ -476,7 +476,7 @@ class FirestoreContentService {
     }
   }
 
-  /// Search movies by keyword (client-side for reliability)
+  /// Search movies by keyword using Firestore prefix search + client-side fallback
   Future<Map<String, dynamic>> searchMovies(
     String keyword, {
     int limit = 20,
@@ -487,25 +487,58 @@ class FirestoreContentService {
       return {'movies': <Movie>[], 'hasMore': false, 'lastDoc': null};
     }
 
-    // Primary approach: Fetch all movies and filter client-side
-    // This is more reliable than Firestore prefix search which is case-sensitive
+    // Primary approach: Firestore prefix search (server-side, efficient)
     try {
-      final snapshot = await _moviesRef.limit(500).get();
-      final allMovies = snapshot.docs
+      final upperKeyword = lowerKeyword + '\uf8ff';
+      final snapshot = await _moviesRef
+          .where('title', isGreaterThanOrEqualTo: lowerKeyword)
+          .where('title', isLessThanOrEqualTo: upperKeyword)
+          .orderBy('title')
+          .limit(limit * 2) // Fetch extra to account for case mismatches
+          .get();
+
+      var results = snapshot.docs
           .map((doc) => Movie.fromMap(
                 doc.data() as Map<String, dynamic>,
                 docId: doc.id,
               ))
           .toList();
 
-      // Client-side case-insensitive search - matches anywhere in title
-      final filtered = allMovies
+      // Firestore prefix search is case-sensitive, so also do a
+      // case-insensitive contains filter client-side as enhancement
+      final filtered = results
           .where((m) => m.title.toLowerCase().contains(lowerKeyword))
           .toList();
 
+      // If prefix search found enough results, return them
+      if (filtered.length >= limit) {
+        return {
+          'movies': filtered.take(limit).toList(),
+          'hasMore': filtered.length > limit,
+          'lastDoc': null,
+        };
+      }
+
+      // If prefix search didn't find enough, supplement with a broader search
+      // but limit to 50 docs to avoid excessive reads
+      final broaderSnapshot = await _moviesRef.limit(50).get();
+      final broaderMovies = broaderSnapshot.docs
+          .map((doc) => Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              ))
+          .toList();
+
+      // Combine results, avoiding duplicates
+      final seenIds = results.map((m) => m.id).toSet();
+      final additionalMovies = broaderMovies
+          .where((m) => !seenIds.contains(m.id) && m.title.toLowerCase().contains(lowerKeyword))
+          .toList();
+
+      final combined = [...filtered, ...additionalMovies];
       return {
-        'movies': filtered.take(limit).toList(),
-        'hasMore': filtered.length > limit,
+        'movies': combined.take(limit).toList(),
+        'hasMore': combined.length > limit,
         'lastDoc': null,
       };
     } catch (e) {
@@ -552,7 +585,7 @@ class FirestoreContentService {
         }
       }
 
-      query = query.limit(500);
+      query = query.limit(limit);
 
       final snapshot = await query.get();
       var allMovies = snapshot.docs
@@ -615,7 +648,7 @@ class FirestoreContentService {
       debugPrint('searchMoviesWithFilters failed: $e');
       // Fallback: fetch all and filter entirely client-side
       try {
-        final snapshot = await _moviesRef.limit(500).get();
+        final snapshot = await _moviesRef.limit(limit).get();
         var allMovies = snapshot.docs
             .map((doc) => Movie.fromMap(
                   doc.data() as Map<String, dynamic>,
@@ -673,7 +706,7 @@ class FirestoreContentService {
   /// Get available years from movies collection
   Future<List<String>> getAvailableYears() async {
     try {
-      final snapshot = await _moviesRef.limit(500).get();
+      final snapshot = await _moviesRef.limit(100).get();
       final years = <String>{};
       for (final doc in snapshot.docs) {
         final data = doc.data() as Map<String, dynamic>;

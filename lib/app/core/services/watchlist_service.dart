@@ -47,10 +47,37 @@ class WatchlistService {
         .toList();
   }
 
-  /// Check if movie is in watchlist
+  /// Check if movie is in watchlist - O(1) for Firestore, O(1) for local with Set cache
   Future<bool> isInWatchlist(String movieId) async {
-    final watchlist = await getWatchlist();
-    return watchlist.any((m) => m.id == movieId);
+    if (_isLoggedIn && _userId != null) {
+      try {
+        // Direct document read - O(1) instead of fetching all watchlist items
+        final doc = await _firestore
+            .collection('users')
+            .doc(_userId)
+            .collection('watchlist')
+            .doc(movieId)
+            .get();
+        return doc.exists;
+      } catch (e) {
+        // Fall back to local check
+      }
+    }
+    // Local: check with Set for O(1) lookup
+    final ids = await _getLocalWatchlistIds();
+    return ids.contains(movieId);
+  }
+
+  /// Get local watchlist IDs as a Set for O(1) lookups
+  Future<Set<String>> _getLocalWatchlistIds() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? data = prefs.getString(_watchlistKey);
+    if (data == null || data.isEmpty) return {};
+    final List<dynamic> decoded = json.decode(data) as List<dynamic>;
+    return decoded
+        .map((x) => (x as Map<String, dynamic>)['id']?.toString() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet();
   }
 
   /// Add movie to watchlist

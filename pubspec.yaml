@@ -15,6 +15,7 @@ dependencies:
   url_launcher: ^6.2.2
   dio: ^5.4.0
   path_provider: ^2.1.2
+  flutter_dotenv: ^5.1.0
   # Firebase
   firebase_core: ^3.6.0
   firebase_auth: ^5.3.1
@@ -25,3 +26,4 @@ flutter:
   assets:
     - assets/lang/
     - assets/
+    - .env

@@ -47,10 +47,37 @@ class BookmarkService {
         .toList();
   }
 
-  // Check if movie is bookmarked
+  // Check if movie is bookmarked - O(1) for Firestore, O(1) for local with Set cache
   Future<bool> isBookmarked(String movieId) async {
-    final bookmarks = await getBookmarks();
-    return bookmarks.any((m) => m.id == movieId);
+    if (_isLoggedIn && _userId != null) {
+      try {
+        // Direct document read - O(1) instead of fetching all bookmarks
+        final doc = await _firestore
+            .collection('users')
+            .doc(_userId)
+            .collection('bookmarks')
+            .doc(movieId)
+            .get();
+        return doc.exists;
+      } catch (e) {
+        // Fall back to local check
+      }
+    }
+    // Local: check with Set for O(1) lookup
+    final ids = await _getLocalBookmarkIds();
+    return ids.contains(movieId);
+  }
+
+  /// Get local bookmark IDs as a Set for O(1) lookups
+  Future<Set<String>> _getLocalBookmarkIds() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? data = prefs.getString(_bookmarkKey);
+    if (data == null || data.isEmpty) return {};
+    final List<dynamic> decoded = json.decode(data) as List<dynamic>;
+    return decoded
+        .map((x) => (x as Map<String, dynamic>)['id']?.toString() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet();
   }
 
   // Add bookmark - to Firestore if logged in, else local

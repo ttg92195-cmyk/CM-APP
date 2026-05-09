@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/ui/home/home_page.dart';
 import 'firebase_options.dart';
@@ -15,6 +16,9 @@ const Color kDarkCard = Color(0xFF1E1E1E);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Load environment variables before Firebase init
+  await dotenv.load(fileName: '.env');
 
   // Initialize Firebase
   await Firebase.initializeApp(

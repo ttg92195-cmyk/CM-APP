@@ -115,40 +115,56 @@ class _HomeScreenState extends State<HomeScreen> {
       MapEntry('Bollywood', _contentService.getMoviesByTagSimple('Bollywood', limit: _homeLimit)),
     ];
 
+    // Accumulate results locally, then call setState once after all are done
+    List<Movie> kDramaMovies = _kDramaMovies;
+    List<Movie> fourKMovies = _fourKMovies;
+    List<Movie> fourKSeries = _fourKSeries;
+    List<Movie> animationMovies = _animationMovies;
+    List<Movie> animeMovies = _animeMovies;
+    List<Movie> bollywoodMovies = _bollywoodMovies;
+
     for (final entry in tagEntries) {
       try {
         final movies = await entry.value;
-        if (mounted) {
-          setState(() {
-            switch (entry.key) {
-              case 'K Drama':
-                _kDramaMovies = movies;
-                break;
-              case '4K':
-                _fourKMovies = movies.where((m) => m.type == 'movie').toList();
-                _fourKSeries = movies.where((m) => m.type == 'series').toList();
-                if (_fourKMovies.isEmpty && movies.isNotEmpty) {
-                  _fourKMovies = movies;
-                }
-                if (_fourKSeries.isEmpty && movies.isNotEmpty) {
-                  _fourKSeries = movies;
-                }
-                break;
-              case 'Animation':
-                _animationMovies = movies;
-                break;
-              case 'Anime':
-                _animeMovies = movies;
-                break;
-              case 'Bollywood':
-                _bollywoodMovies = movies;
-                break;
+        switch (entry.key) {
+          case 'K Drama':
+            kDramaMovies = movies;
+            break;
+          case '4K':
+            fourKMovies = movies.where((m) => m.type == 'movie').toList();
+            fourKSeries = movies.where((m) => m.type == 'series').toList();
+            if (fourKMovies.isEmpty && movies.isNotEmpty) {
+              fourKMovies = movies;
             }
-          });
+            if (fourKSeries.isEmpty && movies.isNotEmpty) {
+              fourKSeries = movies;
+            }
+            break;
+          case 'Animation':
+            animationMovies = movies;
+            break;
+          case 'Anime':
+            animeMovies = movies;
+            break;
+          case 'Bollywood':
+            bollywoodMovies = movies;
+            break;
         }
       } catch (e) {
         debugPrint('Error loading tag ${entry.key}: $e');
       }
+    }
+
+    // Single setState after all tag data is loaded
+    if (mounted) {
+      setState(() {
+        _kDramaMovies = kDramaMovies;
+        _fourKMovies = fourKMovies;
+        _fourKSeries = fourKSeries;
+        _animationMovies = animationMovies;
+        _animeMovies = animeMovies;
+        _bollywoodMovies = bollywoodMovies;
+      });
     }
   }
 

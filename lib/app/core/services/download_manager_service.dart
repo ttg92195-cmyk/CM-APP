@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dio/dio.dart';
+import 'package:path_provider/path_provider.dart';
 
 /// Enum for download status
 enum DownloadStatus {
@@ -175,6 +176,39 @@ class DownloadManagerService extends ChangeNotifier {
     await _loadTasks();
   }
 
+  /// Get cross-platform download directory
+  Future<String> _getDownloadDir() async {
+    // On Android, prefer the public Download directory
+    if (Platform.isAndroid) {
+      // Try external storage first (public Download folder)
+      final externalDir = Directory('/storage/emulated/0/Download/CM_Movies');
+      try {
+        if (!await externalDir.exists()) {
+          await externalDir.create(recursive: true);
+        }
+        return externalDir.path;
+      } catch (_) {
+        // Fall back to app-specific external directory
+        final appDir = await getExternalStorageDirectory();
+        if (appDir != null) {
+          final dir = Directory('${appDir.parent.path}/Download/CM_Movies');
+          if (!await dir.exists()) {
+            await dir.create(recursive: true);
+          }
+          return dir.path;
+        }
+      }
+    }
+
+    // On iOS and other platforms, use app documents directory
+    final appDir = await getApplicationDocumentsDirectory();
+    final dir = Directory('${appDir.path}/CM_Movies');
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    return dir.path;
+  }
+
   /// Add a new download task
   Future<void> addTask({
     required String movieId,
@@ -200,7 +234,8 @@ class DownloadManagerService extends ChangeNotifier {
 
     final fileName = '${movieTitle.replaceAll(RegExp(r'[^\w\s-]'), '')}_$quality.mkv'
         .replaceAll(' ', '_');
-    final savePath = '/storage/emulated/0/Download/CM_Movies/$fileName';
+    final downloadDir = await _getDownloadDir();
+    final savePath = '$downloadDir/$fileName';
 
     final task = DownloadTask(
       id: taskId,
@@ -223,7 +258,7 @@ class DownloadManagerService extends ChangeNotifier {
     startDownload(taskId);
   }
 
-  /// Start or resume a download
+  /// Start or resume a download with byte-range support
   Future<void> startDownload(String taskId) async {
     final index = _tasks.indexWhere((t) => t.id == taskId);
     if (index == -1) return;
@@ -239,10 +274,24 @@ class DownloadManagerService extends ChangeNotifier {
     _cancelTokens[taskId] = cancelToken;
 
     try {
-      // Ensure directory exists
-      final dir = Directory('/storage/emulated/0/Download/CM_Movies');
-      if (!await dir.exists()) {
-        await dir.create(recursive: true);
+      // Check if partial file exists for resume support
+      int startByte = task.downloadedBytes;
+      final file = File(task.savePath);
+      if (startByte > 0 && await file.exists()) {
+        final fileSize = await file.length();
+        if (fileSize < startByte) {
+          // File is smaller than recorded bytes - something went wrong, restart
+          startByte = 0;
+        }
+      } else {
+        // No partial file, start from beginning
+        startByte = 0;
+      }
+
+      // Build headers - add Range header for resume
+      final headers = <String, dynamic>{};
+      if (startByte > 0) {
+        headers['Range'] = 'bytes=$startByte-';
       }
 
       await _dio.download(
@@ -253,19 +302,23 @@ class DownloadManagerService extends ChangeNotifier {
           final idx = _tasks.indexWhere((t) => t.id == taskId);
           if (idx == -1) return;
 
-          final progress = total > 0 ? received / total : 0.0;
+          // For resumed downloads, received is relative to the Range request
+          final actualReceived = startByte + received;
+          final actualTotal = total > 0 ? startByte + total : -1;
+          final progress = actualTotal > 0 ? actualReceived / actualTotal : 0.0;
           _tasks[idx] = _tasks[idx].copyWith(
             progress: progress,
-            downloadedBytes: received,
-            totalBytes: total,
+            downloadedBytes: actualReceived,
+            totalBytes: actualTotal > 0 ? actualTotal : null,
           );
           notifyListeners();
         },
         options: Options(
+          headers: headers,
           receiveTimeout: const Duration(minutes: 30),
           sendTimeout: const Duration(minutes: 5),
         ),
-        deleteOnError: true,
+        deleteOnError: false, // Keep partial file for resume
       );
 
       // Download completed
@@ -274,6 +327,7 @@ class DownloadManagerService extends ChangeNotifier {
         _tasks[idx] = _tasks[idx].copyWith(
           status: DownloadStatus.completed,
           progress: 1.0,
+          downloadedBytes: _tasks[idx].totalBytes ?? _tasks[idx].downloadedBytes,
           completedAt: DateTime.now(),
         );
         await _saveTasks();
@@ -283,7 +337,7 @@ class DownloadManagerService extends ChangeNotifier {
       final idx = _tasks.indexWhere((t) => t.id == taskId);
       if (idx != -1) {
         if (CancelToken.isCancel(e)) {
-          // Was paused, not an error
+          // Was paused - save current progress for resume
           _tasks[idx] = _tasks[idx].copyWith(
             status: DownloadStatus.paused,
           );
@@ -319,20 +373,19 @@ class DownloadManagerService extends ChangeNotifier {
     }
   }
 
-  /// Resume a paused download
+  /// Resume a paused download (actually resumes from where it left off)
   Future<void> resumeDownload(String taskId) async {
     await startDownload(taskId);
   }
 
-  /// Retry a failed download
+  /// Retry a failed download (resumes from partial if possible)
   Future<void> retryDownload(String taskId) async {
     final index = _tasks.indexWhere((t) => t.id == taskId);
     if (index == -1) return;
 
+    // Don't reset downloadedBytes - let startDownload check partial file
     _tasks[index] = _tasks[index].copyWith(
       status: DownloadStatus.idle,
-      progress: 0.0,
-      downloadedBytes: 0,
       errorMessage: null,
     );
     notifyListeners();
@@ -350,6 +403,14 @@ class DownloadManagerService extends ChangeNotifier {
     // Delete file if downloaded
     final task = _tasks.firstWhere((t) => t.id == taskId);
     if (task.status == DownloadStatus.completed) {
+      try {
+        final file = File(task.savePath);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (_) {}
+    } else {
+      // Also delete partial files for incomplete downloads
       try {
         final file = File(task.savePath);
         if (await file.exists()) {
@@ -407,7 +468,7 @@ class DownloadManagerService extends ChangeNotifier {
             .map((x) => DownloadTask.fromMap(x as Map<String, dynamic>))
             .toList();
 
-        // Reset downloading tasks to paused on restart
+        // Reset downloading tasks to paused on restart (so they can be resumed)
         for (int i = 0; i < _tasks.length; i++) {
           if (_tasks[i].status == DownloadStatus.downloading) {
             _tasks[i] = _tasks[i].copyWith(status: DownloadStatus.paused);

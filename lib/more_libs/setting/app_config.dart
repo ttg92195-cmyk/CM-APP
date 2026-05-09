@@ -71,6 +71,19 @@ class AppConfig extends ChangeNotifier {
     return false;
   }
 
+  // Helper to parse registrationDate which may be Timestamp, DateTime, or String
+  String _parseRegistrationDate(dynamic value) {
+    if (value == null) return '';
+    if (value is Timestamp) {
+      return '${value.toDate().year}-${value.toDate().month.toString().padLeft(2, '0')}-${value.toDate().day.toString().padLeft(2, '0')}';
+    }
+    if (value is DateTime) {
+      return '${value.year}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
+    }
+    // Already a string - return as-is
+    return value.toString();
+  }
+
   String translate(String key) {
     return _translations[key] ?? key;
   }
@@ -117,7 +130,7 @@ class AppConfig extends ChangeNotifier {
           'username': data['username'] ?? 'User',
           'isAdmin': _isTruthy(data['isAdmin']),
           'loginDate': DateTime.now().toIso8601String(),
-          'registrationDate': data['registrationDate'] ?? '',
+          'registrationDate': _parseRegistrationDate(data['registrationDate']),
           'email': data['email'] ?? '',
         };
       } else {
