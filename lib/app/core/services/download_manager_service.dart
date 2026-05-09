@@ -262,7 +262,7 @@ class DownloadManagerService extends ChangeNotifier {
         await _saveTasks();
         notifyListeners();
       }
-    } catch (e) {
+    } on DioException catch (e) {
       final idx = _tasks.indexWhere((t) => t.id == taskId);
       if (idx != -1) {
         if (CancelToken.isCancel(e)) {
@@ -273,9 +273,19 @@ class DownloadManagerService extends ChangeNotifier {
         } else {
           _tasks[idx] = _tasks[idx].copyWith(
             status: DownloadStatus.failed,
-            errorMessage: e.toString(),
+            errorMessage: e.message ?? e.toString(),
           );
         }
+        await _saveTasks();
+        notifyListeners();
+      }
+    } catch (e) {
+      final idx = _tasks.indexWhere((t) => t.id == taskId);
+      if (idx != -1) {
+        _tasks[idx] = _tasks[idx].copyWith(
+          status: DownloadStatus.failed,
+          errorMessage: e.toString(),
+        );
         await _saveTasks();
         notifyListeners();
       }
