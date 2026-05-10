@@ -809,17 +809,19 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
       serverGroups.putIfAbsent(serverName, () => []).add(link);
     }
 
-    return ListView(
-      physics: const ClampingScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-      children: [
-        Text('Download Options',
-            style: TextStyle(
-                color: isDark ? Colors.white : Colors.black87,
-                fontSize: 18,
-                fontWeight: FontWeight.bold)),
-        const SizedBox(height: 12),
-        ...serverGroups.entries.map((entry) {
+    return DividerTheme(
+      data: const DividerThemeData(color: Colors.transparent),
+      child: ListView(
+        physics: const ClampingScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+        children: [
+          Text('Download Options',
+              style: TextStyle(
+                  color: isDark ? Colors.white : Colors.black87,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold)),
+          const SizedBox(height: 12),
+          ...serverGroups.entries.map((entry) {
           final serverName = entry.key;
           final links = entry.value;
           return Padding(
@@ -838,7 +840,6 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                 iconColor: accentColor,
                 collapsedBackgroundColor: Colors.transparent,
                 backgroundColor: Colors.transparent,
-                dividerColor: Colors.transparent,
                 shape: const RoundedRectangleBorder(side: BorderSide.none),
                 collapsedShape: const RoundedRectangleBorder(side: BorderSide.none),
                 leading: Container(
@@ -1003,6 +1004,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
           );
         }),
       ],
+    ),
     );
   }
 

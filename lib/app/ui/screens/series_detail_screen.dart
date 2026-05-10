@@ -806,37 +806,38 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
       );
     }
 
-    return ListView(
-      physics: const ClampingScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-      children: [
-        Text('Download Options',
-            style: TextStyle(
-                color: isDark ? Colors.white : Colors.black87,
-                fontSize: 18,
-                fontWeight: FontWeight.bold)),
-        const SizedBox(height: 12),
+    return DividerTheme(
+      data: const DividerThemeData(color: Colors.transparent),
+      child: ListView(
+        physics: const ClampingScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+        children: [
+          Text('Download Options',
+              style: TextStyle(
+                  color: isDark ? Colors.white : Colors.black87,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold)),
+          const SizedBox(height: 12),
 
-        // Season-based downloads
-        if (hasSeasons)
-          ...detail.seasons.map((season) {
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: ExpansionTile(
-                  tilePadding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-                  childrenPadding:
-                      const EdgeInsets.fromLTRB(14, 0, 14, 12),
-                  collapsedIconColor: metaTextColor,
-                  iconColor: accentColor,
-                  collapsedBackgroundColor: Colors.transparent,
-                  backgroundColor: Colors.transparent,
-                  dividerColor: Colors.transparent,
+          // Season-based downloads
+          if (hasSeasons)
+            ...detail.seasons.map((season) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: ExpansionTile(
+                    tilePadding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                    childrenPadding:
+                        const EdgeInsets.fromLTRB(14, 0, 14, 12),
+                    collapsedIconColor: metaTextColor,
+                    iconColor: accentColor,
+                    collapsedBackgroundColor: Colors.transparent,
+                    backgroundColor: Colors.transparent,
                   shape: const RoundedRectangleBorder(side: BorderSide.none),
                   collapsedShape: const RoundedRectangleBorder(side: BorderSide.none),
                   leading: Container(
@@ -890,7 +891,6 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                           iconColor: accentColor,
                           collapsedBackgroundColor: Colors.transparent,
                           backgroundColor: Colors.transparent,
-                          dividerColor: Colors.transparent,
                           shape: const RoundedRectangleBorder(side: BorderSide.none),
                           collapsedShape: const RoundedRectangleBorder(side: BorderSide.none),
                           leading: Icon(Icons.play_circle_outline,
@@ -1027,6 +1027,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
         if (hasDirectLinks && !hasSeasons)
           ..._buildServerGroupWidgets(detail.downloadLinks, isDark, accentColor, metaTextColor),
       ],
+    ),
     );
   }
 
@@ -1063,7 +1064,6 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
             iconColor: accentColor,
             collapsedBackgroundColor: Colors.transparent,
             backgroundColor: Colors.transparent,
-            dividerColor: Colors.transparent,
             shape: const RoundedRectangleBorder(side: BorderSide.none),
             collapsedShape: const RoundedRectangleBorder(side: BorderSide.none),
             leading: Container(
