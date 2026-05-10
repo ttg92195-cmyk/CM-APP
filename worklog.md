@@ -1,32 +1,64 @@
+# Work Log
+
 ---
 Task ID: 1
 Agent: Main Agent
-Task: Clone CM-APP repository and fix build error
+Task: Remove divider lines from ExpansionTile in Download section (Series + Movie)
 
 Work Log:
-- Cloned repository https://github.com/ttg92195-cmyk/CM-APP (was already cloned, pulled latest from main)
-- Identified the build error: `dividerColor` parameter not supported in `ExpansionTile` on Flutter 3.24.5
-- Found 3 occurrences of `dividerColor: Colors.transparent` in ExpansionTile widgets in series_detail_screen.dart (lines 842, 899, 1049)
-- Removed all 3 `dividerColor` lines since `collapsedBackgroundColor` and `backgroundColor` are already transparent
-- Verified remaining `dividerColor` instances in TabBar widgets are valid for Flutter 3.24.5
-- Committed fix and pushed to main branch
+- Analyzed screenshot showing horizontal divider lines ("___") below ExpansionTile headers in Download sections
+- Identified 3 ExpansionTile instances in series_detail_screen.dart and 1 in movie_detail_screen.dart
+- Added `shape: const RoundedRectangleBorder(side: BorderSide.none)` and `collapsedShape: const RoundedRectangleBorder(side: BorderSide.none)` to all ExpansionTile widgets
+- This removes the default 1px divider line that Flutter draws between the tile header and children
 
 Stage Summary:
-- Build error fixed: removed unsupported `dividerColor` from ExpansionTile
-- Commit: 2b2dd7d pushed to origin/main
-- Comprehensive code review completed identifying 7 Critical, 8 High, 12 Medium, 10 Low issues
+- All divider lines removed from Download section ExpansionTiles
+- Changes applied to both series_detail_screen.dart and movie_detail_screen.dart
 
 ---
 Task ID: 2
-Agent: Code Review Subagent
-Task: Comprehensive code review of all Dart files in CM-APP
+Agent: Main Agent
+Task: Update Series Detail download with Save + Open buttons
 
 Work Log:
-- Reviewed all 39 Dart files, pubspec.yaml, and build.gradle
-- Identified 37 issues across 4 severity levels
-- Documented all issues with file paths, line numbers, and suggested fixes
+- Series detail screen had only single "Download" button using _launchUrl (external browser)
+- Replaced with dual Save + Open button row matching Movie detail screen pattern
+- Save button (green, in-app download) uses _startInAppDownload via DownloadManagerService
+- Open button (outlined, external browser) uses _launchUrl
+- Applied to both episode-level download links and server-group download links
+- Fixed Series detail to use DownloadManagerService.instance singleton
+- Added _downloadManager.init() to initState
 
 Stage Summary:
-- Critical issues: hardcoded admin email, debug signing in release, client-side admin checks, EditMoviePage backdrop data loss, genre/tag count inflation, DownloadManagerService singleton issue, Movie.toMap missing createdAt
-- High issues: Firebase API key exposure, download resume doesn't work, registrationDate type mismatch, search fetches 500 docs, O(n) bookmark/watchlist checks, multiple setState calls, dead api_service.dart, hardcoded Android download path
-- Full report provided to user
+- Series detail screen now has same Save + Open buttons as Movie detail screen
+- Both in-app download and external browser download available for all quality options
+
+---
+Task ID: 3
+Agent: Main Agent
+Task: Add Android storage permissions for public download directory
+
+Work Log:
+- Added permission_handler package (v11.3.1) to pubspec.yaml
+- Updated AndroidManifest.xml with:
+  - WRITE_EXTERNAL_STORAGE (maxSdkVersion=28) for Android 9 and below
+  - READ_EXTERNAL_STORAGE (maxSdkVersion=32) for Android 12 and below
+  - MANAGE_EXTERNAL_STORAGE for Android 11+ broad file access
+  - requestLegacyExternalStorage=true for Android 10 compatibility
+- Added permission check/request methods to DownloadManagerService:
+  - checkStoragePermission() - checks if storage access is granted
+  - requestStoragePermission() - requests appropriate permission based on Android version
+- Added storage permission banner in DownloadPage (shows when permission not granted)
+- Added permission status section in Download Settings modal
+- Completed downloads now keep files when removed from list (keepFile: true)
+- Failed downloads show error message in the card
+
+Stage Summary:
+- Full Android storage permission handling implemented
+- Permission banner shown in Download tab when not granted
+- Download Settings shows permission status with Grant button
+- Files downloaded to public directory are accessible via external file managers
+
+---
+Build Status: Run #63 - COMPLETED / SUCCESS
+All 3 tasks built successfully and pushed to main branch.
