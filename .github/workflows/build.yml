@@ -36,17 +36,36 @@ jobs:
           restore-keys: |
             gradle-${{ runner.os }}-
 
-      # Setup release signing if secrets are available, otherwise falls back to debug signing
+      # Setup signing key — use release keystore from secrets if available,
+      # otherwise generate a temporary debug keystore so CI builds succeed
       - name: Setup signing key
-        if: ${{ env.KEYSTORE_BASE64 != '' }}
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 --decode > android/app/keystore.jks
-          echo "storePassword=${{ secrets.KEYSTORE_PASSWORD }}" >> android/key.properties
-          echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> android/key.properties
-          echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> android/key.properties
-          echo "storeFile=keystore.jks" >> android/key.properties
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "🔐 Using release keystore from secrets"
+            echo "$KEYSTORE_BASE64" | base64 --decode > android/app/keystore.jks
+            echo "storePassword=${{ secrets.KEYSTORE_PASSWORD }}" >> android/key.properties
+            echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> android/key.properties
+            echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> android/key.properties
+            echo "storeFile=keystore.jks" >> android/key.properties
+          else
+            echo "⚠️ No release keystore secrets found — generating temporary debug keystore for CI"
+            keytool -genkeypair \
+              -v \
+              -keystore android/app/debug-ci.jks \
+              -storepass android \
+              -alias ci-debug \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 1 \
+              -dname "CN=CI Debug, OU=CI, O=CM Movies, L=Yangon, ST=Yangon, C=MM"
+            echo "storePassword=android" >> android/key.properties
+            echo "keyPassword=android" >> android/key.properties
+            echo "keyAlias=ci-debug" >> android/key.properties
+            echo "storeFile=debug-ci.jks" >> android/key.properties
+          fi
 
       - name: Get dependencies
         run: flutter pub get
