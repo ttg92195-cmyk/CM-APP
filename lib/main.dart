@@ -7,6 +7,7 @@ import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/ui/home/home_page.dart';
+import 'package:cm_movies/app/ui/screens/login_page.dart';
 import 'firebase_options.dart';
 
 // Netflix-style Red accent color
@@ -75,7 +76,51 @@ class CMMoviesApp extends StatelessWidget {
       theme: _buildLightTheme(),
       darkTheme: _buildDarkTheme(),
       themeMode: appConfig.themeMode,
-      home: const HomePage(),
+      // Auth gate: show LoginPage if not logged in, HomePage if logged in
+      // This ensures Firestore reads only happen after authentication
+      home: appConfig.isLoadingAuth
+          ? _buildSplashScreen(appConfig)
+          : appConfig.isLoggedIn
+              ? const HomePage()
+              : const LoginPage(),
+    );
+  }
+
+  Widget _buildSplashScreen(AppConfig appConfig) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0A0A0A),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFFE50914).withOpacity(0.15),
+              ),
+              child: const Icon(
+                Icons.play_circle_fill,
+                size: 60,
+                color: Color(0xFFE50914),
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'KMM',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            const CircularProgressIndicator(
+              color: Color(0xFFE50914),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

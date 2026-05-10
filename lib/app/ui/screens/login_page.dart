@@ -3,7 +3,6 @@ import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/services/bookmark_service.dart';
-import 'package:cm_movies/app/ui/screens/profile_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -77,11 +76,8 @@ class _LoginPageState extends State<LoginPage>
         _usernameController.clear();
         _passwordController.clear();
 
-        // Navigate to profile page
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const ProfilePage()),
-        );
+        // Auth state change in AppConfig will automatically navigate to HomePage
+        // No manual navigation needed — CMMoviesApp watches isLoggedIn
       } else {
         setState(() {
           _loginError = appConfig.translate('login_failed');
@@ -124,11 +120,8 @@ class _LoginPageState extends State<LoginPage>
           _regPasswordController.clear();
           _regConfirmPasswordController.clear();
 
-          // Auto login - navigate to profile
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (_) => const ProfilePage()),
-          );
+          // Auth state change in AppConfig will automatically navigate to HomePage
+          // No manual navigation needed — CMMoviesApp watches isLoggedIn
         } else {
           setState(() {
             _registerError = appConfig.translate('register_failed');
