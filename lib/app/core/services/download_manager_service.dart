@@ -962,11 +962,16 @@ class DownloadManagerService extends ChangeNotifier {
   };
 
   /// Validate that a download URL is from a trusted domain
+  /// L7: Enforce HTTPS-only — HTTP downloads are vulnerable to MITM attacks.
+  ///     Signed/time-limited URLs require Firebase Blaze plan (not yet available).
+  ///     When Blaze plan is enabled, replace direct URLs with Firebase Storage
+  ///     signed URLs via Cloud Functions for time-limited download access.
   static bool _isValidDownloadUrl(String url) {
     if (url.isEmpty) return false;
     try {
       final uri = Uri.parse(url);
-      if (uri.scheme != 'https' && uri.scheme != 'http') return false;
+      // L7: Only allow HTTPS scheme — block HTTP to prevent MITM attacks
+      if (uri.scheme != 'https') return false;
       final host = uri.host.toLowerCase();
       if (host.isEmpty) return false;
       for (final allowed in _allowedDomains) {

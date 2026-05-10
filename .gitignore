@@ -8,7 +8,11 @@
 .flutter-plugins
 .flutter-plugins-dependencies
 build/
+# L6: pubspec.lock should be committed for apps (not packages) to ensure
+# reproducible builds and prevent supply-chain dependency attacks.
+# Only ignore other lock files (e.g., Podfile.lock is handled by iOS section)
 *.lock
+!pubspec.lock
 
 # Android
 key.properties

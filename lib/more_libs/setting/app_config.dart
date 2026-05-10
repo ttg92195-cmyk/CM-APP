@@ -9,6 +9,35 @@ class AppConfig extends ChangeNotifier {
   static const String _langKey = 'app_language';
   static const String _downloadEnabledKey = 'download_enabled';
 
+  // L3: Session timeout — auto-logout after inactivity
+  static const Duration sessionTimeout = Duration(minutes: 30);
+  DateTime? _lastActivityTime;
+  bool _sessionTimedOut = false;
+
+  bool get sessionTimedOut => _sessionTimedOut;
+
+  // Call this on any user interaction to keep session alive
+  void recordActivity() {
+    _lastActivityTime = DateTime.now();
+    if (_sessionTimedOut) {
+      _sessionTimedOut = false;
+      notifyListeners();
+    }
+  }
+
+  // Check if session has timed out
+  bool checkSessionTimeout() {
+    if (_currentUser == null || _lastActivityTime == null) return false;
+    final elapsed = DateTime.now().difference(_lastActivityTime!);
+    if (elapsed >= sessionTimeout) {
+      _sessionTimedOut = true;
+      // Auto-logout
+      logoutUser();
+      return true;
+    }
+    return false;
+  }
+
   // Firebase instances
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -111,6 +140,7 @@ class AppConfig extends ChangeNotifier {
     _auth.authStateChanges().listen((User? user) async {
       if (user != null) {
         // User is signed in - load profile from Firestore
+        _lastActivityTime = DateTime.now(); // L3: Record login time
         await _loadUserProfile(user.uid);
       } else {
         // User is signed out
@@ -389,13 +419,13 @@ class AppConfig extends ChangeNotifier {
       case 'wrong-password':
         return translate('login_failed');
       case 'email-already-in-use':
-        return translate('register_failed');
+        return translate('register_failed'); // L4: Generic message to prevent username enumeration
       case 'weak-password':
-        return 'Password is too weak (at least 6 characters)';
+        return 'Password is too weak. Must be at least 8 characters with uppercase, lowercase, and a number';
       case 'invalid-email':
-        return 'Invalid username';
+        return translate('login_failed'); // L4: Generic message to prevent username enumeration
       case 'user-disabled':
-        return 'This account has been disabled';
+        return translate('login_failed'); // L4: Generic message — don't reveal account exists
       case 'too-many-requests':
         return 'Too many attempts. Please try again later';
       case 'network-request-failed':
@@ -544,7 +574,7 @@ class AppConfig extends ChangeNotifier {
         'create_account': 'Create Account',
         'already_have_account': 'Already have an account?',
         'dont_have_account': "Don't have an account?",
-        'privacy_policy_text': 'Privacy Policy\n\nKMM is committed to protecting your privacy. This Privacy Policy explains how we collect, use, and safeguard your information when you use our application.\n\nInformation We Collect:\n- Usage data and preferences\n- Bookmark and history data (stored locally)\n- App settings and configuration\n\nHow We Use Your Information:\n- To provide and improve our services\n- To personalize your experience\n- To maintain your bookmarks and viewing history\n\nData Storage:\nAll your personal data including bookmarks, viewing history, and settings are stored locally on your device. We do not transmit your personal data to external servers.\n\nThird-Party Services:\nOur app may use third-party services that have their own privacy policies. We encourage you to review their privacy policies.\n\nContact Us:\nIf you have any questions about this Privacy Policy, please contact us through the app settings.\n\nLast updated: 2026',
+        'privacy_policy_text': 'Privacy Policy\n\nKMM is committed to protecting your privacy. This Privacy Policy explains how we collect, use, and safeguard your information when you use our application.\n\nInformation We Collect:\n- Account credentials (username, email) — stored securely via Firebase Authentication\n- Bookmarks, watchlist, and viewing history — synced to your account via Firebase Firestore\n- App settings and preferences — stored locally on your device\n\nHow We Use Your Information:\n- To provide and improve our services\n- To sync your bookmarks and watchlist across devices\n- To maintain your viewing history and preferences\n\nData Storage:\nYour account data (bookmarks, watchlist, viewing history) is stored securely on Google Firebase Firestore cloud servers, encrypted in transit and at rest. App settings and preferences are stored locally on your device. Your password is never stored in plain text — Firebase Authentication handles it securely.\n\nData Sharing:\nWe do not sell or share your personal data with third parties. Your data is only accessible to you and is protected by Firebase Security Rules that require authentication.\n\nThird-Party Services:\nOur app uses Google Firebase (Authentication, Firestore, Storage, App Check) which has its own privacy policy. We encourage you to review Google\\'s privacy policy.\n\nYour Rights:\n- You can delete your account and all associated data at any time from your Profile page\n- You can export your bookmarks and watchlist locally\n- You can logout at any time to stop cloud sync\n\nContact Us:\nIf you have any questions about this Privacy Policy, please contact us at support@cmmovies.app.\n\nLast updated: 2026',
         'about_cm_movies_text': 'KMM\n\nYour ultimate movie and series companion app. Browse, search, and discover movies and TV series from around the world.\n\nFeatures:\n- Browse trending movies and TV shows\n- Search by title, genre, or tag\n- Bookmark your favorites\n- Download management\n- Multi-language support (Myanmar & English)\n- Dark & Light theme\n\nVersion 1.0.0\nDeveloped with love for movie enthusiasts.',
       };
     }
@@ -681,7 +711,7 @@ class AppConfig extends ChangeNotifier {
       'create_account': 'အကောင့်သစ် ဖွင့်ရန်',
       'already_have_account': 'အကောင့်ရှိပီးသားလား?',
       'dont_have_account': 'အကောင့်မရှိသေးဘူးလား?',
-      'privacy_policy_text': 'ကိုယ်ရေးအချက်အလက် မူဝါဒ\n\nKMM သည် သင့်ကိုယ်ရေးအချက်အလက်များကို ကာကွယ်ရန် ကတိကဝတ် ပြုထားပါသည်။ ဤ ကိုယ်ရေးအချက်အလက် မူဝါဒသည် သင် App ကို အသုံးပြုသောအခါ သင့်အချက်အလက်များကို မည်သို့ စုဆောင်း၊ အသုံးပြု၊ ကာကွယ်သည်ကို ရှင်းပြပါသည်။\n\nစုဆောင်းသော အချက်အလက်များ:\n- အသုံးပြုမှုဒေတာနှင့် ကိုယ်ကြိုက်ဆန္ဒများ\n- သိမ်းဆည်းမှုနှင့် ကြည့်ရှုမှတ်တမ်းဒေတာ (ဒေသန္တရသိုလ်တွင် သိမ်းဆည်း)\n- App ဆက်တင်နှင့် ပြင်ဆင်မှုများ\n\nအချက်အလက် အသုံးပြုပုံ:\n- ဝန်ဆောင်မှုများ ပေးရန်နှင့် တိုးတက်စေရန်\n- သင့်အတွေ့အကြုံကို ပိုမိုကောင်းမွန်စေရန်\n- သိမ်းဆည်းမှုနှင့် ကြည့်ရှုမှတ်တမ်းကို ထိန်းသိမ်းရန်\n\nဒေတာ သိမ်းဆည်းမှု:\nသင့်ကိုယ်ရေးအချက်အလက်အားလုံးကို သင့်စက်ပေါ်တွင်သာ ဒေသန္တရအားဖြင့် သိမ်းဆည်းထားပါသည်။ ကျွန်တော်တို့သည် သင့်ကိုယ်ရေးအချက်အလက်ကို ပြင်ပဆာဗာများသို့ မထုတ်ပိုးပါ။\n\nနောက်ဆုံး အသစ်ပြင်ဆင်ချက်: ၂၀၂၆',
+      'privacy_policy_text': 'ကိုယ်ရေးအချက်အလက် မူဝါဒ\n\nKMM သည် သင့်ကိုယ်ရေးအချက်အလက်များကို ကာကွယ်ရန် ကတိကဝတ် ပြုထားပါသည်။ ဤ မူဝါဒသည် သင့်အချက်အလက်များကို မည်သို့ စုဆောင်း၊ အသုံးပြု၊ ကာကွယ်သည်ကို ရှင်းပြပါသည်။\n\nစုဆောင်းသော အချက်အလက်များ:\n- အကောင့်အချက်အလက် (အသုံးပြုသူအမည်၊ အီးမေးလ်) — Firebase Authentication မှ ဘေးကင်းစွာ သိမ်းဆည်း\n- သိမ်းဆည်းမှု၊ ကြည့်ရန်စာရင်း၊ ကြည့်ရှုမှတ်တမ်း — Firebase Firestore မှတဆင့် သင့်အကောင့်သို့ ချိတ်ဆက်\n- App ဆက်တင်နှင့် ကိုယ်ကြိုက်ဆန္ဒများ — သင့်စက်ပေါ်တွင် ဒေသန္တရအားဖြင့် သိမ်းဆည်း\n\nအချက်အလက် အသုံးပြုပုံ:\n- ဝန်ဆောင်မှုများ ပေးရန်နှင့် တိုးတက်စေရန်\n- သင့်သိမ်းဆည်းမှုနှင့် ကြည့်ရန်စာရင်းကို စက်အချင်းချင်း ချိတ်ဆက်ရန်\n- ကြည့်ရှုမှတ်တမ်းနှင့် ကိုယ်ကြိုက်ဆန္ဒများ ထိန်းသိမ်းရန်\n\nဒေတာ သိမ်းဆည်းမှု:\nသင့်အကောင့်ဒေတာ (သိမ်းဆည်းမှု၊ ကြည့်ရန်စာရင်း၊ ကြည့်ရှုမှတ်တမ်း) ကို Google Firebase Firestore ကလောင့်ဆာဗာများတွင် ဘေးကင်းစွာ သိမ်းဆည်းထားပြီး ဖြတ်သန်းရာတွင်လည်းကောင်း၊ သိမ်းဆည်းစဉ်လည်းကောင်း ဝှက်စာပြုလုပ်ထားပါသည်။ App ဆက်တင်များကို သင့်စက်ပေါ်တွင် ဒေသန္တရအားဖြင့် သိမ်းဆည်းပါသည်။ သင့်စကားဝှက်ကို မည်သောအခါမှ ရှင်းလင်းသောစာသားအဖြစ် မသိမ်းဆည်းပါ — Firebase Authentication က ဘေးကင်းစွာ စီမံခန့်ခွဲပါသည်။\n\nဒေတာ မျှဝေမှု:\nကျွန်တော်တို့သည် သင့်ကိုယ်ရေးအချက်အလက်ကို တတိယဦးများထံ ရောင်းချခြင်း သို့မဟုတ် မျှဝေခြင်း မပြုပါ။ သင့်ဒေတာကို သင်တစ်ဦးတည်းသာ ဝင်ရောက်ကြည့်ရှုနိုင်ပြီး Firebase လုံခြုံရေးစည်းမျဉ်းများဖြင့် ကာကွယ်ထားပါသည်။\n\nတတိယဦး ဝန်ဆောင်မှုများ:\nကျွန်တော်တို့ App သည် Google Firebase (Authentication, Firestore, Storage, App Check) ကို အသုံးပြုပါသည်။ Google ၏ ကိုယ်ရေးအချက်အလက် မူဝါဒကို ဖတ်ရှုရန် အကြံပြုပါသည်။\n\nသင့်အခွင့်အရေးများ:\n- သင့်အကောင့်နှင့် ဆက်စပ်ဒေတာအားလုံးကို သင့် Profile စာမျက်နှာမှ အချိန်မရွေး ဖျက်နိုင်ပါသည်\n- သင့်သိမ်းဆည်းမှုနှင့် ကြည့်ရန်စာရင်းကို ဒေသန္တရသို့ ထုတ်ယူနိုင်ပါသည်\n- ကလောင့်ချိတ်ဆက်မှုကို ရပ်နားရန် အချိန်မရွေး ထွက်နိုင်ပါသည်\n\nဆက်သွယ်ရန်:\nကိုယ်ရေးအချက်အလက် မူဝါဒအတွက် မေးခွန်းရှိပါက support@cmmovies.app သို့ ဆက်သွယ်ပါ။\n\nနောက်ဆုံး အသစ်ပြင်ဆင်ချက်: ၂၀၂၆',
       'about_cm_movies_text': 'KMM\n\nရုပ်ရှင်နှင့် ဇာတ်လမ်းတွဲများ ကြည့်ရှုရန် အကောင်းဆုံး App ဖြစ်ပါသည်။ ကမ္ဘာအနှံ့ရုပ်ရှင်နှင့် TV ဇာတ်လမ်းတွဲများကို ရှာဖွေ၊ ကြည့်ရှုနိုင်ပါသည်။\n\nအသွင်အပြင်များ:\n- လူကြိုက်များရုပ်ရှင်နှင့် TV ရှိုးများ ကြည့်ရှုရန်\n- ခေါင်းစဉ်၊ အမျိုးအစား၊ တက်ဂ်အလိုက် ရှာဖွေရန်\n- နှစ်သက်ရာများ သိမ်းဆည်းရန်\n- Download စီမံခန့်ခွဲရန်\n- ဘာသာစကား ၂ မျိုး ပံ့ပိုးမှု (မြန်မာ & English)\n- အမှောင်နှင့် အလင်း Theme\n\nဗားရှင်း 1.0.0\nရုပ်ရှင်ချစ်သူများအတွက် ချစ်ခြင်းမေတ္တာဖြင့် ဖန်တီးထားပါသည်။',
     };
   }

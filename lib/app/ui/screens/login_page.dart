@@ -29,6 +29,27 @@ class _LoginPageState extends State<LoginPage>
   String? _loginError;
   String? _registerError;
 
+  // L2: Login rate limiting
+  static const int _maxLoginAttempts = 5;
+  static const Duration _lockoutDuration = Duration(seconds: 30);
+  int _failedLoginAttempts = 0;
+  DateTime? _lockoutUntil;
+
+  bool get _isLockedOut {
+    if (_lockoutUntil == null) return false;
+    if (DateTime.now().isAfter(_lockoutUntil!)) {
+      _lockoutUntil = null;
+      _failedLoginAttempts = 0;
+      return false;
+    }
+    return true;
+  }
+
+  Duration get _remainingLockout {
+    if (_lockoutUntil == null) return Duration.zero;
+    return _lockoutUntil!.difference(DateTime.now());
+  }
+
   @override
   void initState() {
     super.initState();
@@ -47,6 +68,21 @@ class _LoginPageState extends State<LoginPage>
   }
 
   Future<void> _handleLogin() async {
+    // L2: Check rate limit before attempting login
+    if (_isLockedOut) {
+      final remaining = _remainingLockout.inSeconds;
+      setState(() {
+        _loginError = 'Too many failed attempts. Please wait ${remaining}s before trying again.';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Too many failed attempts. Wait ${remaining}s.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
     if (!_loginFormKey.currentState!.validate()) return;
 
     setState(() {
@@ -63,6 +99,10 @@ class _LoginPageState extends State<LoginPage>
     if (mounted) {
       setState(() => _isLoggingIn = false);
       if (success) {
+        // L2: Reset failed attempts on successful login
+        _failedLoginAttempts = 0;
+        _lockoutUntil = null;
+
         // Merge local bookmarks to cloud after login
         final bookmarkService = BookmarkService();
         await bookmarkService.mergeLocalBookmarksToCloud();
@@ -79,9 +119,18 @@ class _LoginPageState extends State<LoginPage>
         // Auth state change in AppConfig will automatically navigate to HomePage
         // No manual navigation needed — CMMoviesApp watches isLoggedIn
       } else {
-        setState(() {
-          _loginError = appConfig.translate('login_failed');
-        });
+        // L2: Increment failed login attempts
+        _failedLoginAttempts++;
+        if (_failedLoginAttempts >= _maxLoginAttempts) {
+          _lockoutUntil = DateTime.now().add(_lockoutDuration);
+          setState(() {
+            _loginError = 'Too many failed attempts. Please wait ${_lockoutDuration.inSeconds}s before trying again.';
+          });
+        } else {
+          setState(() {
+            _loginError = appConfig.translate('login_failed');
+          });
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(appConfig.translate('login_failed')),
@@ -433,6 +482,7 @@ class _LoginPageState extends State<LoginPage>
               decoration: InputDecoration(
                 labelText: appConfig.translate('password'),
                 prefixIcon: const Icon(Icons.lock_outline),
+                hintText: '8+ chars, uppercase, lowercase, number',
                 suffixIcon: IconButton(
                   icon: Icon(_obscureRegPassword
                       ? Icons.visibility_off
@@ -449,8 +499,17 @@ class _LoginPageState extends State<LoginPage>
                 if (val == null || val.trim().isEmpty) {
                   return 'Please enter password';
                 }
-                if (val.trim().length < 6) {
-                  return 'Password must be at least 6 characters';
+                if (val.trim().length < 8) {
+                  return 'Password must be at least 8 characters';
+                }
+                if (!RegExp(r'[A-Z]').hasMatch(val)) {
+                  return 'Password must contain at least one uppercase letter';
+                }
+                if (!RegExp(r'[a-z]').hasMatch(val)) {
+                  return 'Password must contain at least one lowercase letter';
+                }
+                if (!RegExp(r'[0-9]').hasMatch(val)) {
+                  return 'Password must contain at least one number';
                 }
                 return null;
               },

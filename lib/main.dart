@@ -66,26 +66,69 @@ void main() async {
   );
 }
 
-class CMMoviesApp extends StatelessWidget {
+class CMMoviesApp extends StatefulWidget {
   const CMMoviesApp({super.key});
+
+  @override
+  State<CMMoviesApp> createState() => _CMMoviesAppState();
+}
+
+class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  // L3: Track app lifecycle for session timeout
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // App came back to foreground — check session timeout
+      final appConfig = Provider.of<AppConfig>(context, listen: false);
+      if (appConfig.isLoggedIn && appConfig.checkSessionTimeout()) {
+        // Session timed out while app was in background
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Session expired due to inactivity. Please login again.'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 4),
+          ),
+        );
+      } else {
+        appConfig.recordActivity();
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final appConfig = Provider.of<AppConfig>(context);
 
-    return MaterialApp(
-      title: 'KMM',
-      debugShowCheckedModeBanner: false,
-      theme: _buildLightTheme(),
-      darkTheme: _buildDarkTheme(),
-      themeMode: appConfig.themeMode,
-      // Auth gate: show LoginPage if not logged in, HomePage if logged in
-      // This ensures Firestore reads only happen after authentication
-      home: appConfig.isLoadingAuth
-          ? _buildSplashScreen(appConfig)
-          : appConfig.isLoggedIn
-              ? const HomePage()
-              : const LoginPage(),
+    return GestureDetector(
+      // L3: Record activity on any user tap to keep session alive
+      onTap: () => appConfig.recordActivity(),
+      onPanDown: (_) => appConfig.recordActivity(),
+      child: MaterialApp(
+        title: 'KMM',
+        debugShowCheckedModeBanner: false,
+        theme: _buildLightTheme(),
+        darkTheme: _buildDarkTheme(),
+        themeMode: appConfig.themeMode,
+        // Auth gate: show LoginPage if not logged in, HomePage if logged in
+        // This ensures Firestore reads only happen after authentication
+        home: appConfig.isLoadingAuth
+            ? _buildSplashScreen(appConfig)
+            : appConfig.isLoggedIn
+                ? const HomePage()
+                : const LoginPage(),
+      ),
     );
   }
 

@@ -462,8 +462,17 @@ class _ProfilePageState extends State<ProfilePage> {
                             if (val == null || val.trim().isEmpty) {
                               return 'Please enter new password';
                             }
-                            if (val.trim().length < 6) {
-                              return 'Password must be at least 6 characters';
+                            if (val.trim().length < 8) {
+                              return 'Password must be at least 8 characters';
+                            }
+                            if (!RegExp(r'[A-Z]').hasMatch(val)) {
+                              return 'Must contain an uppercase letter';
+                            }
+                            if (!RegExp(r'[a-z]').hasMatch(val)) {
+                              return 'Must contain a lowercase letter';
+                            }
+                            if (!RegExp(r'[0-9]').hasMatch(val)) {
+                              return 'Must contain a number';
                             }
                             return null;
                           },
