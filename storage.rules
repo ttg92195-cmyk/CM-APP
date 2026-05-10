@@ -1,0 +1,48 @@
+rules_version = '2';
+service cloud.storage {
+  match /b/{bucket}/o {
+
+    // Helper: Check if the authenticated user is an admin
+    function isAdmin() {
+      return request.auth != null &&
+        (firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin'
+        || firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin == true);
+    }
+
+    // Helper: Check if user owns the document
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    // ============================================
+    // DEFAULT: Deny all access unless explicitly granted
+    // ============================================
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // ============================================
+    // MOVIE POSTERS / IMAGES — authenticated users can read
+    // ============================================
+    match /movies/{imagePath=**} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+
+    // ============================================
+    // USER AVATARS — users can read all, write own only
+    // ============================================
+    match /users/{userId}/{imagePath=**} {
+      allow read: if request.auth != null;
+      allow write: if isOwner(userId) || isAdmin();
+    }
+
+    // ============================================
+    // APP ASSETS — anyone authenticated can read
+    // ============================================
+    match /assets/{assetPath=**} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+  }
+}
