@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -35,8 +36,12 @@ void main() async {
 
   // Initialize Firebase App Check for security - prevents unauthorized API access
   // from outside the app (e.g., scripts, other apps)
+  // Uses Debug provider in development (no SHA-256 needed)
+  // Uses Play Integrity in production (requires SHA-256 in Firebase Console)
   await FirebaseAppCheck.instance.activate(
-    androidProvider: AndroidProvider.playIntegrity,
+    androidProvider: kDebugMode
+        ? AndroidProvider.debug
+        : AndroidProvider.playIntegrity,
   );
 
   SystemChrome.setSystemUIOverlayStyle(
