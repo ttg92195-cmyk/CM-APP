@@ -64,68 +64,28 @@ class MovieCard extends StatelessWidget {
                   ),
                 ),
 
-                // 4K Badge - top left corner
-                if (movie.resolution != null &&
-                    movie.resolution!.isNotEmpty &&
-                    movie.resolution!.toUpperCase().contains('4K'))
+                // Quality Badge - top left corner
+                if (movie.resolution != null && movie.resolution!.isNotEmpty)
                   Positioned(
-                    top: 6,
-                    left: 6,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFE50914),
-                        borderRadius: BorderRadius.circular(4),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.5),
-                            blurRadius: 4,
-                            offset: const Offset(0, 1),
-                          ),
-                        ],
-                      ),
-                      child: const Text(
-                        '4K',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-
-                // Resolution Badge (non-4K) - top left corner
-                if (movie.resolution != null &&
-                    movie.resolution!.isNotEmpty &&
-                    !movie.resolution!.toUpperCase().contains('4K'))
-                  Positioned(
-                    top: 6,
-                    left: 6,
+                    top: 4,
+                    left: 4,
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                       decoration: BoxDecoration(
-                        color: movie.resolution!.toLowerCase().contains('1080')
-                            ? const Color(0xFFFF6D00)
-                            : movie.resolution!.toLowerCase().contains('720')
-                                ? const Color(0xFFFFAB00)
-                                : (isDark ? Colors.black87 : Colors.white.withOpacity(0.9)),
-                        borderRadius: BorderRadius.circular(4),
+                        color: _getQualityBadgeColor(movie.resolution!),
+                        borderRadius: BorderRadius.circular(3),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.3),
-                            blurRadius: 4,
+                            color: Colors.black.withOpacity(0.5),
+                            blurRadius: 3,
                             offset: const Offset(0, 1),
                           ),
                         ],
                       ),
                       child: Text(
-                        movie.resolution!,
-                        style: TextStyle(
-                          color: (movie.resolution!.toLowerCase().contains('1080') ||
-                                  movie.resolution!.toLowerCase().contains('720'))
-                              ? Colors.white
-                              : (isDark ? Colors.white70 : Colors.black87),
+                        _getQualityLabel(movie.resolution!),
+                        style: const TextStyle(
+                          color: Colors.white,
                           fontSize: 8,
                           fontWeight: FontWeight.bold,
                         ),
@@ -174,17 +134,18 @@ class MovieCard extends StatelessWidget {
                   ),
               ],
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 2),
             // Title
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 2),
               child: Text(
                 movie.title,
-                maxLines: 2,
+                maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.bodySmall?.copyWith(
                   fontWeight: FontWeight.w600,
-                  height: 1.3,
+                  height: 1.2,
+                  fontSize: 11,
                 ),
               ),
             ),
@@ -196,7 +157,7 @@ class MovieCard extends StatelessWidget {
                   movie.year!,
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: theme.colorScheme.onSurface.withOpacity(0.6),
-                    fontSize: 11,
+                    fontSize: 10,
                   ),
                 ),
               ),
@@ -204,5 +165,26 @@ class MovieCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  /// Get standardized quality label from resolution string
+  static String _getQualityLabel(String resolution) {
+    final r = resolution.toLowerCase();
+    if (r.contains('4k') || r.contains('uhd')) return '4K';
+    if (r.contains('1080')) return '1080p';
+    if (r.contains('720')) return '720p';
+    if (r.contains('480')) return '480p';
+    if (r.contains('hd') && !r.contains('fhd')) return '720p';
+    if (r.contains('fhd')) return '1080p';
+    return resolution;
+  }
+
+  /// Get badge color based on quality
+  static Color _getQualityBadgeColor(String resolution) {
+    final r = resolution.toLowerCase();
+    if (r.contains('4k') || r.contains('uhd')) return const Color(0xFFE50914); // Red
+    if (r.contains('1080') || r.contains('fhd')) return const Color(0xFFFF6D00); // Orange
+    if (r.contains('720') || r.contains('hd')) return const Color(0xFFFFAB00); // Amber
+    return const Color(0xFF4CAF50); // Green for others
   }
 }
