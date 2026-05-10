@@ -21,29 +21,32 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Load environment variables before Firebase init
-  // If .env doesn't exist (e.g., during testing), try to load anyway but don't crash
   try {
     await dotenv.load(fileName: '.env');
   } catch (_) {
-    // .env file not found - Firebase will use empty strings
-    // This should only happen during development/testing
     debugPrint('Warning: .env file not found. Firebase config may be missing.');
   }
 
-  // Initialize Firebase
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  // Initialize Firebase with error handling
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (e) {
+    debugPrint('Firebase initialization error: $e');
+  }
 
-  // Initialize Firebase App Check for security - prevents unauthorized API access
-  // from outside the app (e.g., scripts, other apps)
-  // Uses Debug provider in development (no SHA-256 needed)
-  // Uses Play Integrity in production (requires SHA-256 in Firebase Console)
-  await FirebaseAppCheck.instance.activate(
-    androidProvider: kDebugMode
-        ? AndroidProvider.debug
-        : AndroidProvider.playIntegrity,
-  );
+  // Initialize Firebase App Check — use Debug provider always for now
+  // because Play Integrity requires SHA-256 fingerprint registration
+  // in Firebase Console (not yet set up).
+  // TODO: Switch to Play Integrity when SHA-256 is registered
+  try {
+    await FirebaseAppCheck.instance.activate(
+      androidProvider: AndroidProvider.debug,
+    );
+  } catch (e) {
+    debugPrint('App Check activation error: $e');
+  }
 
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
