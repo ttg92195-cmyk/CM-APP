@@ -250,11 +250,130 @@ class DownloadManagerService extends ChangeNotifier {
     ).downloadedSizeText;
   }
 
-  /// Initialize - load saved tasks (only runs once)
+  /// Initialize - load saved tasks and migrate old downloads (only runs once)
   Future<void> init() async {
     if (_isInitialized) return;
     _isInitialized = true;
     await _loadTasks();
+    await _migrateOldDownloads();
+  }
+
+  /// Auto-migrate download files from old public directory to new scoped storage.
+  /// Old path: /storage/emulated/0/Download/CM_Movies/
+  /// New path: Android/data/than.pre.cm/files/Download/CM_Movies/
+  /// This runs once and silently moves any files found in the old location.
+  Future<void> _migrateOldDownloads() async {
+    if (!Platform.isAndroid) return;
+
+    // Check if migration was already done
+    final prefs = await SharedPreferences.getInstance();
+    final migrated = prefs.getBool('downloads_migrated_v2') ?? false;
+    if (migrated) return;
+
+    try {
+      final oldDir = Directory('/storage/emulated/0/Download/CM_Movies');
+      if (!await oldDir.exists()) {
+        // No old directory, mark as migrated and return
+        await prefs.setBool('downloads_migrated_v2', true);
+        return;
+      }
+
+      final newDir = await _getDownloadDir();
+      final newDirectory = Directory(newDir);
+
+      // Ensure new directory exists
+      if (!await newDirectory.exists()) {
+        await newDirectory.create(recursive: true);
+      }
+
+      // Move each file from old to new directory
+      int movedCount = 0;
+      await for (final entity in oldDir.list()) {
+        if (entity is File) {
+          final fileName = entity.path.split('/').last;
+          final newPath = '$newDir/$fileName';
+
+          // Skip if file already exists in new location
+          if (await File(newPath).exists()) {
+            try {
+              await entity.delete();
+            } catch (_) {}
+            continue;
+          }
+
+          try {
+            await entity.rename(newPath);
+            movedCount++;
+          } catch (e) {
+            // rename might fail across mount points, try copy + delete
+            try {
+              await entity.copy(newPath);
+              await entity.delete();
+              movedCount++;
+            } catch (e2) {
+              debugPrint('Failed to migrate file $fileName: $e2');
+            }
+          }
+        }
+      }
+
+      // Update task save paths to point to new directory
+      bool tasksUpdated = false;
+      for (int i = 0; i < _tasks.length; i++) {
+        final task = _tasks[i];
+        if (task.savePath.contains('/storage/emulated/0/Download/CM_Movies/')) {
+          final fileName = task.savePath.split('/').last;
+          final newPath = '$newDir/$fileName';
+
+          // Update task with new path
+          _tasks[i] = DownloadTask(
+            id: task.id,
+            movieId: task.movieId,
+            movieTitle: task.movieTitle,
+            moviePoster: task.moviePoster,
+            url: task.url,
+            quality: task.quality,
+            size: task.size,
+            serverName: task.serverName,
+            savePath: newPath,
+            addedAt: task.addedAt,
+            completedAt: task.completedAt,
+            status: task.status,
+            progress: task.progress,
+            downloadedBytes: task.downloadedBytes,
+            totalBytes: task.totalBytes,
+            errorMessage: task.errorMessage,
+            speedBytesPerSec: task.speedBytesPerSec,
+            etaSeconds: task.etaSeconds,
+          );
+          tasksUpdated = true;
+        }
+      }
+
+      if (tasksUpdated) {
+        await _saveTasks();
+        notifyListeners();
+      }
+
+      // Try to remove the old directory if empty
+      try {
+        final remaining = await oldDir.list().length;
+        if (remaining == 0) {
+          await oldDir.delete();
+        }
+      } catch (_) {}
+
+      if (movedCount > 0) {
+        debugPrint('Migrated $movedCount download files to scoped storage');
+      }
+
+      // Mark migration as complete
+      await prefs.setBool('downloads_migrated_v2', true);
+    } catch (e) {
+      debugPrint('Download migration failed (non-critical): $e');
+      // Still mark as migrated to avoid retrying on every app start
+      await prefs.setBool('downloads_migrated_v2', true);
+    }
   }
 
   // ===== PERMISSION HANDLING =====
