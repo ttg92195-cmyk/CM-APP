@@ -28,7 +28,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
   final BookmarkService _bookmarkService = BookmarkService();
   final WatchlistService _watchlistService = WatchlistService();
   final RecentService _recentService = RecentService();
-  final DownloadManagerService _downloadManager = DownloadManagerService();
+  final DownloadManagerService _downloadManager = DownloadManagerService.instance;
 
   MovieDetail? _seriesDetail;
   bool _isLoading = true;
@@ -46,6 +46,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _downloadManager.init(); // Ensure download state is loaded (singleton: only runs once)
     _loadSeriesDetail();
   }
 
@@ -835,6 +836,8 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                   iconColor: accentColor,
                   collapsedBackgroundColor: Colors.transparent,
                   backgroundColor: Colors.transparent,
+                  shape: const RoundedRectangleBorder(side: BorderSide.none),
+                  collapsedShape: const RoundedRectangleBorder(side: BorderSide.none),
                   leading: Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
@@ -886,6 +889,8 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                           iconColor: accentColor,
                           collapsedBackgroundColor: Colors.transparent,
                           backgroundColor: Colors.transparent,
+                          shape: const RoundedRectangleBorder(side: BorderSide.none),
+                          collapsedShape: const RoundedRectangleBorder(side: BorderSide.none),
                           leading: Icon(Icons.play_circle_outline,
                               color: isDark ? Colors.white54 : Colors.black54,
                               size: 20),
@@ -949,38 +954,59 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                                             ),
                                           ],
                                         ),
-                                        const SizedBox(height: 6),
-                                        SizedBox(
-                                          width: double.infinity,
-                                          child: ElevatedButton.icon(
-                                            onPressed: link.url.isNotEmpty
-                                                ? () => _launchUrl(link.url)
-                                                : null,
-                                            icon: const Icon(Icons.download,
-                                                size: 16),
-                                            label:
-                                                Text('Download $qualityLabel'),
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor: accentColor,
-                                              foregroundColor: Colors.white,
-                                              disabledBackgroundColor: isDark
-                                                  ? Colors.grey.shade700
-                                                  : Colors.grey.shade400,
-                                              disabledForegroundColor: isDark
-                                                  ? Colors.grey.shade500
-                                                  : Colors.grey.shade600,
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      vertical: 9),
-                                              shape: RoundedRectangleBorder(
-                                                  borderRadius:
-                                                      BorderRadius.circular(
-                                                          8)),
-                                              textStyle: const TextStyle(
-                                                  fontWeight: FontWeight.w600,
-                                                  fontSize: 12),
+                                        const SizedBox(height: 8),
+                                        // Download buttons row
+                                        Row(
+                                          children: [
+                                            // In-app download
+                                            Expanded(
+                                              child: ElevatedButton.icon(
+                                                onPressed: link.url.isNotEmpty
+                                                    ? () => _startInAppDownload(link)
+                                                    : null,
+                                                icon: const Icon(Icons.downloading, size: 16),
+                                                label: Text('Save $qualityLabel'),
+                                                style: ElevatedButton.styleFrom(
+                                                  backgroundColor: const Color(0xFF4CAF50),
+                                                  foregroundColor: Colors.white,
+                                                  disabledBackgroundColor: isDark
+                                                      ? Colors.grey.shade700 : Colors.grey.shade400,
+                                                  disabledForegroundColor: isDark
+                                                      ? Colors.grey.shade500 : Colors.grey.shade600,
+                                                  padding: const EdgeInsets.symmetric(vertical: 9),
+                                                  shape: RoundedRectangleBorder(
+                                                      borderRadius: BorderRadius.circular(8)),
+                                                  textStyle: const TextStyle(
+                                                      fontWeight: FontWeight.w600, fontSize: 12),
+                                                ),
+                                              ),
                                             ),
-                                          ),
+                                            const SizedBox(width: 8),
+                                            // External download
+                                            Expanded(
+                                              child: OutlinedButton.icon(
+                                                onPressed: link.url.isNotEmpty
+                                                    ? () => _launchUrl(link.url)
+                                                    : null,
+                                                icon: const Icon(Icons.open_in_new, size: 16),
+                                                label: Text('Open $qualityLabel'),
+                                                style: OutlinedButton.styleFrom(
+                                                  foregroundColor: accentColor,
+                                                  disabledForegroundColor: isDark
+                                                      ? Colors.grey.shade500 : Colors.grey.shade600,
+                                                  padding: const EdgeInsets.symmetric(vertical: 9),
+                                                  shape: RoundedRectangleBorder(
+                                                      borderRadius: BorderRadius.circular(8)),
+                                                  side: BorderSide(
+                                                      color: link.url.isNotEmpty
+                                                          ? accentColor
+                                                          : (isDark ? Colors.grey.shade700 : Colors.grey.shade400)),
+                                                  textStyle: const TextStyle(
+                                                      fontWeight: FontWeight.w600, fontSize: 12),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ],
                                     ),
@@ -1035,6 +1061,8 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
             iconColor: accentColor,
             collapsedBackgroundColor: Colors.transparent,
             backgroundColor: Colors.transparent,
+            shape: const RoundedRectangleBorder(side: BorderSide.none),
+            collapsedShape: const RoundedRectangleBorder(side: BorderSide.none),
             leading: Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
@@ -1124,22 +1152,54 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                           style: TextStyle(color: metaTextColor, fontSize: 11),
                         ),
                         const SizedBox(height: 8),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed: link.url.isNotEmpty ? () => _launchUrl(link.url) : null,
-                            icon: const Icon(Icons.download, size: 16),
-                            label: Text('Download $qualityLabel'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: accentColor,
-                              foregroundColor: Colors.white,
-                              disabledBackgroundColor: isDark ? Colors.grey.shade700 : Colors.grey.shade400,
-                              disabledForegroundColor: isDark ? Colors.grey.shade500 : Colors.grey.shade600,
-                              padding: const EdgeInsets.symmetric(vertical: 10),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                              textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                        // Download buttons row
+                        Row(
+                          children: [
+                            // In-app download
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: link.url.isNotEmpty
+                                    ? () => _startInAppDownload(link)
+                                    : null,
+                                icon: const Icon(Icons.downloading, size: 16),
+                                label: Text('Save $qualityLabel'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF4CAF50),
+                                  foregroundColor: Colors.white,
+                                  disabledBackgroundColor: isDark
+                                      ? Colors.grey.shade700 : Colors.grey.shade400,
+                                  disabledForegroundColor: isDark
+                                      ? Colors.grey.shade500 : Colors.grey.shade600,
+                                  padding: const EdgeInsets.symmetric(vertical: 10),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                  textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+                                ),
+                              ),
                             ),
-                          ),
+                            const SizedBox(width: 8),
+                            // External download
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: link.url.isNotEmpty
+                                    ? () => _launchUrl(link.url)
+                                    : null,
+                                icon: const Icon(Icons.open_in_new, size: 16),
+                                label: Text('Open $qualityLabel'),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: accentColor,
+                                  disabledForegroundColor: isDark
+                                      ? Colors.grey.shade500 : Colors.grey.shade600,
+                                  padding: const EdgeInsets.symmetric(vertical: 10),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                  side: BorderSide(
+                                      color: link.url.isNotEmpty
+                                          ? accentColor
+                                          : (isDark ? Colors.grey.shade700 : Colors.grey.shade400)),
+                                  textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),

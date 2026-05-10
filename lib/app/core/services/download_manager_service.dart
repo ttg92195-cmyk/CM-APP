@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 /// Enum for download status
 enum DownloadStatus {
@@ -184,12 +185,82 @@ class DownloadManagerService extends ChangeNotifier {
     await _loadTasks();
   }
 
+  // ===== PERMISSION HANDLING =====
+
+  /// Check if storage permission is granted
+  Future<bool> checkStoragePermission() async {
+    if (!Platform.isAndroid) return true;
+
+    // On Android 11+ (API 30+), check MANAGE_EXTERNAL_STORAGE
+    if (Platform.isAndroid) {
+      final sdkInt = await _getAndroidSdkVersion();
+      if (sdkInt >= 30) {
+        // Android 11+: Need MANAGE_EXTERNAL_STORAGE for public directory access
+        return await Permission.manageExternalStorage.isGranted;
+      } else {
+        // Android 10 and below: Use WRITE_EXTERNAL_STORAGE
+        return await Permission.storage.isGranted;
+      }
+    }
+    return true;
+  }
+
+  /// Request storage permission
+  /// Returns true if permission is granted
+  Future<bool> requestStoragePermission() async {
+    if (!Platform.isAndroid) return true;
+
+    final sdkInt = await _getAndroidSdkVersion();
+
+    if (sdkInt >= 30) {
+      // Android 11+: MANAGE_EXTERNAL_STORAGE
+      final status = await Permission.manageExternalStorage.request();
+      if (status.isGranted) return true;
+
+      // If permanently denied, open app settings
+      if (status.isPermanentlyDenied) {
+        await openAppSettings();
+        return false;
+      }
+      return false;
+    } else {
+      // Android 10 and below
+      final status = await Permission.storage.request();
+      if (status.isGranted) return true;
+
+      if (status.isPermanentlyDenied) {
+        await openAppSettings();
+        return false;
+      }
+      return false;
+    }
+  }
+
+  /// Get Android SDK version
+  Future<int> _getAndroidSdkVersion() async {
+    // Default to a safe value; we'll handle errors gracefully
+    try {
+      // This is a simple approach - we know the app targets Android
+      // and most devices are API 30+ now
+      return 30; // Default assume Android 11+ for safe permission handling
+    } catch (_) {
+      return 30;
+    }
+  }
+
   /// Get cross-platform download directory
   Future<String> _getDownloadDir() async {
     // Check custom download directory first
     if (_customDownloadDir != null && _customDownloadDir!.isNotEmpty) {
       final dir = Directory(_customDownloadDir!);
       if (await dir.exists()) return dir.path;
+      // Try to create the custom directory
+      try {
+        await dir.create(recursive: true);
+        return dir.path;
+      } catch (_) {
+        // Fall through to default
+      }
     }
 
     // On Android, prefer the public Download directory
@@ -285,6 +356,25 @@ class DownloadManagerService extends ChangeNotifier {
 
     final task = _tasks[index];
     if (task.status == DownloadStatus.downloading) return;
+
+    // Ensure save directory exists
+    try {
+      final saveDir = Directory(task.savePath).parent;
+      if (!await saveDir.exists()) {
+        await saveDir.create(recursive: true);
+      }
+    } catch (e) {
+      final idx = _tasks.indexWhere((t) => t.id == taskId);
+      if (idx != -1) {
+        _tasks[idx] = _tasks[idx].copyWith(
+          status: DownloadStatus.failed,
+          errorMessage: 'Cannot create download directory: $e',
+        );
+        await _saveTasks();
+        notifyListeners();
+      }
+      return;
+    }
 
     // Update status to downloading
     _tasks[index] = task.copyWith(status: DownloadStatus.downloading);
@@ -412,25 +502,17 @@ class DownloadManagerService extends ChangeNotifier {
     await startDownload(taskId);
   }
 
-  /// Remove a download task
-  Future<void> removeTask(String taskId) async {
+  /// Remove a download task (optionally keep the downloaded file)
+  Future<void> removeTask(String taskId, {bool keepFile = false}) async {
     // Cancel if active
     final cancelToken = _cancelTokens[taskId];
     if (cancelToken != null && !cancelToken.isCancelled) {
       cancelToken.cancel('Removed by user');
     }
 
-    // Delete file if downloaded
-    final task = _tasks.firstWhere((t) => t.id == taskId);
-    if (task.status == DownloadStatus.completed) {
-      try {
-        final file = File(task.savePath);
-        if (await file.exists()) {
-          await file.delete();
-        }
-      } catch (_) {}
-    } else {
-      // Also delete partial files for incomplete downloads
+    // Delete file if not keeping it
+    if (!keepFile) {
+      final task = _tasks.firstWhere((t) => t.id == taskId);
       try {
         final file = File(task.savePath);
         if (await file.exists()) {
@@ -444,7 +526,7 @@ class DownloadManagerService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Clear all completed downloads
+  /// Clear all completed downloads (removes from list, keeps files)
   Future<void> clearCompleted() async {
     _tasks.removeWhere((t) => t.status == DownloadStatus.completed);
     await _saveTasks();

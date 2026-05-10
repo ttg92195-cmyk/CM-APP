@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -13,11 +14,27 @@ class DownloadPage extends StatefulWidget {
 
 class _DownloadPageState extends State<DownloadPage> {
   final DownloadManagerService _downloadManager = DownloadManagerService.instance;
+  bool _hasStoragePermission = false;
 
   @override
   void initState() {
     super.initState();
     _downloadManager.init();
+    _checkPermission();
+  }
+
+  Future<void> _checkPermission() async {
+    final granted = await _downloadManager.checkStoragePermission();
+    if (mounted) {
+      setState(() => _hasStoragePermission = granted);
+    }
+  }
+
+  Future<void> _requestPermission() async {
+    final granted = await _downloadManager.requestStoragePermission();
+    if (mounted) {
+      setState(() => _hasStoragePermission = granted);
+    }
   }
 
   @override
@@ -51,6 +68,10 @@ class _DownloadPageState extends State<DownloadPage> {
       ),
       body: Column(
         children: [
+          // Storage Permission Banner (show if not granted)
+          if (!_hasStoragePermission && Platform.isAndroid)
+            _buildPermissionBanner(appConfig, theme),
+
           // Download Toggle
           _buildDownloadToggle(appConfig, theme),
 
@@ -107,6 +128,64 @@ class _DownloadPageState extends State<DownloadPage> {
                 );
               },
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPermissionBanner(AppConfig appConfig, ThemeData theme) {
+    final isDark = theme.brightness == Brightness.dark;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isDark ? Colors.orange.shade900.withOpacity(0.3) : Colors.orange.shade50,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: Colors.orange.shade400.withOpacity(0.5),
+          width: 0.5,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.folder_off_outlined, color: Colors.orange.shade400, size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Storage Permission Required',
+                  style: TextStyle(
+                    color: isDark ? Colors.orange.shade200 : Colors.orange.shade800,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Allow storage access so downloads are visible in your file manager',
+                  style: TextStyle(
+                    color: isDark ? Colors.orange.shade300.withOpacity(0.7) : Colors.orange.shade700,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton(
+            onPressed: _requestPermission,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange.shade600,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+            ),
+            child: const Text('Allow', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
           ),
         ],
       ),
@@ -179,7 +258,7 @@ class _DownloadPageState extends State<DownloadPage> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Download movies from the detail page',
+            'Downloads will save to your selected location',
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurface.withOpacity(0.3),
             ),
@@ -311,7 +390,7 @@ class _DownloadPageState extends State<DownloadPage> {
                           const SizedBox(width: 4),
                           Text(
                             isDownloading
-                                ? '${task.progressText} · ${task.downloadedSizeText}'
+                                ? '${task.progressText} · ${task.downloadedSizeText} / ${task.totalSizeText}'
                                 : appConfig.translate('paused'),
                             style: TextStyle(
                               color: isDownloading ? accentColor : Colors.orange.shade400,
@@ -470,9 +549,10 @@ class _DownloadPageState extends State<DownloadPage> {
             ),
             IconButton(
               icon: Icon(Icons.delete_outline, size: 20, color: metaTextColor),
-              onPressed: () => _downloadManager.removeTask(task.id),
+              onPressed: () => _downloadManager.removeTask(task.id, keepFile: true),
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+              tooltip: 'Remove from list',
             ),
           ],
         ),
@@ -529,12 +609,16 @@ class _DownloadPageState extends State<DownloadPage> {
                             children: [
                               Icon(Icons.error_outline, size: 12, color: Colors.redAccent.shade200),
                               const SizedBox(width: 3),
-                              Text(
-                                appConfig.translate('failed'),
-                                style: TextStyle(
-                                  color: Colors.redAccent.shade200,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w500,
+                              Expanded(
+                                child: Text(
+                                  task.errorMessage ?? appConfig.translate('failed'),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: Colors.redAccent.shade200,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w500,
+                                  ),
                                 ),
                               ),
                             ],
@@ -570,6 +654,7 @@ class _DownloadPageState extends State<DownloadPage> {
   void _showDownloadSettings(AppConfig appConfig, ThemeData theme) async {
     final isDark = theme.brightness == Brightness.dark;
     String currentPath = await _downloadManager.getCurrentDownloadPath();
+    bool hasPermission = await _downloadManager.checkStoragePermission();
 
     if (!mounted) return;
     showModalBottomSheet(
@@ -606,6 +691,76 @@ class _DownloadPageState extends State<DownloadPage> {
                     ),
                   ),
                   const SizedBox(height: 20),
+
+                  // Storage Permission
+                  if (Platform.isAndroid) ...[
+                    Text(
+                      'Storage Permission',
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: theme.colorScheme.onSurface.withOpacity(0.7),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: hasPermission
+                            ? (isDark ? Colors.green.shade900.withOpacity(0.3) : Colors.green.shade50)
+                            : (isDark ? Colors.orange.shade900.withOpacity(0.3) : Colors.orange.shade50),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: hasPermission
+                              ? Colors.green.shade400.withOpacity(0.5)
+                              : Colors.orange.shade400.withOpacity(0.5),
+                          width: 0.5,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            hasPermission ? Icons.check_circle : Icons.warning_amber_rounded,
+                            color: hasPermission ? Colors.green.shade400 : Colors.orange.shade400,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              hasPermission
+                                  ? 'Storage permission granted. Downloads are accessible via file manager.'
+                                  : 'Storage permission not granted. Downloads only accessible within the app.',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: hasPermission
+                                    ? Colors.green.shade300
+                                    : Colors.orange.shade300,
+                              ),
+                            ),
+                          ),
+                          if (!hasPermission) ...[
+                            const SizedBox(width: 8),
+                            TextButton(
+                              onPressed: () async {
+                                final granted = await _downloadManager.requestStoragePermission();
+                                setModalState(() => hasPermission = granted);
+                                if (mounted) {
+                                  setState(() => _hasStoragePermission = granted);
+                                }
+                              },
+                              style: TextButton.styleFrom(
+                                foregroundColor: Colors.orange.shade400,
+                                padding: const EdgeInsets.symmetric(horizontal: 8),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              child: const Text('Grant', style: TextStyle(fontSize: 12)),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
 
                   // Download Location
                   Text(
@@ -691,7 +846,7 @@ class _DownloadPageState extends State<DownloadPage> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Tap the folder icon to change the download location.',
+                    'Tap the folder icon to change the download location. Downloaded files will be accessible via your file manager.',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurface.withOpacity(0.5),
                     ),

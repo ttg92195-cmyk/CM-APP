@@ -838,6 +838,8 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                 iconColor: accentColor,
                 collapsedBackgroundColor: Colors.transparent,
                 backgroundColor: Colors.transparent,
+                shape: const RoundedRectangleBorder(side: BorderSide.none),
+                collapsedShape: const RoundedRectangleBorder(side: BorderSide.none),
                 leading: Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
