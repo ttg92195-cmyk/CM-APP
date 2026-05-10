@@ -260,19 +260,19 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
       String message;
       Color bgColor;
       switch (result) {
-        case DownloadManagerService.AddTaskResult.success:
+        case AddTaskResult.success:
           message = '${appConfig.translate('downloading')} — ${link.quality ?? link.resolution ?? 'Standard'}';
           bgColor = const Color(0xFF4CAF50);
           break;
-        case DownloadManagerService.AddTaskResult.blockedDomain:
+        case AddTaskResult.blockedDomain:
           message = 'Download blocked: domain not allowed';
           bgColor = Colors.redAccent;
           break;
-        case DownloadManagerService.AddTaskResult.emptyUrl:
+        case AddTaskResult.emptyUrl:
           message = 'Download URL is empty';
           bgColor = Colors.redAccent;
           break;
-        case DownloadManagerService.AddTaskResult.alreadyExists:
+        case AddTaskResult.alreadyExists:
           message = 'Already downloading ${link.quality ?? link.resolution ?? 'Standard'}';
           bgColor = Colors.orange;
           break;
@@ -282,7 +282,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
           content: Text(message),
           backgroundColor: bgColor,
           duration: const Duration(seconds: 3),
-          action: result == DownloadManagerService.AddTaskResult.success
+          action: result == AddTaskResult.success
               ? SnackBarAction(
                   label: 'View',
                   textColor: Colors.white,

@@ -180,6 +180,14 @@ class DownloadTask {
   }
 }
 
+/// Result of adding a download task
+enum AddTaskResult {
+  success,
+  blockedDomain,
+  emptyUrl,
+  alreadyExists,
+}
+
 /// Download Manager Service - handles all download operations
 /// Uses singleton pattern so all screens share the same download state
 class DownloadManagerService extends ChangeNotifier {
@@ -497,14 +505,6 @@ class DownloadManagerService extends ChangeNotifier {
   Future<String> getCurrentDownloadPath() async {
     if (_customDownloadDir != null) return _customDownloadDir!;
     return await _getDownloadDir();
-  }
-
-  /// Result of adding a download task
-  enum AddTaskResult {
-    success,
-    blockedDomain,
-    emptyUrl,
-    alreadyExists,
   }
 
   /// Add a new download task with result feedback
