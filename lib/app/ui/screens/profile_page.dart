@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/ui/screens/watchlist_screen.dart';
+import 'package:cm_movies/app/ui/screens/movie_bookmark_screen.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -266,6 +267,30 @@ class _ProfilePageState extends State<ProfilePage> {
                     color: Colors.green,
                   ),
                 ),
+              ),
+            ),
+
+            const SizedBox(height: 8),
+
+            // Bookmarks
+            Card(
+              child: ListTile(
+                leading: const Icon(
+                  Icons.bookmark_outline,
+                  color: Color(0xFFE50914),
+                ),
+                title: const Text(
+                  'Bookmarks',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                subtitle: const Text('View your bookmarked movies'),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const MovieBookmarkScreen()),
+                  );
+                },
               ),
             ),
 

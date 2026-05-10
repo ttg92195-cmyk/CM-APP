@@ -5,7 +5,6 @@ import 'package:cm_movies/app/ui/home/home_screen.dart';
 import 'package:cm_movies/app/ui/screens/movies_page.dart';
 import 'package:cm_movies/app/ui/screens/series_page.dart';
 import 'package:cm_movies/app/ui/screens/recent_page.dart';
-import 'package:cm_movies/app/ui/screens/movie_bookmark_screen.dart';
 import 'package:cm_movies/app/ui/screens/genres_tags_collections_page.dart';
 import 'package:cm_movies/app/ui/screens/download_page.dart';
 import 'package:cm_movies/app/ui/screens/settings_page.dart';
@@ -13,7 +12,6 @@ import 'package:cm_movies/app/ui/screens/login_page.dart';
 import 'package:cm_movies/app/ui/screens/profile_page.dart';
 import 'package:cm_movies/app/ui/screens/search_screen.dart';
 import 'package:cm_movies/app/ui/screens/admin_panel_page.dart';
-import 'package:cm_movies/app/ui/screens/watchlist_screen.dart';
 
 // Bottom nav tab indices (4 tabs)
 const int kHomeTab = 0;
@@ -206,21 +204,6 @@ class _HomePageState extends State<HomePage> {
               child: ListView(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 children: [
-                  // Bookmark
-                  _buildDrawerItem(
-                    icon: Icons.bookmark_outline,
-                    activeIcon: Icons.bookmark,
-                    title: appConfig.translate('bookmarks'),
-                    isDark: isDark,
-                    onTap: () {
-                      Navigator.pop(context);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const MovieBookmarkScreen()),
-                      );
-                    },
-                  ),
-
                   // Recent
                   _buildDrawerItem(
                     icon: Icons.history_outlined,
