@@ -260,13 +260,17 @@ class DownloadManagerService extends ChangeNotifier {
   // ===== PERMISSION HANDLING =====
 
   /// Check if storage permission is granted
+  /// Uses scoped storage on Android 11+ (no MANAGE_EXTERNAL_STORAGE needed)
+  /// Only checks legacy storage permission on Android 10 and below
   Future<bool> checkStoragePermission() async {
     if (!Platform.isAndroid) return true;
 
     if (Platform.isAndroid) {
       final sdkInt = await _getAndroidSdkVersion();
       if (sdkInt >= 30) {
-        return await Permission.manageExternalStorage.isGranted;
+        // Android 11+: Scoped storage - no special permission needed
+        // App-specific external directory is accessible without permission
+        return true;
       } else {
         return await Permission.storage.isGranted;
       }
@@ -276,24 +280,18 @@ class DownloadManagerService extends ChangeNotifier {
 
   /// Request storage permission
   /// Returns true if permission is granted
+  /// On Android 11+, scoped storage is used (no permission request needed)
   Future<bool> requestStoragePermission() async {
     if (!Platform.isAndroid) return true;
 
     final sdkInt = await _getAndroidSdkVersion();
 
     if (sdkInt >= 30) {
-      // Android 11+: MANAGE_EXTERNAL_STORAGE
-      final status = await Permission.manageExternalStorage.request();
-      if (status.isGranted) return true;
-
-      // If permanently denied, open app settings
-      if (status.isPermanentlyDenied) {
-        await openAppSettings();
-        return false;
-      }
-      return false;
+      // Android 11+: Scoped storage - no permission needed
+      // App writes to its own external directory automatically
+      return true;
     } else {
-      // Android 10 and below
+      // Android 10 and below: request legacy storage permission
       final status = await Permission.storage.request();
       if (status.isGranted) return true;
 
@@ -315,6 +313,9 @@ class DownloadManagerService extends ChangeNotifier {
   }
 
   /// Get cross-platform download directory
+  /// Uses scoped storage on Android 11+ (app-specific external directory)
+  /// which doesn't require MANAGE_EXTERNAL_STORAGE permission.
+  /// Files are accessible via file managers and persist across app updates.
   Future<String> _getDownloadDir() async {
     // Check custom download directory first
     if (_customDownloadDir != null && _customDownloadDir!.isNotEmpty) {
@@ -329,26 +330,33 @@ class DownloadManagerService extends ChangeNotifier {
       }
     }
 
-    // On Android, prefer the public Download directory
+    // On Android, use app-specific external storage (scoped storage)
+    // This avoids needing MANAGE_EXTERNAL_STORAGE and Play Store rejection.
+    // The directory is accessible via file managers under:
+    //   Android/data/than.pre.cm/files/Download/CM_Movies
     if (Platform.isAndroid) {
-      // Try external storage first (public Download folder)
-      final externalDir = Directory('/storage/emulated/0/Download/CM_Movies');
-      try {
-        if (!await externalDir.exists()) {
-          await externalDir.create(recursive: true);
-        }
-        return externalDir.path;
-      } catch (_) {
-        // Fall back to app-specific external directory
-        final appDir = await getExternalStorageDirectory();
-        if (appDir != null) {
-          final dir = Directory('${appDir.parent.path}/Download/CM_Movies');
+      final appDir = await getExternalStorageDirectory();
+      if (appDir != null) {
+        // Use a user-friendly path under the app's external storage
+        final dir = Directory('${appDir.path}/Download/CM_Movies');
+        try {
           if (!await dir.exists()) {
             await dir.create(recursive: true);
           }
           return dir.path;
+        } catch (_) {
+          // Fall back to the app external storage root
+          return appDir.path;
         }
       }
+
+      // Fallback to internal app directory
+      final appDocDir = await getApplicationDocumentsDirectory();
+      final dir = Directory('${appDocDir.path}/CM_Movies');
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+      return dir.path;
     }
 
     // On iOS and other platforms, use app documents directory

@@ -35,6 +35,9 @@ class AppConfig extends ChangeNotifier {
   bool _adminEmailsLoaded = false;
 
   // Load admin email mappings from Firestore instead of hardcoding in client
+  // NOTE: config/admin_emails is now admin-only read in Firestore rules.
+  // This map is only available after an admin has logged in. For first-time
+  // admin login, they should use their email address directly (with @).
   Future<void> _loadAdminEmailMap() async {
     if (_adminEmailsLoaded) return;
     try {
@@ -44,23 +47,31 @@ class AppConfig extends ChangeNotifier {
         _adminEmailMap = Map<String, String>.from(data['mappings'] ?? {});
       }
     } catch (e) {
-      debugPrint('Error loading admin email map: $e');
+      // Permission denied is expected for non-admin users - silently ignore
+      debugPrint('Admin email map not accessible (may require admin login): $e');
     }
     _adminEmailsLoaded = true;
   }
 
   // Helper to convert username to email format for Firebase Auth
-  // Checks Firestore config for admin email mappings; otherwise uses internal email
+  // For admin accounts: If input contains '@', use it directly as email.
+  // For regular accounts: Auto-append @cmmovies.app to username.
+  // Admin email mapping is only available after admin login (rules restrict access).
   Future<String> _usernameToEmail(String username) async {
-    final lowerUsername = username.toLowerCase();
-    await _loadAdminEmailMap();
-    if (_adminEmailMap.containsKey(lowerUsername)) {
-      return _adminEmailMap[lowerUsername]!;
-    }
     // If input already contains @, treat as email directly
     if (username.contains('@')) {
       return username;
     }
+
+    final lowerUsername = username.toLowerCase();
+
+    // Try loading admin email map (will only work if current user is admin)
+    await _loadAdminEmailMap();
+    if (_adminEmailMap.containsKey(lowerUsername)) {
+      return _adminEmailMap[lowerUsername]!;
+    }
+
+    // Default: append @cmmovies.app for regular users
     return '$lowerUsername@cmmovies.app';
   }
 

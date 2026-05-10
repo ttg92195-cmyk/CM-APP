@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/models/movie_detail.dart';
 import 'package:cm_movies/app/core/models/tag_and_genres.dart';
@@ -859,6 +860,34 @@ class FirestoreContentService {
     }
   }
 
+  // ==================== ADMIN VERIFICATION (Defense-in-Depth) ====================
+
+  /// Verify that the current user is an admin by checking Firestore directly.
+  /// This provides defense-in-depth beyond just Firestore rules — even if rules
+  /// are misconfigured, the client-side check prevents accidental admin operations.
+  Future<bool> _isCurrentUserAdmin() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return false;
+    try {
+      final doc = await _firestore.collection('users').doc(user.uid).get();
+      if (!doc.exists) return false;
+      final data = doc.data()!;
+      return data['role'] == 'admin' || data['isAdmin'] == true;
+    } catch (e) {
+      debugPrint('Admin verification failed: $e');
+      return false;
+    }
+  }
+
+  /// Throws an exception if the current user is not an admin.
+  /// Call this at the start of every admin-only operation.
+  Future<void> _requireAdmin() async {
+    final isAdmin = await _isCurrentUserAdmin();
+    if (!isAdmin) {
+      throw Exception('Admin permission required. You are not authorized to perform this action.');
+    }
+  }
+
   // ==================== ADMIN CRUD OPERATIONS ====================
 
   /// Generate slug from title
@@ -871,8 +900,9 @@ class FirestoreContentService {
         .trim();
   }
 
-  /// Add a new movie
+  /// Add a new movie (admin only)
   Future<String> addMovie(Map<String, dynamic> data) async {
+    await _requireAdmin();
     // Auto-generate slug if not provided
     if (!data.containsKey('slug') || (data['slug'] as String).isEmpty) {
       data['slug'] = _generateSlug(data['title'] as String);
@@ -953,8 +983,9 @@ class FirestoreContentService {
     return docRef.id;
   }
 
-  /// Update a movie
+  /// Update a movie (admin only)
   Future<void> updateMovie(String id, Map<String, dynamic> data) async {
+    await _requireAdmin();
     // Get old movie data to update counts
     final oldDoc = await _moviesRef.doc(id).get();
     if (oldDoc.exists) {
@@ -996,8 +1027,9 @@ class FirestoreContentService {
     await _moviesRef.doc(id).update(data);
   }
 
-  /// Delete a movie
+  /// Delete a movie (admin only)
   Future<void> deleteMovie(String id) async {
+    await _requireAdmin();
     // Get movie data to update counts
     final doc = await _moviesRef.doc(id).get();
     if (doc.exists) {
@@ -1019,8 +1051,9 @@ class FirestoreContentService {
     await _moviesRef.doc(id).delete();
   }
 
-  /// Add a genre
+  /// Add a genre (admin only)
   Future<String> addGenre(String name) async {
+    await _requireAdmin();
     final docRef = await _genresRef.add({
       'name': name,
       'moviesCount': 0,
@@ -1028,18 +1061,21 @@ class FirestoreContentService {
     return docRef.id;
   }
 
-  /// Update a genre
+  /// Update a genre (admin only)
   Future<void> updateGenre(String id, String name) async {
+    await _requireAdmin();
     await _genresRef.doc(id).update({'name': name});
   }
 
-  /// Delete a genre
+  /// Delete a genre (admin only)
   Future<void> deleteGenre(String id) async {
+    await _requireAdmin();
     await _genresRef.doc(id).delete();
   }
 
-  /// Add a tag
+  /// Add a tag (admin only)
   Future<String> addTag(String name) async {
+    await _requireAdmin();
     final docRef = await _tagsRef.add({
       'name': name,
       'moviesCount': 0,
@@ -1047,18 +1083,21 @@ class FirestoreContentService {
     return docRef.id;
   }
 
-  /// Update a tag
+  /// Update a tag (admin only)
   Future<void> updateTag(String id, String name) async {
+    await _requireAdmin();
     await _tagsRef.doc(id).update({'name': name});
   }
 
-  /// Delete a tag
+  /// Delete a tag (admin only)
   Future<void> deleteTag(String id) async {
+    await _requireAdmin();
     await _tagsRef.doc(id).delete();
   }
 
-  /// Add a collection
+  /// Add a collection (admin only)
   Future<String> addCollection(String name) async {
+    await _requireAdmin();
     final docRef = await _collectionsRef.add({
       'name': name,
       'moviesCount': 0,
@@ -1066,13 +1105,15 @@ class FirestoreContentService {
     return docRef.id;
   }
 
-  /// Update a collection
+  /// Update a collection (admin only)
   Future<void> updateCollection(String id, String name) async {
+    await _requireAdmin();
     await _collectionsRef.doc(id).update({'name': name});
   }
 
-  /// Delete a collection
+  /// Delete a collection (admin only)
   Future<void> deleteCollection(String id) async {
+    await _requireAdmin();
     await _collectionsRef.doc(id).delete();
   }
 

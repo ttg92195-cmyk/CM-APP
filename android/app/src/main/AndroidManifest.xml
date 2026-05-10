@@ -3,20 +3,24 @@
     <!-- Internet permission for API calls -->
     <uses-permission android:name="android.permission.INTERNET"/>
 
-    <!-- Storage permissions for downloading to public directory -->
+    <!-- Storage permissions for downloading -->
+    <!-- Android 9 and below: WRITE_EXTERNAL_STORAGE needed for public Download dir -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
+    <!-- Android 12 and below: READ_EXTERNAL_STORAGE needed for file access -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
-    <!-- For Android 13+ (API 33+), no storage permission needed for app-specific downloads -->
-    <!-- For Android 11+ (API 30+), MANAGE_EXTERNAL_STORAGE is needed for broad access -->
-    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <!-- Android 11+: Uses scoped storage (app-specific external directory).
+         No MANAGE_EXTERNAL_STORAGE needed - avoids Google Play Store rejection.
+         Downloads are saved to app-specific external storage which is accessible
+         via file managers and doesn't require broad permissions. -->
 
     <application
         android:label="KMM"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:requestLegacyExternalStorage="true">
+        android:allowBackup="false"
+        android:fullBackupContent="false">
 
         <activity
             android:name=".MainActivity"
