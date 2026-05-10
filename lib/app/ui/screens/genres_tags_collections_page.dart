@@ -127,14 +127,7 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
       ),
       itemCount: 9,
       itemBuilder: (context, index) {
-        return Container(
-          decoration: BoxDecoration(
-            color: Theme.of(context).brightness == Brightness.dark
-                ? const Color(0xFF2A2A2A)
-                : const Color(0xFFE0E0E0),
-            borderRadius: BorderRadius.circular(10),
-          ),
-        );
+        return const _GenreButtonSkeleton();
       },
     );
   }
@@ -341,6 +334,65 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
 }
 
 // ==================== NEON GLOW BUTTON (Netflix Red) ====================
+
+/// Skeleton loading widget for genre/tag/collection buttons with shimmer pulse
+class _GenreButtonSkeleton extends StatefulWidget {
+  const _GenreButtonSkeleton();
+
+  @override
+  State<_GenreButtonSkeleton> createState() => _GenreButtonSkeletonState();
+}
+
+class _GenreButtonSkeletonState extends State<_GenreButtonSkeleton>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final baseColor = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE0E0E0);
+
+    return FadeTransition(
+      opacity: Tween<double>(begin: 0.4, end: 1.0).animate(_controller),
+      child: Container(
+        decoration: BoxDecoration(
+          color: baseColor,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isDark ? Colors.white12 : Colors.grey.shade400,
+            width: 1.5,
+          ),
+        ),
+        child: Center(
+          child: Container(
+            height: 12,
+            width: 60,
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF3A3A3A) : Colors.grey.shade300,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _NeonGlowButton extends StatefulWidget {
   final String title;
   final bool isSolid;
