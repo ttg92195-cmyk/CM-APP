@@ -302,6 +302,58 @@ class AppConfig extends ChangeNotifier {
     notifyListeners();
   }
 
+  // M8: Delete user account (GDPR compliance)
+  // Deletes Firestore user data and Firebase Auth account
+  Future<bool> deleteAccount() async {
+    final user = _auth.currentUser;
+    if (user == null) return false;
+
+    try {
+      // 1. Delete Firestore user document and sub-collections
+      final userId = user.uid;
+
+      // Delete bookmarks sub-collection
+      final bookmarks = await _firestore.collection('users').doc(userId).collection('bookmarks').get();
+      for (final doc in bookmarks.docs) {
+        await doc.reference.delete();
+      }
+
+      // Delete watchlist sub-collection
+      final watchlist = await _firestore.collection('users').doc(userId).collection('watchlist').get();
+      for (final doc in watchlist.docs) {
+        await doc.reference.delete();
+      }
+
+      // Delete history sub-collection
+      final history = await _firestore.collection('users').doc(userId).collection('history').get();
+      for (final doc in history.docs) {
+        await doc.reference.delete();
+      }
+
+      // Delete user document
+      await _firestore.collection('users').doc(userId).delete();
+
+      // 2. Delete Firebase Auth account
+      await user.delete();
+
+      // 3. Clear local state
+      _currentUser = null;
+      notifyListeners();
+
+      return true;
+    } on FirebaseAuthException catch (e) {
+      debugPrint('Delete account error: ${e.code} - ${e.message}');
+      // If requires re-authentication, return false so caller can handle
+      if (e.code == 'requires-recent-login') {
+        return false;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('Delete account error: $e');
+      return false;
+    }
+  }
+
   // Change password
   Future<bool> changePassword(String oldPassword, String newPassword) async {
     if (_currentUser == null) return false;

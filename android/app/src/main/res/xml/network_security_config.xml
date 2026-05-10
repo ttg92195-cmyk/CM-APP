@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Default: HTTPS only, block all cleartext traffic -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Firebase services require HTTPS connections -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">firebaseio.com</domain>
+        <domain includeSubdomains="true">googleapis.com</domain>
+        <domain includeSubdomains="true">google.com</domain>
+        <domain includeSubdomains="true">firebasestorage.app</domain>
+    </domain-config>
+</network-security-config>

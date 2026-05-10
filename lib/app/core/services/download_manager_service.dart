@@ -503,6 +503,12 @@ class DownloadManagerService extends ChangeNotifier {
     String? size,
     required String serverName,
   }) async {
+    // M2: Validate download URL against allowlist
+    if (!_isValidDownloadUrl(url)) {
+      debugPrint('Blocked download from untrusted domain: $url');
+      return;
+    }
+
     final taskId = '${movieId}_${quality.replaceAll(' ', '_')}';
 
     // Check if already exists
@@ -945,6 +951,32 @@ class DownloadManagerService extends ChangeNotifier {
   }
 
   // ===== PERSISTENCE =====
+
+  // M2: Domain allowlist for download URLs — prevents malicious URL injection
+  static const Set<String> _allowedDomains = {
+    'googleapis.com', 'firebasestorage.app', 'firebaseio.com', 'google.com',
+    'drive.google.com', 'docs.google.com', 'mega.nz', 'mega.co.nz',
+    'mediafire.com', 'dropbox.com', 'dl.dropboxusercontent.com',
+    'mp4upload.com', 'streamable.com', 'gdrive.io',
+    'gdtot.dad', 'appdrive.in', 'driveapp.in', 'driveeee.net', 'hubdrive.in',
+  };
+
+  /// Validate that a download URL is from a trusted domain
+  static bool _isValidDownloadUrl(String url) {
+    if (url.isEmpty) return false;
+    try {
+      final uri = Uri.parse(url);
+      if (uri.scheme != 'https' && uri.scheme != 'http') return false;
+      final host = uri.host.toLowerCase();
+      if (host.isEmpty) return false;
+      for (final allowed in _allowedDomains) {
+        if (host == allowed || host.endsWith('.$allowed')) return true;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
 
   Future<void> _saveTasks() async {
     try {

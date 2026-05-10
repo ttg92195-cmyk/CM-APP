@@ -64,6 +64,61 @@ class _ProfilePageState extends State<ProfilePage> {
     }
   }
 
+  // M8: Delete account confirmation dialog (GDPR)
+  Future<void> _showDeleteAccountDialog(AppConfig appConfig) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.red, size: 28),
+            SizedBox(width: 8),
+            Text('Delete Account'),
+          ],
+        ),
+        content: const Text(
+          'This action is permanent and cannot be undone. All your data including '
+          'bookmarks, watchlist, and viewing history will be permanently deleted.\n\n'
+          'Are you sure you want to delete your account?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Delete Forever'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      final success = await appConfig.deleteAccount();
+      if (mounted) {
+        if (success) {
+          Navigator.pop(context); // Go back to login page (auth gate handles navigation)
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Account deleted successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Failed to delete account. Please login again and retry.'),
+              backgroundColor: Colors.redAccent,
+            ),
+          );
+        }
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final appConfig = Provider.of<AppConfig>(context);
@@ -523,6 +578,26 @@ class _ProfilePageState extends State<ProfilePage> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                   foregroundColor: const Color(0xFFE50914),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // M8: Delete Account button (GDPR compliance)
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => _showDeleteAccountDialog(appConfig),
+                icon: const Icon(Icons.delete_forever),
+                label: const Text('Delete Account'),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  foregroundColor: Colors.red.shade700,
+                  side: BorderSide(color: Colors.red.shade200),
                 ),
               ),
             ),

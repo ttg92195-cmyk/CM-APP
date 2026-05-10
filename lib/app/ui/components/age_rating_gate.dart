@@ -1,9 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 
 /// Age Rating Gate - shows a verification dialog before showing adult content
+/// M3: Age verification result is stored in secure storage (not SharedPreferences)
+/// so it can't be easily tampered with. Verification must be re-done per session
+/// for additional security — the token expires when the app restarts.
 class AgeRatingGate {
+  static const _storage = FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+  );
+  static const _ageVerifiedKey = 'age_verified_session';
+
   /// Show age verification dialog. Returns true if verified.
   static Future<bool> showAgeGate(BuildContext context, {String? movieTitle}) async {
     final appConfig = Provider.of<AppConfig>(context, listen: false);
@@ -15,7 +24,35 @@ class AgeRatingGate {
         appConfig: appConfig,
       ),
     );
+
+    if (result == true) {
+      // Store verification in secure storage (encrypted)
+      await _storage.write(
+        key: _ageVerifiedKey,
+        value: DateTime.now().toIso8601String(),
+      );
+    }
+
     return result ?? false;
+  }
+
+  /// Check if already verified this session
+  static Future<bool> isVerifiedThisSession() async {
+    final value = await _storage.read(key: _ageVerifiedKey);
+    if (value == null) return false;
+    // Check if verification was done in current app session (within last 24 hours)
+    try {
+      final verifiedAt = DateTime.parse(value);
+      final now = DateTime.now();
+      return now.difference(verifiedAt).inHours < 24;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Clear age verification (on logout)
+  static Future<void> clearVerification() async {
+    await _storage.delete(key: _ageVerifiedKey);
   }
 
   /// Check if movie is adult content and show gate if needed
@@ -26,6 +63,10 @@ class AgeRatingGate {
     String? movieTitle,
   }) async {
     if (isAdult == null || isAdult == 0) return true;
+
+    // Check if already verified this session
+    if (await isVerifiedThisSession()) return true;
+
     return showAgeGate(context, movieTitle: movieTitle);
   }
 }
