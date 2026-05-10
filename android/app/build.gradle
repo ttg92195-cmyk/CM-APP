@@ -9,6 +9,10 @@ def keystoreProperties = new Properties()
 def keystorePropertiesFile = rootProject.file('key.properties')
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+} else {
+    throw new GradleException("\n❌ SECURITY: key.properties not found at ${keystorePropertiesFile.absolutePath}\n" +
+            "Release builds require a valid signing key. Debug signing is NOT allowed for production.\n" +
+            "Please copy key.properties.example to key.properties and fill in your release keystore details.")
 }
 
 def localProperties = new Properties()
@@ -67,9 +71,10 @@ android {
 
     buildTypes {
         release {
-            signingConfig keystorePropertiesFile.exists() ? signingConfigs.release : signingConfigs.debug
-            minifyEnabled false
-            shrinkResources false
+            signingConfig signingConfigs.release
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 }
