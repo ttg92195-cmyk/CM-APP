@@ -207,6 +207,18 @@ class _LoginPageState extends State<LoginPage>
     return Scaffold(
       appBar: AppBar(
         title: Text(appConfig.translate('login')),
+        actions: [
+          // Theme toggle on login page
+          IconButton(
+            icon: Icon(
+              appConfig.isDarkMode ? Icons.light_mode : Icons.dark_mode,
+            ),
+            tooltip: appConfig.isDarkMode ? 'Light Mode' : 'Dark Mode',
+            onPressed: () {
+              appConfig.toggleTheme();
+            },
+          ),
+        ],
         bottom: TabBar(
           controller: _tabController,
           tabs: [

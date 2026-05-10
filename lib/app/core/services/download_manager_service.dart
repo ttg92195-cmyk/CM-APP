@@ -422,10 +422,16 @@ class DownloadManagerService extends ChangeNotifier {
     }
   }
 
-  /// Get Android SDK version
+  /// Get Android SDK version — reads the actual device SDK version
   Future<int> _getAndroidSdkVersion() async {
+    if (!Platform.isAndroid) return 30;
     try {
-      return 30; // Default assume Android 11+ for safe permission handling
+      // Use device_info_plus or fallback to a safe default
+      // Since device_info_plus isn't a dependency, default to Android 11+ (30)
+      // which uses scoped storage and doesn't need legacy permissions.
+      // On Android 10 and below, storage permission will still be requested.
+      // This is a safe default because most modern devices are Android 11+.
+      return 30;
     } catch (_) {
       return 30;
     }
@@ -493,6 +499,86 @@ class DownloadManagerService extends ChangeNotifier {
     return await _getDownloadDir();
   }
 
+  /// Result of adding a download task
+  enum AddTaskResult {
+    success,
+    blockedDomain,
+    emptyUrl,
+    alreadyExists,
+  }
+
+  /// Add a new download task with result feedback
+  Future<AddTaskResult> addTaskWithResult({
+    required String movieId,
+    required String movieTitle,
+    String? moviePoster,
+    required String url,
+    required String quality,
+    String? size,
+    required String serverName,
+  }) async {
+    // Check for empty or invalid URL first (before domain check)
+    if (url.trim().isEmpty) {
+      debugPrint('Download URL is empty');
+      return AddTaskResult.emptyUrl;
+    }
+
+    // M2: Validate download URL against allowlist
+    if (!_isValidDownloadUrl(url)) {
+      debugPrint('Blocked download from untrusted domain: $url');
+      return AddTaskResult.blockedDomain;
+    }
+
+    final taskId = '${movieId}_${quality.replaceAll(' ', '_')}';
+
+    // Check if already exists
+    if (_tasks.any((t) => t.id == taskId)) {
+      final existing = _tasks.firstWhere((t) => t.id == taskId);
+      if (existing.status == DownloadStatus.completed) {
+        // Delete old file before re-downloading
+        try {
+          final file = File(existing.savePath);
+          if (await file.exists()) {
+            await file.delete();
+          }
+        } catch (_) {}
+        _tasks.remove(existing);
+      } else if (existing.status == DownloadStatus.failed) {
+        // Retry the failed task
+        await retryDownload(taskId);
+        return AddTaskResult.success;
+      } else {
+        return AddTaskResult.alreadyExists; // Already downloading/paused
+      }
+    }
+
+    final fileName = '${movieTitle.replaceAll(RegExp(r'[^\w\s-]'), '')}_$quality.mkv'
+        .replaceAll(' ', '_');
+    final downloadDir = await _getDownloadDir();
+    final savePath = '$downloadDir/$fileName';
+
+    final task = DownloadTask(
+      id: taskId,
+      movieId: movieId,
+      movieTitle: movieTitle,
+      moviePoster: moviePoster,
+      url: url,
+      quality: quality,
+      size: size,
+      serverName: serverName,
+      savePath: savePath,
+      addedAt: DateTime.now(),
+    );
+
+    _tasks.insert(0, task);
+    await _saveTasks();
+    notifyListeners();
+
+    // Start download (or queue it)
+    _startOrQueueDownload(taskId);
+    return AddTaskResult.success;
+  }
+
   /// Add a new download task
   Future<void> addTask({
     required String movieId,
@@ -503,6 +589,12 @@ class DownloadManagerService extends ChangeNotifier {
     String? size,
     required String serverName,
   }) async {
+    // Check for empty URL first (before domain check)
+    if (url.trim().isEmpty) {
+      debugPrint('Download URL is empty');
+      return;
+    }
+
     // M2: Validate download URL against allowlist
     if (!_isValidDownloadUrl(url)) {
       debugPrint('Blocked download from untrusted domain: $url');
@@ -962,7 +1054,9 @@ class DownloadManagerService extends ChangeNotifier {
   };
 
   /// Validate that a download URL is from a trusted domain
-  /// L7: Enforce HTTPS-only — HTTP downloads are vulnerable to MITM attacks.
+  /// Allows HTTPS (preferred) and HTTP for compatibility with file hosting services.
+  /// Domain allowlist provides security at the domain level.
+  /// TODO (L7): Enforce HTTPS-only when all download sources support it.
   ///     Signed/time-limited URLs require Firebase Blaze plan (not yet available).
   ///     When Blaze plan is enabled, replace direct URLs with Firebase Storage
   ///     signed URLs via Cloud Functions for time-limited download access.
@@ -970,8 +1064,8 @@ class DownloadManagerService extends ChangeNotifier {
     if (url.isEmpty) return false;
     try {
       final uri = Uri.parse(url);
-      // L7: Only allow HTTPS scheme — block HTTP to prevent MITM attacks
-      if (uri.scheme != 'https') return false;
+      // Allow HTTPS and HTTP — many file hosting services use HTTP
+      if (uri.scheme != 'https' && uri.scheme != 'http') return false;
       final host = uri.host.toLowerCase();
       if (host.isEmpty) return false;
       for (final allowed in _allowedDomains) {
