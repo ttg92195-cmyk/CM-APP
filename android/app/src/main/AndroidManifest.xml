@@ -45,5 +45,10 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- Firebase App Check debug token for CI/release builds -->
+        <meta-data
+            android:name="firebase_app_check_debug_token"
+            android:value="42B8C81C-0451-4847-B033-7DAAAAC8415F" />
     </application>
 </manifest>
