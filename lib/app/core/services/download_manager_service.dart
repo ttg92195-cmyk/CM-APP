@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:open_filex/open_filex.dart';
 
 /// Enum for download status
 enum DownloadStatus {
@@ -36,6 +37,10 @@ class DownloadTask {
   final int? totalBytes;
   final String? errorMessage;
 
+  // Speed tracking
+  final double speedBytesPerSec; // Current download speed
+  final int? etaSeconds; // Estimated time remaining
+
   DownloadTask({
     required this.id,
     required this.movieId,
@@ -53,6 +58,8 @@ class DownloadTask {
     this.downloadedBytes = 0,
     this.totalBytes,
     this.errorMessage,
+    this.speedBytesPerSec = 0.0,
+    this.etaSeconds,
   });
 
   DownloadTask copyWith({
@@ -62,6 +69,8 @@ class DownloadTask {
     int? totalBytes,
     String? errorMessage,
     DateTime? completedAt,
+    double? speedBytesPerSec,
+    int? etaSeconds,
   }) {
     return DownloadTask(
       id: id,
@@ -80,6 +89,8 @@ class DownloadTask {
       downloadedBytes: downloadedBytes ?? this.downloadedBytes,
       totalBytes: totalBytes ?? this.totalBytes,
       errorMessage: errorMessage,
+      speedBytesPerSec: speedBytesPerSec ?? this.speedBytesPerSec,
+      etaSeconds: etaSeconds ?? this.etaSeconds,
     );
   }
 
@@ -101,6 +112,8 @@ class DownloadTask {
       'downloadedBytes': downloadedBytes,
       'totalBytes': totalBytes,
       'errorMessage': errorMessage,
+      'speedBytesPerSec': speedBytesPerSec,
+      'etaSeconds': etaSeconds,
     };
   }
 
@@ -124,6 +137,8 @@ class DownloadTask {
       downloadedBytes: map['downloadedBytes'] as int? ?? 0,
       totalBytes: map['totalBytes'] as int?,
       errorMessage: map['errorMessage'] as String?,
+      speedBytesPerSec: (map['speedBytesPerSec'] as num?)?.toDouble() ?? 0.0,
+      etaSeconds: map['etaSeconds'] as int?,
     );
   }
 
@@ -132,6 +147,30 @@ class DownloadTask {
   String get downloadedSizeText => _formatBytes(downloadedBytes);
 
   String get totalSizeText => totalBytes != null ? _formatBytes(totalBytes!) : (size ?? 'Unknown');
+
+  String get speedText {
+    if (speedBytesPerSec <= 0) return '';
+    return '${_formatBytes(speedBytesPerSec.round())}/s';
+  }
+
+  String get etaText {
+    if (etaSeconds == null || etaSeconds! <= 0) return '';
+    final eta = etaSeconds!;
+    if (eta < 60) return '${eta}s left';
+    if (eta < 3600) return '${eta ~/ 60}m ${eta % 60}s left';
+    final hours = eta ~/ 3600;
+    final mins = (eta % 3600) ~/ 60;
+    return '${hours}h ${mins}m left';
+  }
+
+  /// Check if the downloaded file exists on disk
+  Future<bool> fileExists() async {
+    try {
+      return await File(savePath).exists();
+    } catch (_) {
+      return false;
+    }
+  }
 
   String _formatBytes(int bytes) {
     if (bytes < 1024) return '$bytes B';
@@ -146,7 +185,13 @@ class DownloadTask {
 class DownloadManagerService extends ChangeNotifier {
   static DownloadManagerService? _instance;
   static const String _tasksKey = 'download_tasks';
-  final Dio _dio = Dio();
+  static const int _maxConcurrentDownloads = 3;
+
+  final Dio _dio = Dio(BaseOptions(
+    connectTimeout: const Duration(seconds: 30),
+    receiveTimeout: const Duration(minutes: 60),
+    sendTimeout: const Duration(minutes: 10),
+  ));
 
   static String? _customDownloadDir;
   static String? get customDownloadDir => _customDownloadDir;
@@ -157,8 +202,13 @@ class DownloadManagerService extends ChangeNotifier {
   }
 
   final Map<String, CancelToken> _cancelTokens = {};
+  final Map<String, _SpeedTracker> _speedTrackers = {};
   List<DownloadTask> _tasks = [];
   bool _isInitialized = false;
+  int _activeDownloadCount = 0;
+
+  /// Queue for pending downloads when max concurrent is reached
+  final List<String> _pendingQueue = [];
 
   /// Singleton factory constructor - always returns the same instance
   factory DownloadManagerService() {
@@ -177,6 +227,28 @@ class DownloadManagerService extends ChangeNotifier {
       t.status == DownloadStatus.downloading || t.status == DownloadStatus.paused).toList();
   List<DownloadTask> get completedTasks => _tasks.where((t) =>
       t.status == DownloadStatus.completed).toList();
+  List<DownloadTask> get failedTasks => _tasks.where((t) =>
+      t.status == DownloadStatus.failed).toList();
+
+  /// Summary stats
+  int get activeCount => activeTasks.length;
+  int get completedCount => completedTasks.length;
+  int get failedCount => failedTasks.length;
+  int get totalTasks => _tasks.length;
+
+  /// Total size of completed downloads
+  String get completedTotalSize {
+    int total = 0;
+    for (final t in completedTasks) {
+      total += t.downloadedBytes;
+    }
+    if (total == 0) return '';
+    return DownloadTask(
+      id: '', movieId: '', movieTitle: '', url: '', quality: '',
+      serverName: '', savePath: '', addedAt: DateTime.now(),
+      downloadedBytes: total,
+    ).downloadedSizeText;
+  }
 
   /// Initialize - load saved tasks (only runs once)
   Future<void> init() async {
@@ -191,14 +263,11 @@ class DownloadManagerService extends ChangeNotifier {
   Future<bool> checkStoragePermission() async {
     if (!Platform.isAndroid) return true;
 
-    // On Android 11+ (API 30+), check MANAGE_EXTERNAL_STORAGE
     if (Platform.isAndroid) {
       final sdkInt = await _getAndroidSdkVersion();
       if (sdkInt >= 30) {
-        // Android 11+: Need MANAGE_EXTERNAL_STORAGE for public directory access
         return await Permission.manageExternalStorage.isGranted;
       } else {
-        // Android 10 and below: Use WRITE_EXTERNAL_STORAGE
         return await Permission.storage.isGranted;
       }
     }
@@ -238,10 +307,7 @@ class DownloadManagerService extends ChangeNotifier {
 
   /// Get Android SDK version
   Future<int> _getAndroidSdkVersion() async {
-    // Default to a safe value; we'll handle errors gracefully
     try {
-      // This is a simple approach - we know the app targets Android
-      // and most devices are API 30+ now
       return 30; // Default assume Android 11+ for safe permission handling
     } catch (_) {
       return 30;
@@ -317,7 +383,18 @@ class DownloadManagerService extends ChangeNotifier {
       // If completed, allow re-download
       final existing = _tasks.firstWhere((t) => t.id == taskId);
       if (existing.status == DownloadStatus.completed) {
+        // Delete old file before re-downloading
+        try {
+          final file = File(existing.savePath);
+          if (await file.exists()) {
+            await file.delete();
+          }
+        } catch (_) {}
         _tasks.remove(existing);
+      } else if (existing.status == DownloadStatus.failed) {
+        // Retry the failed task
+        await retryDownload(taskId);
+        return;
       } else {
         return; // Already downloading/paused
       }
@@ -345,8 +422,37 @@ class DownloadManagerService extends ChangeNotifier {
     await _saveTasks();
     notifyListeners();
 
-    // Auto-start download
-    startDownload(taskId);
+    // Start download (or queue it)
+    _startOrQueueDownload(taskId);
+  }
+
+  /// Start download or queue it if max concurrent reached
+  void _startOrQueueDownload(String taskId) {
+    if (_activeDownloadCount < _maxConcurrentDownloads) {
+      startDownload(taskId);
+    } else {
+      _pendingQueue.add(taskId);
+      // Update task status to show it's queued
+      final idx = _tasks.indexWhere((t) => t.id == taskId);
+      if (idx != -1) {
+        _tasks[idx] = _tasks[idx].copyWith(
+          status: DownloadStatus.idle,
+          errorMessage: 'Queued (max $_maxConcurrentDownloads simultaneous)',
+        );
+        notifyListeners();
+      }
+    }
+  }
+
+  /// Process the next queued download
+  void _processQueue() {
+    while (_pendingQueue.isNotEmpty && _activeDownloadCount < _maxConcurrentDownloads) {
+      final taskId = _pendingQueue.removeAt(0);
+      final idx = _tasks.indexWhere((t) => t.id == taskId);
+      if (idx != -1 && _tasks[idx].status == DownloadStatus.idle) {
+        startDownload(taskId);
+      }
+    }
   }
 
   /// Start or resume a download with byte-range support
@@ -376,8 +482,34 @@ class DownloadManagerService extends ChangeNotifier {
       return;
     }
 
+    // Request storage permission before downloading on Android
+    if (Platform.isAndroid) {
+      final hasPermission = await checkStoragePermission();
+      if (!hasPermission) {
+        final idx = _tasks.indexWhere((t) => t.id == taskId);
+        if (idx != -1) {
+          _tasks[idx] = _tasks[idx].copyWith(
+            status: DownloadStatus.failed,
+            errorMessage: 'Storage permission denied. Grant permission and retry.',
+          );
+          await _saveTasks();
+          notifyListeners();
+        }
+        return;
+      }
+    }
+
+    // Increment active count
+    _activeDownloadCount++;
+
+    // Initialize speed tracker
+    _speedTrackers[taskId] = _SpeedTracker();
+
     // Update status to downloading
-    _tasks[index] = task.copyWith(status: DownloadStatus.downloading);
+    _tasks[index] = task.copyWith(
+      status: DownloadStatus.downloading,
+      errorMessage: null,
+    );
     notifyListeners();
 
     final cancelToken = CancelToken();
@@ -392,6 +524,8 @@ class DownloadManagerService extends ChangeNotifier {
         if (fileSize < startByte) {
           // File is smaller than recorded bytes - something went wrong, restart
           startByte = 0;
+        } else {
+          startByte = fileSize; // Use actual file size for more reliable resume
         }
       } else {
         // No partial file, start from beginning
@@ -416,17 +550,33 @@ class DownloadManagerService extends ChangeNotifier {
           final actualReceived = startByte + received;
           final actualTotal = total > 0 ? startByte + total : -1;
           final progress = actualTotal > 0 ? actualReceived / actualTotal : 0.0;
+
+          // Calculate speed and ETA
+          final tracker = _speedTrackers[taskId];
+          double speed = 0.0;
+          int? eta;
+          if (tracker != null) {
+            tracker.addSample(actualReceived);
+            speed = tracker.speedBytesPerSec;
+            if (speed > 0 && actualTotal > 0) {
+              final remaining = actualTotal - actualReceived;
+              eta = (remaining / speed).round();
+            }
+          }
+
           _tasks[idx] = _tasks[idx].copyWith(
-            progress: progress,
+            progress: progress.clamp(0.0, 1.0),
             downloadedBytes: actualReceived,
             totalBytes: actualTotal > 0 ? actualTotal : null,
+            speedBytesPerSec: speed,
+            etaSeconds: eta,
           );
           notifyListeners();
         },
         options: Options(
           headers: headers,
-          receiveTimeout: const Duration(minutes: 30),
-          sendTimeout: const Duration(minutes: 5),
+          receiveTimeout: const Duration(minutes: 60),
+          sendTimeout: const Duration(minutes: 10),
         ),
         deleteOnError: false, // Keep partial file for resume
       );
@@ -439,6 +589,8 @@ class DownloadManagerService extends ChangeNotifier {
           progress: 1.0,
           downloadedBytes: _tasks[idx].totalBytes ?? _tasks[idx].downloadedBytes,
           completedAt: DateTime.now(),
+          speedBytesPerSec: 0.0,
+          etaSeconds: null,
         );
         await _saveTasks();
         notifyListeners();
@@ -450,11 +602,16 @@ class DownloadManagerService extends ChangeNotifier {
           // Was paused - save current progress for resume
           _tasks[idx] = _tasks[idx].copyWith(
             status: DownloadStatus.paused,
+            speedBytesPerSec: 0.0,
+            etaSeconds: null,
           );
         } else {
+          String errorMsg = _getDioErrorMessage(e);
           _tasks[idx] = _tasks[idx].copyWith(
             status: DownloadStatus.failed,
-            errorMessage: e.message ?? e.toString(),
+            errorMessage: errorMsg,
+            speedBytesPerSec: 0.0,
+            etaSeconds: null,
           );
         }
         await _saveTasks();
@@ -466,12 +623,43 @@ class DownloadManagerService extends ChangeNotifier {
         _tasks[idx] = _tasks[idx].copyWith(
           status: DownloadStatus.failed,
           errorMessage: e.toString(),
+          speedBytesPerSec: 0.0,
+          etaSeconds: null,
         );
         await _saveTasks();
         notifyListeners();
       }
     } finally {
       _cancelTokens.remove(taskId);
+      _speedTrackers.remove(taskId);
+      _activeDownloadCount--;
+      _processQueue();
+    }
+  }
+
+  /// Get a human-readable error message from DioException
+  String _getDioErrorMessage(DioException e) {
+    switch (e.type) {
+      case DioExceptionType.connectionTimeout:
+        return 'Connection timed out. Check your internet and retry.';
+      case DioExceptionType.sendTimeout:
+        return 'Upload timed out. Please retry.';
+      case DioExceptionType.receiveTimeout:
+        return 'Download timed out. Please retry.';
+      case DioExceptionType.connectionError:
+        return 'No internet connection. Check your network and retry.';
+      case DioExceptionType.badResponse:
+        final code = e.response?.statusCode;
+        if (code == 404) return 'File not found on server (404).';
+        if (code == 403) return 'Access denied by server (403).';
+        if (code == 416) return 'Resume not supported. Will restart download.';
+        return 'Server error ($code). Please retry.';
+      case DioExceptionType.cancel:
+        return 'Download cancelled.';
+      case DioExceptionType.unknown:
+        return e.message ?? 'Unknown error occurred.';
+      default:
+        return e.message ?? 'Download failed.';
     }
   }
 
@@ -493,10 +681,12 @@ class DownloadManagerService extends ChangeNotifier {
     final index = _tasks.indexWhere((t) => t.id == taskId);
     if (index == -1) return;
 
-    // Don't reset downloadedBytes - let startDownload check partial file
+    // Reset error state but keep downloadedBytes for resume
     _tasks[index] = _tasks[index].copyWith(
       status: DownloadStatus.idle,
       errorMessage: null,
+      speedBytesPerSec: 0.0,
+      etaSeconds: null,
     );
     notifyListeners();
     await startDownload(taskId);
@@ -510,10 +700,13 @@ class DownloadManagerService extends ChangeNotifier {
       cancelToken.cancel('Removed by user');
     }
 
+    // Remove from queue if pending
+    _pendingQueue.remove(taskId);
+
     // Delete file if not keeping it
     if (!keepFile) {
-      final task = _tasks.firstWhere((t) => t.id == taskId);
       try {
+        final task = _tasks.firstWhere((t) => t.id == taskId);
         final file = File(task.savePath);
         if (await file.exists()) {
           await file.delete();
@@ -526,9 +719,61 @@ class DownloadManagerService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Delete the downloaded file for a completed task (keeps task in list)
+  Future<bool> deleteFile(String taskId) async {
+    final index = _tasks.indexWhere((t) => t.id == taskId);
+    if (index == -1) return false;
+
+    final task = _tasks[index];
+    try {
+      final file = File(task.savePath);
+      if (await file.exists()) {
+        await file.delete();
+      }
+      _tasks[index] = task.copyWith(
+        status: DownloadStatus.failed,
+        errorMessage: 'File deleted. Tap retry to download again.',
+        progress: 0.0,
+        downloadedBytes: 0,
+        totalBytes: null,
+        completedAt: null,
+      );
+      await _saveTasks();
+      notifyListeners();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Open a downloaded file using the system's default app
+  Future<bool> openFile(String taskId) async {
+    final index = _tasks.indexWhere((t) => t.id == taskId);
+    if (index == -1) return false;
+
+    final task = _tasks[index];
+    final file = File(task.savePath);
+    if (!await file.exists()) return false;
+
+    try {
+      final result = await OpenFilex.open(task.savePath);
+      return result.type == ResultType.done;
+    } catch (e) {
+      debugPrint('Error opening file: $e');
+      return false;
+    }
+  }
+
   /// Clear all completed downloads (removes from list, keeps files)
   Future<void> clearCompleted() async {
     _tasks.removeWhere((t) => t.status == DownloadStatus.completed);
+    await _saveTasks();
+    notifyListeners();
+  }
+
+  /// Clear all failed downloads
+  Future<void> clearFailed() async {
+    _tasks.removeWhere((t) => t.status == DownloadStatus.failed);
     await _saveTasks();
     notifyListeners();
   }
@@ -545,6 +790,30 @@ class DownloadManagerService extends ChangeNotifier {
       return _tasks.firstWhere((t) => t.id == taskId);
     } catch (_) {
       return null;
+    }
+  }
+
+  /// Verify completed files still exist on disk, mark as failed if missing
+  Future<void> verifyCompletedFiles() async {
+    bool changed = false;
+    for (int i = 0; i < _tasks.length; i++) {
+      if (_tasks[i].status == DownloadStatus.completed) {
+        final exists = await _tasks[i].fileExists();
+        if (!exists) {
+          _tasks[i] = _tasks[i].copyWith(
+            status: DownloadStatus.failed,
+            errorMessage: 'File not found. It may have been moved or deleted.',
+            progress: 0.0,
+            downloadedBytes: 0,
+            completedAt: null,
+          );
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      await _saveTasks();
+      notifyListeners();
     }
   }
 
@@ -572,9 +841,14 @@ class DownloadManagerService extends ChangeNotifier {
             .toList();
 
         // Reset downloading tasks to paused on restart (so they can be resumed)
+        // Also reset speed/ETA since they're not meaningful after restart
         for (int i = 0; i < _tasks.length; i++) {
           if (_tasks[i].status == DownloadStatus.downloading) {
-            _tasks[i] = _tasks[i].copyWith(status: DownloadStatus.paused);
+            _tasks[i] = _tasks[i].copyWith(
+              status: DownloadStatus.paused,
+              speedBytesPerSec: 0.0,
+              etaSeconds: null,
+            );
           }
         }
         notifyListeners();
@@ -583,4 +857,44 @@ class DownloadManagerService extends ChangeNotifier {
       debugPrint('Error loading download tasks: $e');
     }
   }
+}
+
+/// Speed tracker that calculates download speed using a sliding window
+class _SpeedTracker {
+  final List<_SpeedSample> _samples = [];
+  static const int _maxSamples = 10;
+  static const Duration _sampleWindow = Duration(seconds: 5);
+
+  void addSample(int totalBytes) {
+    final now = DateTime.now();
+    _samples.add(_SpeedSample(timestamp: now, totalBytes: totalBytes));
+
+    // Remove old samples outside the window
+    _samples.removeWhere((s) => now.difference(s.timestamp) > _sampleWindow);
+
+    // Keep only max samples
+    while (_samples.length > _maxSamples) {
+      _samples.removeAt(0);
+    }
+  }
+
+  double get speedBytesPerSec {
+    if (_samples.length < 2) return 0.0;
+
+    final first = _samples.first;
+    final last = _samples.last;
+    final timeDiff = last.timestamp.difference(first.timestamp).inMilliseconds;
+
+    if (timeDiff <= 0) return 0.0;
+
+    final bytesDiff = last.totalBytes - first.totalBytes;
+    return (bytesDiff / timeDiff) * 1000; // Convert ms to seconds
+  }
+}
+
+class _SpeedSample {
+  final DateTime timestamp;
+  final int totalBytes;
+
+  _SpeedSample({required this.timestamp, required this.totalBytes});
 }
