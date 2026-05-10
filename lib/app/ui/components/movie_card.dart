@@ -105,7 +105,11 @@ class MovieCard extends StatelessWidget {
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                       decoration: BoxDecoration(
-                        color: isDark ? Colors.black87 : Colors.white.withOpacity(0.9),
+                        color: movie.resolution!.toLowerCase().contains('1080')
+                            ? const Color(0xFFFF6D00)
+                            : movie.resolution!.toLowerCase().contains('720')
+                                ? const Color(0xFFFFAB00)
+                                : (isDark ? Colors.black87 : Colors.white.withOpacity(0.9)),
                         borderRadius: BorderRadius.circular(4),
                         boxShadow: [
                           BoxShadow(
@@ -118,7 +122,10 @@ class MovieCard extends StatelessWidget {
                       child: Text(
                         movie.resolution!,
                         style: TextStyle(
-                          color: isDark ? Colors.white70 : Colors.black87,
+                          color: (movie.resolution!.toLowerCase().contains('1080') ||
+                                  movie.resolution!.toLowerCase().contains('720'))
+                              ? Colors.white
+                              : (isDark ? Colors.white70 : Colors.black87),
                           fontSize: 8,
                           fontWeight: FontWeight.bold,
                         ),
@@ -167,7 +174,7 @@ class MovieCard extends StatelessWidget {
                   ),
               ],
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
             // Title
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 2),

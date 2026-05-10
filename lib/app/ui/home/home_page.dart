@@ -142,7 +142,7 @@ class _HomePageState extends State<HomePage> {
     final textColor = isDark ? Colors.white : Colors.black87;
     final subTextColor = isDark ? Colors.white54 : Colors.black54;
     final bgDrawer = isDark ? const Color(0xFF121212) : Colors.white;
-    final bgHeader = isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade100;
+    final bgHeader = isDark ? const Color(0xFF1E1E1E) : Colors.grey.shade100;
 
     return Drawer(
       backgroundColor: bgDrawer,
@@ -157,7 +157,7 @@ class _HomePageState extends State<HomePage> {
                 color: bgHeader,
                 border: Border(
                   bottom: BorderSide(
-                    color: const Color(0xFFE50914).withOpacity(0.3),
+                    color: Colors.transparent,
                     width: 1,
                   ),
                 ),
@@ -225,21 +225,6 @@ class _HomePageState extends State<HomePage> {
                     },
                   ),
 
-                  // Watchlist
-                  _buildDrawerItem(
-                    icon: Icons.watch_later_outlined,
-                    activeIcon: Icons.watch_later,
-                    title: appConfig.translate('watchlist'),
-                    isDark: isDark,
-                    onTap: () {
-                      Navigator.pop(context);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const WatchlistScreen()),
-                      );
-                    },
-                  ),
-
                   // Recent
                   _buildDrawerItem(
                     icon: Icons.history_outlined,
@@ -287,7 +272,7 @@ class _HomePageState extends State<HomePage> {
 
                   // Admin Panel (only for admin users)
                   if (appConfig.isCurrentUserAdmin) ...[
-                    const Divider(height: 24),
+                    const SizedBox(height: 8),
                     _buildDrawerItem(
                       icon: Icons.admin_panel_settings_outlined,
                       activeIcon: Icons.admin_panel_settings,
@@ -318,7 +303,7 @@ class _HomePageState extends State<HomePage> {
                     ),
                   ],
 
-                  const Divider(height: 24),
+                  const SizedBox(height: 8),
 
                   // Profile (if logged in)
                   if (appConfig.isLoggedIn)
@@ -415,10 +400,6 @@ class _HomePageState extends State<HomePage> {
         ),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(10),
-          side: BorderSide(
-            color: const Color(0xFFE50914).withOpacity(0.1),
-            width: 1,
-          ),
         ),
         onTap: onTap,
       ),

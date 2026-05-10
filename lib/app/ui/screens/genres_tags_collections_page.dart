@@ -8,6 +8,7 @@ import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/ui/components/movie_card.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
 import 'package:cm_movies/app/ui/screens/series_detail_screen.dart';
+import 'package:cm_movies/app/ui/home/trending_movie_component.dart';
 
 class GenresTagsCollectionsPage extends StatefulWidget {
   const GenresTagsCollectionsPage({super.key});
@@ -382,7 +383,7 @@ class _NeonGlowButtonState extends State<_NeonGlowButton> {
                   color: _isHovering
                       ? const Color(0xFFE50914)
                       : isDark
-                          ? const Color(0xFFB81D24)
+                          ? Colors.white24
                           : Colors.grey.shade400,
                   width: 1.5,
                 ),
@@ -645,14 +646,7 @@ class _FilterResultPageState extends State<FilterResultPage> {
       ),
       itemCount: 9,
       itemBuilder: (context, index) {
-        return Container(
-          decoration: BoxDecoration(
-            color: Theme.of(context).brightness == Brightness.dark
-                ? const Color(0xFF2A2A2A)
-                : const Color(0xFFE0E0E0),
-            borderRadius: BorderRadius.circular(8),
-          ),
-        );
+        return const MovieCardSkeleton();
       },
     );
   }

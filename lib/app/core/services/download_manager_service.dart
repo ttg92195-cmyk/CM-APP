@@ -147,6 +147,14 @@ class DownloadManagerService extends ChangeNotifier {
   static const String _tasksKey = 'download_tasks';
   final Dio _dio = Dio();
 
+  static String? _customDownloadDir;
+  static String? get customDownloadDir => _customDownloadDir;
+  static Future<void> setCustomDownloadDir(String path) async {
+    _customDownloadDir = path;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('custom_download_dir', path);
+  }
+
   final Map<String, CancelToken> _cancelTokens = {};
   List<DownloadTask> _tasks = [];
   bool _isInitialized = false;
@@ -178,6 +186,12 @@ class DownloadManagerService extends ChangeNotifier {
 
   /// Get cross-platform download directory
   Future<String> _getDownloadDir() async {
+    // Check custom download directory first
+    if (_customDownloadDir != null && _customDownloadDir!.isNotEmpty) {
+      final dir = Directory(_customDownloadDir!);
+      if (await dir.exists()) return dir.path;
+    }
+
     // On Android, prefer the public Download directory
     if (Platform.isAndroid) {
       // Try external storage first (public Download folder)
@@ -207,6 +221,12 @@ class DownloadManagerService extends ChangeNotifier {
       await dir.create(recursive: true);
     }
     return dir.path;
+  }
+
+  /// Get current download path for display
+  Future<String> getCurrentDownloadPath() async {
+    if (_customDownloadDir != null) return _customDownloadDir!;
+    return await _getDownloadDir();
   }
 
   /// Add a new download task
@@ -462,6 +482,7 @@ class DownloadManagerService extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       final data = prefs.getString(_tasksKey);
+      _customDownloadDir = prefs.getString('custom_download_dir');
       if (data != null && data.isNotEmpty) {
         final List<dynamic> decoded = json.decode(data) as List<dynamic>;
         _tasks = decoded

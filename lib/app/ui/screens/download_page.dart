@@ -29,6 +29,11 @@ class _DownloadPageState extends State<DownloadPage> {
       appBar: AppBar(
         title: Text(appConfig.translate('download_manager')),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined, size: 22),
+            onPressed: () => _showDownloadSettings(appConfig, theme),
+            tooltip: 'Download Settings',
+          ),
           ListenableBuilder(
             listenable: _downloadManager,
             builder: (context, _) {
@@ -201,7 +206,7 @@ class _DownloadPageState extends State<DownloadPage> {
     final isDark = theme.brightness == Brightness.dark;
     final accentColor = const Color(0xFFE50914);
     final metaTextColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
-    final cardBgColor = isDark ? const Color(0xFF1A1A2E) : Colors.white;
+    final cardBgColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
     final isDownloading = task.status == DownloadStatus.downloading;
     final isPaused = task.status == DownloadStatus.paused;
 
@@ -373,7 +378,7 @@ class _DownloadPageState extends State<DownloadPage> {
   Widget _buildCompletedTaskCard(DownloadTask task, AppConfig appConfig, ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
     final metaTextColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
-    final cardBgColor = isDark ? const Color(0xFF1A1A2E) : Colors.white;
+    final cardBgColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
 
     return Container(
       decoration: BoxDecoration(
@@ -481,7 +486,7 @@ class _DownloadPageState extends State<DownloadPage> {
 
     final isDark = theme.brightness == Brightness.dark;
     final metaTextColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
-    final cardBgColor = isDark ? const Color(0xFF1A1A2E) : Colors.white;
+    final cardBgColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
 
     return [
       const SizedBox(height: 12),
@@ -560,5 +565,144 @@ class _DownloadPageState extends State<DownloadPage> {
     if (q.contains('1080')) return const Color(0xFFFF6D00);
     if (q.contains('720')) return const Color(0xFFFFAB00);
     return const Color(0xFF4CAF50);
+  }
+
+  void _showDownloadSettings(AppConfig appConfig, ThemeData theme) async {
+    final isDark = theme.brightness == Brightness.dark;
+    String currentPath = await _downloadManager.getCurrentDownloadPath();
+
+    if (!mounted) return;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            return Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Handle
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade400,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  Text(
+                    'Download Settings',
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Download Location
+                  Text(
+                    'Download Location',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: theme.colorScheme.onSurface.withOpacity(0.7),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: isDark ? Colors.white10 : Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            currentPath,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              fontFamily: 'monospace',
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const Icon(Icons.folder_open, size: 20),
+                          onPressed: () async {
+                            final controller = TextEditingController();
+                            final result = await showDialog<String>(
+                              context: context,
+                              builder: (dialogCtx) => AlertDialog(
+                                title: const Text('Change Download Location'),
+                                content: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      'Enter the full path for downloads:',
+                                      style: theme.textTheme.bodySmall,
+                                    ),
+                                    const SizedBox(height: 12),
+                                    TextField(
+                                      controller: controller,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Folder Path',
+                                        hintText: '/storage/emulated/0/Download/CM_Movies',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                      autofocus: true,
+                                    ),
+                                  ],
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(dialogCtx),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  ElevatedButton(
+                                    onPressed: () => Navigator.pop(dialogCtx, controller.text.trim()),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFFE50914),
+                                      foregroundColor: Colors.white,
+                                    ),
+                                    child: const Text('Save'),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (result != null && result.isNotEmpty) {
+                              await DownloadManagerService.setCustomDownloadDir(result);
+                              final newPath = await _downloadManager.getCurrentDownloadPath();
+                              setModalState(() => currentPath = newPath);
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Tap the folder icon to change the download location.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurface.withOpacity(0.5),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 }

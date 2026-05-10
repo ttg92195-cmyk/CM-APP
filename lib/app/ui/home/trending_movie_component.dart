@@ -130,7 +130,7 @@ class _MovieCardSkeletonState extends State<MovieCardSkeleton>
                 child: const SizedBox.expand(),
               ),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
             // Title skeleton
             Container(
               height: 12,

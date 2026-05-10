@@ -289,7 +289,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
     final bodyTextColor = isDark ? Colors.white70 : Colors.black87;
     final metaTextColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
     final bgColor = isDark ? const Color(0xFF0A0A0A) : const Color(0xFFF5F5F5);
-    final cardBgColor = isDark ? const Color(0xFF1A1A2E) : Colors.white;
+    final cardBgColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
 
     return Scaffold(
       backgroundColor: bgColor,
@@ -419,7 +419,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                                   errorWidget: (context, url, error) =>
                                       Container(
                                     color: isDark
-                                        ? const Color(0xFF1A1A2E)
+                                        ? const Color(0xFF1E1E1E)
                                         : Colors.grey.shade300,
                                     child: Icon(Icons.tv,
                                         size: 36,
@@ -430,7 +430,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                                 )
                               : Container(
                                   color: isDark
-                                      ? const Color(0xFF1A1A2E)
+                                      ? const Color(0xFF1E1E1E)
                                       : Colors.grey.shade300,
                                   child: Icon(Icons.tv,
                                       size: 36,
@@ -705,7 +705,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                             CircleAvatar(
                               radius: 34,
                               backgroundColor: isDark
-                                  ? const Color(0xFF1A1A2E)
+                                  ? const Color(0xFF1E1E1E)
                                   : Colors.grey.shade300,
                               child: ClipOval(
                                 child: cast.fullProfileUrl.isNotEmpty
@@ -825,10 +825,6 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                 decoration: BoxDecoration(
                   color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: isDark ? Colors.white12 : Colors.grey.shade300,
-                    width: 0.5,
-                  ),
                 ),
                 child: ExpansionTile(
                   tilePadding:
@@ -880,11 +876,6 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                               ? Colors.white.withOpacity(0.05)
                               : Colors.grey.shade50,
                           borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color:
-                                isDark ? Colors.white10 : Colors.grey.shade200,
-                            width: 0.5,
-                          ),
                         ),
                         child: ExpansionTile(
                           tilePadding: const EdgeInsets.symmetric(
@@ -1277,7 +1268,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                                               placeholder: (context, url) =>
                                                   Container(
                                                 color: isDark
-                                                    ? const Color(0xFF1A1A2E)
+                                                    ? const Color(0xFF1E1E1E)
                                                     : Colors.grey.shade300,
                                                 child: const Center(
                                                     child:
@@ -1288,7 +1279,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                                                   (context, url, error) =>
                                                       Container(
                                                 color: isDark
-                                                    ? const Color(0xFF1A1A2E)
+                                                    ? const Color(0xFF1E1E1E)
                                                     : Colors.grey.shade300,
                                                 child: Icon(Icons.tv,
                                                     size: 30,
@@ -1299,7 +1290,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                                             )
                                           : Container(
                                               color: isDark
-                                                  ? const Color(0xFF1A1A2E)
+                                                  ? const Color(0xFF1E1E1E)
                                                   : Colors.grey.shade300,
                                               child: Icon(Icons.tv,
                                                   size: 30,
@@ -1418,12 +1409,7 @@ class _SeriesTabBarDelegate extends SliverPersistentHeaderDelegate {
   Widget build(
       BuildContext context, double shrinkOffset, bool overlapsContent) {
     return Container(
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF0A0A0A) : const Color(0xFFF5F5F5),
-        border: Border(
-          bottom: BorderSide(color: Colors.transparent, width: 0),
-        ),
-      ),
+      color: isDark ? const Color(0xFF0A0A0A) : const Color(0xFFF5F5F5),
       child: TabBar(
         controller: tabController,
         labelColor: accentColor,

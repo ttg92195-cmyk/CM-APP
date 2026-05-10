@@ -290,7 +290,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
     final bodyTextColor = isDark ? Colors.white70 : Colors.black87;
     final metaTextColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
     final bgColor = isDark ? const Color(0xFF0A0A0A) : const Color(0xFFF5F5F5);
-    final cardBgColor = isDark ? const Color(0xFF1A1A2E) : Colors.white;
+    final cardBgColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
 
     return Scaffold(
       backgroundColor: bgColor,
@@ -420,7 +420,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                                   errorWidget: (context, url, error) =>
                                       Container(
                                     color: isDark
-                                        ? const Color(0xFF1A1A2E)
+                                        ? const Color(0xFF1E1E1E)
                                         : Colors.grey.shade300,
                                     child: Icon(Icons.movie,
                                         size: 36,
@@ -431,7 +431,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                                 )
                               : Container(
                                   color: isDark
-                                      ? const Color(0xFF1A1A2E)
+                                      ? const Color(0xFF1E1E1E)
                                       : Colors.grey.shade300,
                                   child: Icon(Icons.movie,
                                       size: 36,
@@ -705,7 +705,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                             CircleAvatar(
                               radius: 34,
                               backgroundColor: isDark
-                                  ? const Color(0xFF1A1A2E)
+                                  ? const Color(0xFF1E1E1E)
                                   : Colors.grey.shade300,
                               child: ClipOval(
                                 child: cast.fullProfileUrl.isNotEmpty
@@ -828,10 +828,6 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
               decoration: BoxDecoration(
                 color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: isDark ? Colors.white12 : Colors.grey.shade300,
-                  width: 0.5,
-                ),
               ),
               child: ExpansionTile(
                 tilePadding:
@@ -898,10 +894,6 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                             ? Colors.white.withOpacity(0.05)
                             : Colors.grey.shade50,
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: isDark ? Colors.white10 : Colors.grey.shade200,
-                          width: 0.5,
-                        ),
                       ),
                       child: Padding(
                         padding: const EdgeInsets.all(10),
@@ -1126,7 +1118,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                                               placeholder: (context, url) =>
                                                   Container(
                                                 color: isDark
-                                                    ? const Color(0xFF1A1A2E)
+                                                    ? const Color(0xFF1E1E1E)
                                                     : Colors.grey.shade300,
                                                 child: const Center(
                                                     child:
@@ -1137,7 +1129,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                                                   (context, url, error) =>
                                                       Container(
                                                 color: isDark
-                                                    ? const Color(0xFF1A1A2E)
+                                                    ? const Color(0xFF1E1E1E)
                                                     : Colors.grey.shade300,
                                                 child: Icon(Icons.movie,
                                                     size: 30,
@@ -1148,7 +1140,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                                             )
                                           : Container(
                                               color: isDark
-                                                  ? const Color(0xFF1A1A2E)
+                                                  ? const Color(0xFF1E1E1E)
                                                   : Colors.grey.shade300,
                                               child: Icon(Icons.movie,
                                                   size: 30,
@@ -1267,12 +1259,7 @@ class _TabBarDelegate extends SliverPersistentHeaderDelegate {
   Widget build(
       BuildContext context, double shrinkOffset, bool overlapsContent) {
     return Container(
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF0A0A0A) : const Color(0xFFF5F5F5),
-        border: Border(
-          bottom: BorderSide(color: Colors.transparent, width: 0),
-        ),
-      ),
+      color: isDark ? const Color(0xFF0A0A0A) : const Color(0xFFF5F5F5),
       child: TabBar(
         controller: tabController,
         labelColor: accentColor,

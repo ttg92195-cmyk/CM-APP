@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
+import 'package:cm_movies/app/ui/screens/watchlist_screen.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -268,6 +269,30 @@ class _ProfilePageState extends State<ProfilePage> {
               ),
             ),
 
+            const SizedBox(height: 8),
+
+            // Watchlist
+            Card(
+              child: ListTile(
+                leading: const Icon(
+                  Icons.watch_later_outlined,
+                  color: Color(0xFFE50914),
+                ),
+                title: const Text(
+                  'Watchlist',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                subtitle: const Text('View your saved watchlist'),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const WatchlistScreen()),
+                  );
+                },
+              ),
+            ),
+
             const SizedBox(height: 24),
 
             // Change Password Section
@@ -472,7 +497,7 @@ class _ProfilePageState extends State<ProfilePage> {
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  foregroundColor: Colors.redAccent,
+                  foregroundColor: const Color(0xFFE50914),
                 ),
               ),
             ),

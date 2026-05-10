@@ -116,7 +116,7 @@ class _WatchlistScreenState extends State<WatchlistScreen> {
   ) {
     final accentColor = const Color(0xFFE50914);
     final metaTextColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
-    final cardBgColor = isDark ? const Color(0xFF1A1A2E) : Colors.white;
+    final cardBgColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
 
     return Dismissible(
       key: Key(movie.id),
