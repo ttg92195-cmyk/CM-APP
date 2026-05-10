@@ -18,7 +18,6 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
   final _titleController = TextEditingController();
   final _yearController = TextEditingController();
   final _posterController = TextEditingController();
-  final _backdropController = TextEditingController();
   final _overviewController = TextEditingController();
   final _ratingController = TextEditingController();
   final _resolutionController = TextEditingController();
@@ -50,7 +49,6 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
     _titleController.dispose();
     _yearController.dispose();
     _posterController.dispose();
-    _backdropController.dispose();
     _overviewController.dispose();
     _ratingController.dispose();
     _resolutionController.dispose();
@@ -84,7 +82,6 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
         'title': _titleController.text.trim(),
         'year': _yearController.text.trim().isEmpty ? null : _yearController.text.trim(),
         'poster': _posterController.text.trim().isEmpty ? null : _posterController.text.trim(),
-        'backdrop': _backdropController.text.trim().isEmpty ? null : _backdropController.text.trim(),
         'overview': _overviewController.text.trim().isEmpty ? null : _overviewController.text.trim(),
         'rating': _ratingController.text.trim().isEmpty ? null : _ratingController.text.trim(),
         'resolution': _resolutionController.text.trim().isEmpty ? null : _resolutionController.text.trim(),
@@ -228,25 +225,11 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
                     ),
                     const SizedBox(height: 16),
 
-                    // Poster + Backdrop
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextFormField(
-                            controller: _posterController,
-                            decoration: const InputDecoration(labelText: 'Poster URL', hintText: 'https://...'),
-                            keyboardType: TextInputType.url,
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: TextFormField(
-                            controller: _backdropController,
-                            decoration: const InputDecoration(labelText: 'Backdrop URL', hintText: 'https://...'),
-                            keyboardType: TextInputType.url,
-                          ),
-                        ),
-                      ],
+                    // Poster URL
+                    TextFormField(
+                      controller: _posterController,
+                      decoration: const InputDecoration(labelText: 'Poster URL', hintText: 'https://...'),
+                      keyboardType: TextInputType.url,
                     ),
                     const SizedBox(height: 16),
 
