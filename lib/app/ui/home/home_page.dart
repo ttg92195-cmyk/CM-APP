@@ -146,22 +146,18 @@ class _HomePageState extends State<HomePage> {
 
     return Drawer(
       backgroundColor: bgDrawer,
-      child: SafeArea(
-        child: Column(
-          children: [
-            // Drawer Header
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
-              decoration: BoxDecoration(
-                color: bgHeader,
-                border: Border(
-                  bottom: BorderSide(
-                    color: Colors.transparent,
-                    width: 1,
-                  ),
+      child: DividerTheme(
+        data: const DividerThemeData(color: Colors.transparent),
+        child: SafeArea(
+          child: Column(
+            children: [
+              // Drawer Header
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
+                decoration: BoxDecoration(
+                  color: bgHeader,
                 ),
-              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -372,6 +368,7 @@ class _HomePageState extends State<HomePage> {
             ),
           ],
         ),
+      ),
       ),
     );
   }
