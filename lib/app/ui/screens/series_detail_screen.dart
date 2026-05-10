@@ -836,6 +836,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                   iconColor: accentColor,
                   collapsedBackgroundColor: Colors.transparent,
                   backgroundColor: Colors.transparent,
+                  dividerColor: Colors.transparent,
                   shape: const RoundedRectangleBorder(side: BorderSide.none),
                   collapsedShape: const RoundedRectangleBorder(side: BorderSide.none),
                   leading: Container(
@@ -889,6 +890,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                           iconColor: accentColor,
                           collapsedBackgroundColor: Colors.transparent,
                           backgroundColor: Colors.transparent,
+                          dividerColor: Colors.transparent,
                           shape: const RoundedRectangleBorder(side: BorderSide.none),
                           collapsedShape: const RoundedRectangleBorder(side: BorderSide.none),
                           leading: Icon(Icons.play_circle_outline,
@@ -1061,6 +1063,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
             iconColor: accentColor,
             collapsedBackgroundColor: Colors.transparent,
             backgroundColor: Colors.transparent,
+            dividerColor: Colors.transparent,
             shape: const RoundedRectangleBorder(side: BorderSide.none),
             collapsedShape: const RoundedRectangleBorder(side: BorderSide.none),
             leading: Container(
