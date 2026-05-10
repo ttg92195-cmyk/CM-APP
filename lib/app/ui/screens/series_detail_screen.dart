@@ -11,6 +11,7 @@ import 'package:cm_movies/app/core/services/watchlist_service.dart';
 import 'package:cm_movies/app/core/services/recent_service.dart';
 import 'package:cm_movies/app/core/services/download_manager_service.dart';
 import 'package:cm_movies/app/ui/screens/category_page.dart';
+import 'package:cm_movies/app/ui/screens/download_page.dart';
 import 'package:cm_movies/app/ui/components/age_rating_gate.dart';
 
 class SeriesDetailScreen extends StatefulWidget {
@@ -218,21 +219,81 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
 
   Future<void> _startInAppDownload(MovieDownloadLink link) async {
     if (_seriesDetail == null) return;
-    await _downloadManager.addTask(
+
+    // Validate URL before starting download
+    if (link.url.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Download link is not available'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Check if download is enabled
+    final appConfig = Provider.of<AppConfig>(context, listen: false);
+    if (!appConfig.downloadEnabled) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(appConfig.translate('download_disabled_msg')),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+
+    final result = await _downloadManager.addTaskWithResult(
       movieId: _seriesDetail!.id,
       movieTitle: _seriesDetail!.title,
-      moviePoster: _seriesDetail!.poster,
+      moviePoster: _seriesDetail!.fullPosterUrl.isNotEmpty ? _seriesDetail!.fullPosterUrl : _seriesDetail!.poster,
       url: link.url,
       quality: link.quality ?? link.resolution ?? 'Standard',
       size: link.size,
       serverName: link.serverName,
     );
     if (mounted) {
+      String message;
+      Color bgColor;
+      switch (result) {
+        case AddTaskResult.success:
+          message = '${appConfig.translate('downloading')} — ${link.quality ?? link.resolution ?? 'Standard'}';
+          bgColor = const Color(0xFF4CAF50);
+          break;
+        case AddTaskResult.blockedDomain:
+          message = 'Download blocked: domain not allowed';
+          bgColor = Colors.redAccent;
+          break;
+        case AddTaskResult.emptyUrl:
+          message = 'Download URL is empty';
+          bgColor = Colors.redAccent;
+          break;
+        case AddTaskResult.alreadyExists:
+          message = 'Already downloading ${link.quality ?? link.resolution ?? 'Standard'}';
+          bgColor = Colors.orange;
+          break;
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(Provider.of<AppConfig>(context, listen: false)
-              .translate('downloading')),
-          duration: const Duration(seconds: 2),
+          content: Text(message),
+          backgroundColor: bgColor,
+          duration: const Duration(seconds: 3),
+          action: result == AddTaskResult.success
+              ? SnackBarAction(
+                  label: 'View',
+                  textColor: Colors.white,
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const DownloadPage()),
+                    );
+                  },
+                )
+              : null,
         ),
       );
     }

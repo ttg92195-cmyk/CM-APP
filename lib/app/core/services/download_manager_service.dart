@@ -197,8 +197,13 @@ class DownloadManagerService extends ChangeNotifier {
 
   final Dio _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 30),
-    receiveTimeout: const Duration(minutes: 60),
+    receiveTimeout: const Duration(minutes: 120),
     sendTimeout: const Duration(minutes: 10),
+    // Follow redirects for file hosting services (MediaFire, etc.)
+    followRedirects: true,
+    maxRedirects: 10,
+    // Better buffer size for large file downloads
+    receiveDataWhenStatusError: true,
   ));
 
   static String? _customDownloadDir;
@@ -523,9 +528,13 @@ class DownloadManagerService extends ChangeNotifier {
       return AddTaskResult.emptyUrl;
     }
 
-    // M2: Validate download URL against allowlist
-    if (!_isValidDownloadUrl(url)) {
-      debugPrint('Blocked download from untrusted domain: $url');
+    // Normalize the URL (convert share URLs to direct download URLs)
+    final normalizedUrl = _normalizeDownloadUrl(url.trim());
+    debugPrint('Download URL: $url -> normalized: $normalizedUrl');
+
+    // M2: Validate download URL against allowlist or media extension
+    if (!_isValidDownloadUrl(normalizedUrl)) {
+      debugPrint('Blocked download from untrusted domain: $normalizedUrl');
       return AddTaskResult.blockedDomain;
     }
 
@@ -552,7 +561,9 @@ class DownloadManagerService extends ChangeNotifier {
       }
     }
 
-    final fileName = '${movieTitle.replaceAll(RegExp(r'[^\w\s-]'), '')}_$quality.mkv'
+    // Detect correct file extension from URL
+    final fileExt = _detectFileExtension(normalizedUrl);
+    final fileName = '${movieTitle.replaceAll(RegExp(r'[^\w\s-]'), '')}_$quality$fileExt'
         .replaceAll(' ', '_');
     final downloadDir = await _getDownloadDir();
     final savePath = '$downloadDir/$fileName';
@@ -562,7 +573,7 @@ class DownloadManagerService extends ChangeNotifier {
       movieId: movieId,
       movieTitle: movieTitle,
       moviePoster: moviePoster,
-      url: url,
+      url: normalizedUrl,
       quality: quality,
       size: size,
       serverName: serverName,
@@ -589,49 +600,8 @@ class DownloadManagerService extends ChangeNotifier {
     String? size,
     required String serverName,
   }) async {
-    // Check for empty URL first (before domain check)
-    if (url.trim().isEmpty) {
-      debugPrint('Download URL is empty');
-      return;
-    }
-
-    // M2: Validate download URL against allowlist
-    if (!_isValidDownloadUrl(url)) {
-      debugPrint('Blocked download from untrusted domain: $url');
-      return;
-    }
-
-    final taskId = '${movieId}_${quality.replaceAll(' ', '_')}';
-
-    // Check if already exists
-    if (_tasks.any((t) => t.id == taskId)) {
-      // If completed, allow re-download
-      final existing = _tasks.firstWhere((t) => t.id == taskId);
-      if (existing.status == DownloadStatus.completed) {
-        // Delete old file before re-downloading
-        try {
-          final file = File(existing.savePath);
-          if (await file.exists()) {
-            await file.delete();
-          }
-        } catch (_) {}
-        _tasks.remove(existing);
-      } else if (existing.status == DownloadStatus.failed) {
-        // Retry the failed task
-        await retryDownload(taskId);
-        return;
-      } else {
-        return; // Already downloading/paused
-      }
-    }
-
-    final fileName = '${movieTitle.replaceAll(RegExp(r'[^\w\s-]'), '')}_$quality.mkv'
-        .replaceAll(' ', '_');
-    final downloadDir = await _getDownloadDir();
-    final savePath = '$downloadDir/$fileName';
-
-    final task = DownloadTask(
-      id: taskId,
+    // Delegate to addTaskWithResult for consistent behavior
+    await addTaskWithResult(
       movieId: movieId,
       movieTitle: movieTitle,
       moviePoster: moviePoster,
@@ -639,16 +609,7 @@ class DownloadManagerService extends ChangeNotifier {
       quality: quality,
       size: size,
       serverName: serverName,
-      savePath: savePath,
-      addedAt: DateTime.now(),
     );
-
-    _tasks.insert(0, task);
-    await _saveTasks();
-    notifyListeners();
-
-    // Start download (or queue it)
-    _startOrQueueDownload(taskId);
   }
 
   /// Start download or queue it if max concurrent reached
@@ -1046,16 +1007,41 @@ class DownloadManagerService extends ChangeNotifier {
 
   // M2: Domain allowlist for download URLs — prevents malicious URL injection
   static const Set<String> _allowedDomains = {
+    // Google/Firebase
     'googleapis.com', 'firebasestorage.app', 'firebaseio.com', 'google.com',
-    'drive.google.com', 'docs.google.com', 'mega.nz', 'mega.co.nz',
-    'mediafire.com', 'dropbox.com', 'dl.dropboxusercontent.com',
-    'mp4upload.com', 'streamable.com', 'gdrive.io',
+    'drive.google.com', 'docs.google.com',
+    // Mega
+    'mega.nz', 'mega.co.nz',
+    // MediaFire
+    'mediafire.com',
+    // Dropbox
+    'dropbox.com', 'dl.dropboxusercontent.com',
+    // MP4Upload / Streamable
+    'mp4upload.com', 'streamable.com',
+    // GDrive proxies
+    'gdrive.io',
     'gdtot.dad', 'appdrive.in', 'driveapp.in', 'driveeee.net', 'hubdrive.in',
+    // Common video CDNs and hosting
+    'cloudfront.net', 'amazonaws.com', 'akamaized.net', 'cloudflare.com',
+    'videopress.com', 'vimeo.com', 'dailymotion.com',
+    // Additional file hosts
+    '1fichier.com', 'userscloud.com', 'zippyshare.com', 'upload.ee',
+    'anonfiles.com', 'pixeldrain.com', 'gofile.io', 'catbox.moe',
+    'send.cm', 'uploadhaven.com', 'bowfile.com', 'nitroflare.com',
+    'rapidgator.net', 'alfafile.net', 'depositfiles.com',
   };
 
-  /// Validate that a download URL is from a trusted domain
-  /// Allows HTTPS (preferred) and HTTP for compatibility with file hosting services.
-  /// Domain allowlist provides security at the domain level.
+  // Media file extensions — direct media URLs are always allowed regardless of domain
+  static const Set<String> _mediaExtensions = {
+    '.mp4', '.mkv', '.avi', '.webm', '.mov', '.wmv', '.flv', '.m4v',
+    '.ts', '.mpg', '.mpeg', '.3gp', '.ogv', '.divx', '.rmvb',
+    '.zip', '.rar', '.7z', '.tar', '.gz',
+  };
+
+  /// Validate that a download URL is from a trusted domain OR is a direct media file.
+  /// Direct media URLs (ending in .mp4, .mkv, etc.) are always allowed — they are
+  /// clearly media files, not malicious redirects.
+  /// Domain allowlist provides security at the domain level for non-media URLs.
   /// TODO (L7): Enforce HTTPS-only when all download sources support it.
   ///     Signed/time-limited URLs require Firebase Blaze plan (not yet available).
   ///     When Blaze plan is enabled, replace direct URLs with Firebase Storage
@@ -1068,12 +1054,109 @@ class DownloadManagerService extends ChangeNotifier {
       if (uri.scheme != 'https' && uri.scheme != 'http') return false;
       final host = uri.host.toLowerCase();
       if (host.isEmpty) return false;
+
+      // Allow direct media file URLs regardless of domain
+      // This covers CDN-hosted MP4/MKV files on any domain
+      final pathLower = uri.path.toLowerCase();
+      for (final ext in _mediaExtensions) {
+        if (pathLower.endsWith(ext)) return true;
+        // Handle URLs with query params after extension, e.g. file.mp4?token=xxx
+        final pathSegments = uri.pathSegments;
+        if (pathSegments.isNotEmpty) {
+          final lastSegment = pathSegments.last.toLowerCase();
+          if (lastSegment.contains(ext)) return true;
+        }
+      }
+
+      // Check domain allowlist for non-media URLs
       for (final allowed in _allowedDomains) {
         if (host == allowed || host.endsWith('.$allowed')) return true;
       }
       return false;
     } catch (_) {
       return false;
+    }
+  }
+
+  /// Normalize download URLs to direct download format where possible.
+  /// Converts share/preview URLs to direct download URLs for supported services.
+  static String _normalizeDownloadUrl(String url) {
+    if (url.isEmpty) return url;
+    try {
+      final uri = Uri.parse(url);
+      final host = uri.host.toLowerCase();
+      final path = uri.path;
+
+      // Google Drive: Convert share URL to direct download URL
+      // Input:  https://drive.google.com/file/d/FILE_ID/view?usp=sharing
+      // Output: https://drive.google.com/uc?export=download&id=FILE_ID
+      if ((host == 'drive.google.com' || host.endsWith('.drive.google.com')) &&
+          path.contains('/file/d/')) {
+        final match = RegExp(r'/file/d/([^/]+)').firstMatch(path);
+        if (match != null) {
+          final fileId = match.group(1)!;
+          return 'https://drive.google.com/uc?export=download&id=$fileId';
+        }
+      }
+
+      // Google Drive: Convert open URL to direct download URL
+      // Input:  https://drive.google.com/open?id=FILE_ID
+      // Output: https://drive.google.com/uc?export=download&id=FILE_ID
+      if ((host == 'drive.google.com' || host.endsWith('.drive.google.com')) &&
+          path == '/open') {
+        final id = uri.queryParameters['id'];
+        if (id != null && id.isNotEmpty) {
+          return 'https://drive.google.com/uc?export=download&id=$id';
+        }
+      }
+
+      // Dropbox: Convert share URL to direct download URL
+      // Input:  https://www.dropbox.com/s/xxxxx/file.mp4?dl=0
+      // Output: https://www.dropbox.com/s/xxxxx/file.mp4?dl=1
+      if ((host == 'dropbox.com' || host == 'www.dropbox.com') &&
+          path.startsWith('/s/')) {
+        final newParams = Map<String, String>.from(uri.queryParameters);
+        newParams['dl'] = '1';
+        return uri.replace(queryParameters: newParams).toString();
+      }
+
+      // Dropbox: Convert /scl/ links
+      // Input:  https://www.dropbox.com/scl/fi/xxxxx/file.mp4?dl=0&rlkey=xxx
+      // Output: https://www.dropbox.com/scl/fi/xxxxx/file.mp4?dl=1&rlkey=xxx
+      if ((host == 'dropbox.com' || host == 'www.dropbox.com') &&
+          path.startsWith('/scl/')) {
+        final newParams = Map<String, String>.from(uri.queryParameters);
+        newParams['dl'] = '1';
+        return uri.replace(queryParameters: newParams).toString();
+      }
+
+      return url;
+    } catch (_) {
+      return url;
+    }
+  }
+
+  /// Detect the file extension from a URL for proper file naming
+  static String _detectFileExtension(String url, {String fallback = '.mkv'}) {
+    if (url.isEmpty) return fallback;
+    try {
+      final uri = Uri.parse(url);
+      final path = uri.path;
+      // Check path for known media extensions
+      for (final ext in _mediaExtensions) {
+        if (path.toLowerCase().endsWith(ext)) return ext;
+      }
+      // Check last path segment (handles query params)
+      final segments = uri.pathSegments;
+      if (segments.isNotEmpty) {
+        final last = segments.last.toLowerCase();
+        for (final ext in _mediaExtensions) {
+          if (last.contains(ext)) return ext;
+        }
+      }
+      return fallback;
+    } catch (_) {
+      return fallback;
     }
   }
 
