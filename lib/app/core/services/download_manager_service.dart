@@ -982,14 +982,13 @@ class DownloadManagerService extends ChangeNotifier {
         final actualTotal = serverTotalBytes > 0 ? serverTotalBytes : -1;
 
         // Open file in append mode if resuming, write mode if starting fresh
-        final file = File(currentTask.savePath);
         final fileSink = file.openWrite(mode: startByte > 0 ? FileMode.append : FileMode.write);
 
         try {
           int receivedSinceStart = 0;
           final stream = response.data?.stream;
           if (stream == null) {
-            throw DioException(connectionError: 'Empty response stream', type: DioExceptionType.connectionError);
+            throw DioException(requestOptions: RequestOptions(), error: 'Empty response stream', type: DioExceptionType.connectionError);
           }
 
           await for (final chunk in stream) {
