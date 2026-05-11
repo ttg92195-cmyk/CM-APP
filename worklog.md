@@ -20,3 +20,31 @@ Stage Summary:
 - Home screen more compact with less wasted space
 - Post detail icons smaller and uniformly sized
 - All changes pushed to GitHub
+
+---
+Task ID: 2
+Agent: Main Agent
+Task: Fix build errors + download performance optimization
+
+Work Log:
+- Cloned CM-APP repo from GitHub to /home/z/CM-APP
+- Fixed duplicate _showDownloadPermissionDialog() method in movie_detail_screen.dart
+  - The method was outside _MovieDetailScreenState class causing undefined name errors
+  - Removed the duplicate; original inside the class was already correct
+- Verified download_page.dart already has Storage Permission Status Checker UI (green Granted / red Not Granted)
+- Verified movie_detail_screen.dart already has Storage Permission gate before downloads
+- Added download performance optimization to download_manager_service.dart:
+  - Stall detection: if speed drops below 5 KB/s for 20 seconds, auto-reconnect
+  - Auto-retry on network errors (connection timeout, receive timeout, connection error) up to 3 retries
+  - Exponential backoff on retries (2s, 4s, 6s)
+  - Increased connect timeout from 20s to 30s
+  - User pause vs auto-cancel distinction in cancel handling
+  - Added _formatSpeed() helper for debug logging
+- Pushed 2 commits: efc317c (build fix) and 6440a1e (download optimization)
+
+Stage Summary:
+- Build error fixed: duplicate method outside class scope removed
+- Storage Permission Status Checker UI already implemented (from previous session)
+- Storage Permission gate already implemented (from previous session)
+- Download speed optimization: stall detection + auto-reconnect + auto-retry with resume
+- All changes pushed to GitHub Main branch
