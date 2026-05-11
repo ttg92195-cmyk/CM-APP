@@ -1324,6 +1324,8 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
   }
 
   /// Show dialog requesting storage permission before download
+  /// Show dialog requesting storage permission before download.
+  /// Uses the native Android system permission dialog (Permission.videos / Permission.storage).
   Future<bool> _showDownloadPermissionDialog() async {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return await showDialog<bool>(
@@ -1343,7 +1345,8 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Storage permission is required to download and save files to your device.',
+              'Storage permission is required to download and save videos to your device.',
+              'Storage permission is required to download and save videos to your device.',
               style: TextStyle(
                 color: isDark ? Colors.grey.shade300 : Colors.grey.shade700,
                 fontSize: 14,
@@ -1362,7 +1365,8 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Without this permission, downloads will fail. Grant access to continue.',
+                      'You will be asked to grant access. This is required for downloading videos.',
+                      'You will be asked to grant access. This is required for downloading videos.',
                       style: TextStyle(
                         fontSize: 12,
                         color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
@@ -1382,7 +1386,10 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
           ElevatedButton.icon(
             onPressed: () async {
               Navigator.pop(ctx, true);
-              final granted = await _downloadManager.requestStoragePermission();
+              // Use the native Android runtime permission dialog
+              final granted = await _downloadManager.requestRuntimePermission();
+              // Use the native Android runtime permission dialog
+              final granted = await _downloadManager.requestRuntimePermission();
               if (!granted && mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(

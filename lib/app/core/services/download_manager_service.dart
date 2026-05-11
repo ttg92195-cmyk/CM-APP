@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:cm_movies/app/core/services/saf_storage_service.dart';
 import 'package:open_filex/open_filex.dart';
 
@@ -491,14 +492,86 @@ class DownloadManagerService extends ChangeNotifier {
   Future<int> _getAndroidSdkVersion() async {
     if (!Platform.isAndroid) return 30;
     try {
-      // Use device_info_plus or fallback to a safe default
-      // Since device_info_plus isn't a dependency, default to Android 11+ (30)
-      // which uses scoped storage and doesn't need legacy permissions.
-      // On Android 10 and below, storage permission will still be requested.
-      // This is a safe default because most modern devices are Android 11+.
-      return 30;
+      final deviceInfo = DeviceInfoPlugin();
+      final androidInfo = await deviceInfo.androidInfo;
+      return androidInfo.version.sdkInt;
     } catch (_) {
-      return 30;
+      return 30; // Safe fallback: assume Android 11+ (scoped storage)
+    }
+  }
+
+  /// Request runtime storage permission using the native Android system dialog.
+  /// This shows the standard "Allow KMM to access videos on this device?" dialog.
+  /// - Android 13+ (SDK 33+): Uses Permission.videos (READ_MEDIA_VIDEO)
+  /// - Android 10-12 (SDK 29-32): Uses Permission.storage (READ_EXTERNAL_STORAGE)
+  /// - Android 9 and below (SDK ≤28): Uses Permission.storage (WRITE_EXTERNAL_STORAGE)
+  /// Returns true if permission is granted.
+  Future<bool> requestRuntimePermission() async {
+    if (!Platform.isAndroid) return true;
+
+    final sdkInt = await _getAndroidSdkVersion();
+
+    if (sdkInt >= 33) {
+      // Android 13+: Use granular media permission for videos
+      // This shows the system dialog: "Allow KMM to access videos on this device?"
+      var status = await Permission.videos.status;
+      if (status.isGranted) return true;
+
+      status = await Permission.videos.request();
+      if (status.isGranted) return true;
+
+      // If permanently denied, guide user to app settings
+      if (status.isPermanentlyDenied) {
+        await openAppSettings();
+        return false;
+      }
+      return false;
+    } else if (sdkInt >= 29) {
+      // Android 10-12: Use READ_EXTERNAL_STORAGE
+      // This shows the system dialog: "Allow KMM to access photos and media?"
+      var status = await Permission.storage.status;
+      if (status.isGranted) return true;
+
+      status = await Permission.storage.request();
+      if (status.isGranted) return true;
+
+      if (status.isPermanentlyDenied) {
+        await openAppSettings();
+        return false;
+      }
+      return false;
+    } else {
+      // Android 9 and below: Request legacy storage permission
+      var status = await Permission.storage.status;
+      if (status.isGranted) return true;
+
+      status = await Permission.storage.request();
+      if (status.isGranted) return true;
+
+      if (status.isPermanentlyDenied) {
+        await openAppSettings();
+        return false;
+      }
+      return false;
+    }
+  }
+
+  /// Check if runtime storage permission has been granted.
+  /// - Android 13+: Checks Permission.videos
+  /// - Android 10-12: Checks Permission.storage
+  /// - Android 9 and below: Checks Permission.storage
+  /// Returns true if the appropriate permission is granted.
+  Future<bool> hasRuntimePermission() async {
+    if (!Platform.isAndroid) return true;
+
+    final sdkInt = await _getAndroidSdkVersion();
+
+    if (sdkInt >= 33) {
+      // Android 13+: Check granular video permission
+      return await Permission.videos.isGranted;
+    } else {
+      // Android 12 and below: Check legacy storage permission
+      return await Permission.storage.isGranted;
     }
   }
 

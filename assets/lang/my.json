@@ -46,5 +46,18 @@
   "clear_history": "မှတ်တမ်းရှင်းလင်းရန်",
   "no_history": "ကြည့်ရှုမှုမှတ်တမ်း မရှိပါ",
   "about_app": "အက်ပ်အကြောင်း",
-  "version": "ဗားရှင်း"
+  "version": "ဗားရှင်း",
+  "downloads": "ဒေါင်းလုဒ်များ",
+  "download_manager": "ဒေါင်းလုဒ်မန်နေဂျာ",
+  "active_downloads": "ဒေါင်းလုဒ်လုပ်နေဆဲ",
+  "completed_downloads": "ဒေါင်းလုဒ်ပြီးဆုံး",
+  "clear_completed": "ပြီးဆုံးများ ရှင်းလင်းရန်",
+  "failed": "မအောင်မြင်ပါ",
+  "downloading": "ဒေါင်းလုဒ်လုပ်နေသည်",
+  "download_disabled_msg": "ဒေါင်းလုဒ်များကို လက်ရှိ ပိတ်ထားသည်",
+  "storage_permission_required": "ဒေါင်းလုဒ်အတွက် သိုလှောင်ခွင့်ပြုချက် လိုအပ်ပါသည်",
+  "genres_tags_collections": "အမျိုးအစားများ",
+  "profile": "ကိုယ်ရေးအချက်အလက်",
+  "logout": "ထွက်ရန်",
+  "login": "ဝင်ရောက်ရန်"
 }

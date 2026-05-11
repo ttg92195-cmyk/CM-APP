@@ -46,5 +46,18 @@
   "clear_history": "Clear History",
   "no_history": "No viewing history",
   "about_app": "About App",
-  "version": "Version"
+  "version": "Version",
+  "downloads": "Downloads",
+  "download_manager": "Download Manager",
+  "active_downloads": "Active Downloads",
+  "completed_downloads": "Completed Downloads",
+  "clear_completed": "Clear Completed",
+  "failed": "Failed",
+  "downloading": "Downloading",
+  "download_disabled_msg": "Downloads are currently disabled",
+  "storage_permission_required": "Storage permission is required for downloads",
+  "genres_tags_collections": "Genres & Tags",
+  "profile": "Profile",
+  "logout": "Logout",
+  "login": "Login"
 }

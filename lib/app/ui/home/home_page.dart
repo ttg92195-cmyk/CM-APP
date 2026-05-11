@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
@@ -12,6 +13,7 @@ import 'package:cm_movies/app/ui/screens/login_page.dart';
 import 'package:cm_movies/app/ui/screens/profile_page.dart';
 import 'package:cm_movies/app/ui/screens/search_screen.dart';
 import 'package:cm_movies/app/ui/screens/admin_panel_page.dart';
+import 'package:cm_movies/app/core/services/download_manager_service.dart';
 
 // Bottom nav tab indices (4 tabs)
 const int kHomeTab = 0;
@@ -240,8 +242,38 @@ class _HomePageState extends State<HomePage> {
                     activeIcon: Icons.download,
                     title: appConfig.translate('downloads'),
                     isDark: isDark,
-                    onTap: () {
-                      Navigator.pop(context);
+                    onTap: () async {
+                      Navigator.pop(context); // Close drawer first
+
+                      // Check if runtime storage permission has been granted
+                      if (Platform.isAndroid) {
+                        final downloadManager = DownloadManagerService.instance;
+                        final hasPermission = await downloadManager.hasRuntimePermission();
+                        if (!hasPermission) {
+                          // Show native Android system permission dialog
+                          final granted = await downloadManager.requestRuntimePermission();
+                          if (!granted) {
+                            // Permission denied — show message and don't navigate
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(appConfig.translate('storage_permission_required')),
+                                  backgroundColor: Colors.redAccent,
+                                  duration: const Duration(seconds: 3),
+                                  action: SnackBarAction(
+                                    label: appConfig.translate('settings'),
+                                    textColor: Colors.white,
+                                    onPressed: () => downloadManager.requestRuntimePermission(),
+                                  ),
+                                ),
+                              );
+                            }
+                            return;
+                          }
+                        }
+                      }
+
+                      // Permission granted — navigate to Download page
                       Navigator.push(
                         context,
                         MaterialPageRoute(builder: (_) => const DownloadPage()),
