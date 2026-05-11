@@ -211,9 +211,9 @@ class DownloadManagerService extends ChangeNotifier {
   ));
 
   /// Download performance tuning constants
-  static const int _maxAutoRetries = 3; // Auto-retry on network errors
-  static const Duration _stallTimeout = Duration(seconds: 20); // Reconnect if stalled this long
-  static const int _stallSpeedThreshold = 5 * 1024; // 5 KB/s = stalled
+  static const int _maxAutoRetries = 5; // Auto-retry on network errors
+  static const Duration _stallTimeout = Duration(seconds: 30); // Reconnect if stalled this long
+  static const int _stallSpeedThreshold = 2 * 1024; // 2 KB/s = stalled (mobile data can be slow)
 
   static String? _customDownloadDir;
   static String? get customDownloadDir => _customDownloadDir;
@@ -934,17 +934,77 @@ class DownloadManagerService extends ChangeNotifier {
           debugPrint('Resuming download from byte $startByte for $taskId');
         }
 
-        await _dio.download(
+        // Use stream-based download for proper resume support.
+        // Dio's download() overwrites the file from position 0 even with Range header,
+        // which breaks resume. Instead, we use a streaming GET request and write
+        // chunks to the file in APPEND mode when resuming.
+        final response = await _dio.get<ResponseBody>(
           currentTask.url,
-          currentTask.savePath,
           cancelToken: cancelToken,
-          onReceiveProgress: (received, total) {
-            final idx = _tasks.indexWhere((t) => t.id == taskId);
-            if (idx == -1) return;
+          options: Options(
+            headers: headers,
+            responseType: ResponseType.stream,
+            receiveTimeout: const Duration(minutes: 60),
+            sendTimeout: const Duration(minutes: 10),
+            validateStatus: (status) => status != null && (status == 200 || status == 206),
+          ),
+        );
 
-            // For resumed downloads, received is relative to the Range request
-            final actualReceived = startByte + received;
-            final actualTotal = total > 0 ? startByte + total : -1;
+        // If server returned 200 (full content) when we requested a range,
+        // the server doesn't support resume — need to start from scratch
+        if (response.statusCode == 200 && startByte > 0) {
+          debugPrint('Server does not support Range requests for $taskId — restarting from scratch');
+          startByte = 0;
+          _stallDetectedAt = null;
+          _lastStallCheckBytes = 0;
+        }
+
+        // Determine total file size from Content-Range or Content-Length
+        final contentRange = response.headers.value('content-range');
+        int serverTotalBytes = -1;
+        if (contentRange != null) {
+          // Content-Range: bytes 1000-9999/10000
+          final parts = contentRange.split('/');
+          if (parts.length == 2) {
+            serverTotalBytes = int.tryParse(parts[1]) ?? -1;
+          }
+        }
+        if (serverTotalBytes <= 0) {
+          final contentLength = response.headers.value('content-length');
+          if (contentLength != null) {
+            final cl = int.tryParse(contentLength) ?? -1;
+            if (cl > 0) {
+              // Content-Length for a 206 response is just the remaining bytes
+              serverTotalBytes = (response.statusCode == 206) ? startByte + cl : cl;
+            }
+          }
+        }
+        final actualTotal = serverTotalBytes > 0 ? serverTotalBytes : -1;
+
+        // Open file in append mode if resuming, write mode if starting fresh
+        final file = File(currentTask.savePath);
+        final fileSink = file.openWrite(mode: startByte > 0 ? FileMode.append : FileMode.write);
+
+        try {
+          int receivedSinceStart = 0;
+          final stream = response.data?.stream;
+          if (stream == null) {
+            throw DioException(connectionError: 'Empty response stream', type: DioExceptionType.connectionError);
+          }
+
+          await for (final chunk in stream) {
+            if (cancelToken.isCancelled) break;
+
+            // Write chunk to file
+            fileSink.add(chunk);
+            receivedSinceStart += chunk.length;
+
+            // Flush periodically (every 256KB) for crash safety
+            if (receivedSinceStart % (256 * 1024) < chunk.length) {
+              await fileSink.flush();
+            }
+
+            final actualReceived = startByte + receivedSinceStart;
             final progress = actualTotal > 0 ? actualReceived / actualTotal : 0.0;
 
             // Calculate speed and ETA
@@ -961,52 +1021,57 @@ class DownloadManagerService extends ChangeNotifier {
             }
 
             // === STALL DETECTION ===
-            // Check if download speed has dropped below threshold
             if (actualReceived > _lastStallCheckBytes + 50 * 1024) {
-              // Only check every ~50KB of progress to avoid noise
               _lastStallCheckBytes = actualReceived;
               if (speed > 0 && speed < _stallSpeedThreshold) {
                 _stallDetectedAt ??= DateTime.now();
                 final stalledDuration = DateTime.now().difference(_stallDetectedAt!);
                 if (stalledDuration >= _stallTimeout) {
                   debugPrint('Download stall detected for $taskId: speed=${_formatSpeed(speed)}, reconnecting...');
-                  // Cancel current connection - will auto-reconnect via retry
                   if (!cancelToken.isCancelled) {
                     cancelToken.cancel('Stall detected - reconnecting');
                   }
-                  return;
+                  break;
                 }
               } else {
-                _stallDetectedAt = null; // Speed recovered, reset stall timer
+                _stallDetectedAt = null;
               }
             }
 
-            // Throttle UI updates to avoid jank on mobile data
-            final now = DateTime.now().millisecondsSinceEpoch;
-            final shouldNotify = (now - _lastNotifyTime >= _notifyIntervalMs) ||
-                progress >= 1.0 ||
-                actualTotal <= 0; // Always notify for unknown size
+            // Update task data
+            final idx = _tasks.indexWhere((t) => t.id == taskId);
+            if (idx != -1) {
+              // Throttle UI updates
+              final now = DateTime.now().millisecondsSinceEpoch;
+              final shouldNotify = (now - _lastNotifyTime >= _notifyIntervalMs) ||
+                  progress >= 1.0 ||
+                  actualTotal <= 0;
 
-            // Always update task data, but throttle notifyListeners()
-            _tasks[idx] = _tasks[idx].copyWith(
-              progress: progress.clamp(0.0, 1.0),
-              downloadedBytes: actualReceived,
-              totalBytes: actualTotal > 0 ? actualTotal : null,
-              speedBytesPerSec: speed,
-              etaSeconds: eta,
-            );
-            if (shouldNotify) {
-              _lastNotifyTime = now;
-              notifyListeners();
+              _tasks[idx] = _tasks[idx].copyWith(
+                progress: progress.clamp(0.0, 1.0),
+                downloadedBytes: actualReceived,
+                totalBytes: actualTotal > 0 ? actualTotal : null,
+                speedBytesPerSec: speed,
+                etaSeconds: eta,
+              );
+              if (shouldNotify) {
+                _lastNotifyTime = now;
+                notifyListeners();
+              }
             }
-          },
-          options: Options(
-            headers: headers,
-            receiveTimeout: const Duration(minutes: 60),
-            sendTimeout: const Duration(minutes: 10),
-          ),
-          deleteOnError: false, // Keep partial file for resume
-        );
+          }
+        } finally {
+          await fileSink.close();
+        }
+
+        // If the stream was cancelled (pause/stall), throw to reach the error handler
+        if (cancelToken.isCancelled) {
+          throw DioException(
+            requestOptions: RequestOptions(),
+            error: cancelToken.cancelError?.message ?? 'Cancelled',
+            type: DioExceptionType.cancel,
+          );
+        }
 
         // Download completed
         final idx = _tasks.indexWhere((t) => t.id == taskId);
@@ -1046,7 +1111,8 @@ class DownloadManagerService extends ChangeNotifier {
         if (idx == -1) return;
 
         if (CancelToken.isCancel(e)) {
-          final reason = e.message ?? '';
+          // Get cancel reason from either message or error
+          final reason = e.message ?? (e.error?.toString() ?? '');
           if (reason.contains('Paused by user')) {
             // User paused - save current progress for resume
             _tasks[idx] = _tasks[idx].copyWith(
@@ -1083,7 +1149,8 @@ class DownloadManagerService extends ChangeNotifier {
         // Network error - attempt auto-retry with resume
         final isRetryable = e.type == DioExceptionType.connectionTimeout ||
             e.type == DioExceptionType.receiveTimeout ||
-            e.type == DioExceptionType.connectionError;
+            e.type == DioExceptionType.connectionError ||
+            e.type == DioExceptionType.sendTimeout;
         if (isRetryable && _autoRetryCount < _maxAutoRetries) {
           _autoRetryCount++;
           debugPrint('Auto-retry attempt $_autoRetryCount/$_maxAutoRetries for $taskId after ${e.type}');
@@ -1164,6 +1231,17 @@ class DownloadManagerService extends ChangeNotifier {
     final cancelToken = _cancelTokens[taskId];
     if (cancelToken != null && !cancelToken.isCancelled) {
       cancelToken.cancel('Paused by user');
+    }
+    // Ensure task state is saved immediately for reliable resume
+    final idx = _tasks.indexWhere((t) => t.id == taskId);
+    if (idx != -1 && _tasks[idx].status == DownloadStatus.downloading) {
+      _tasks[idx] = _tasks[idx].copyWith(
+        status: DownloadStatus.paused,
+        speedBytesPerSec: 0.0,
+        etaSeconds: null,
+      );
+      _saveTasks(); // Don't await - fire and forget for quick UI response
+      notifyListeners();
     }
   }
 
