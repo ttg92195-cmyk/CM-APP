@@ -27,7 +27,7 @@ class TrendingMovieComponent extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -58,7 +58,7 @@ class TrendingMovieComponent extends StatelessWidget {
           ),
         ),
         SizedBox(
-          height: 250,
+          height: 230,
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -172,7 +172,7 @@ class TrendingMovieSkeleton extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
           child: Text(
             title,
             style: theme.textTheme.titleMedium?.copyWith(
@@ -181,7 +181,7 @@ class TrendingMovieSkeleton extends StatelessWidget {
           ),
         ),
         SizedBox(
-          height: 250,
+          height: 230,
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 12),

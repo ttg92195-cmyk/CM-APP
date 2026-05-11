@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:cm_movies/app/core/services/saf_storage_service.dart';
 import 'package:open_filex/open_filex.dart';
 
 /// Enum for download status
@@ -208,10 +209,34 @@ class DownloadManagerService extends ChangeNotifier {
 
   static String? _customDownloadDir;
   static String? get customDownloadDir => _customDownloadDir;
+
+  /// Check if SAF folder is being used for downloads
+  Future<bool> get isUsingSafFolder async {
+    return await SafStorageService.instance.hasStoredFolder();
+  }
   static Future<void> setCustomDownloadDir(String path) async {
     _customDownloadDir = path;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('custom_download_dir', path);
+  }
+
+  /// Open SAF folder picker to let user select download folder
+  /// Returns the result with treeUri and treePath, or null if cancelled
+  Future<SafFolderResult?> openSafFolderPicker() async {
+    final result = await SafStorageService.instance.openFolderPicker();
+    if (result != null) {
+      // Clear custom download dir since we're using SAF now
+      _customDownloadDir = null;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('custom_download_dir');
+      notifyListeners();
+    }
+    return result;
+  }
+
+  /// Get the SAF folder display path for UI
+  Future<String?> getSafFolderPath() async {
+    return await SafStorageService.instance.getStoredTreePath();
   }
 
   final Map<String, CancelToken> _cancelTokens = {};
@@ -465,6 +490,21 @@ class DownloadManagerService extends ChangeNotifier {
         return dir.path;
       } catch (_) {
         // Fall through to default
+      }
+    }
+
+    // Check SAF folder selection (takes priority over default location)
+    if (Platform.isAndroid) {
+      final safPath = await SafStorageService.instance.getStoredTreePath();
+      if (safPath != null && safPath.isNotEmpty) {
+        final dir = Directory(safPath);
+        if (await dir.exists()) return dir.path;
+        try {
+          await dir.create(recursive: true);
+          return dir.path;
+        } catch (_) {
+          // SAF path not directly writable, fall through to default
+        }
       }
     }
 
@@ -778,6 +818,25 @@ class DownloadManagerService extends ChangeNotifier {
           speedBytesPerSec: 0.0,
           etaSeconds: null,
         );
+
+        // If using SAF folder, copy file to SAF folder for visibility in file managers
+        if (Platform.isAndroid) {
+          final safService = SafStorageService.instance;
+          final hasSaf = await safService.hasStoredFolder();
+          if (hasSaf) {
+            final fileName = idx != -1 ? _tasks[idx].savePath.split('/').last : '';
+            if (fileName.isNotEmpty) {
+              final saved = await safService.saveFileToSafFolder(
+                sourceFilePath: _tasks[idx].savePath,
+                fileName: fileName,
+              );
+              if (saved) {
+                debugPrint('Copied download to SAF folder: $fileName');
+              }
+            }
+          }
+        }
+
         await _saveTasks();
         notifyListeners();
       }

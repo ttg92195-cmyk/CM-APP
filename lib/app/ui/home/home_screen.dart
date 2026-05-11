@@ -215,9 +215,9 @@ class _HomeScreenState extends State<HomeScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           TrendingMovieSkeleton(title: appConfig.translate('movies'), count: 5),
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
           TrendingMovieSkeleton(title: appConfig.translate('series'), count: 5),
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
           TrendingMovieSkeleton(title: appConfig.translate('trending_movies'), count: 5),
           const SizedBox(height: 16),
         ],
@@ -238,7 +238,7 @@ class _HomeScreenState extends State<HomeScreen> {
               appConfig.translate('error_occurred'),
               style: const TextStyle(fontSize: 16),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 4),
             Text(
               _error != null ? _error! : '',
               style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
@@ -274,7 +274,7 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
 
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
 
           // Series Section
           if (_allSeries.isNotEmpty)
@@ -287,7 +287,7 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
 
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
 
           // Trending Movies
           if (_trendingMovies.isNotEmpty)
@@ -303,7 +303,7 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
 
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
 
           // Trending Series
           if (_trendingTvShows.isNotEmpty)
@@ -319,7 +319,7 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
 
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
 
           // K Drama
           if (_kDramaMovies.isNotEmpty)
@@ -336,7 +336,7 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
 
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
 
           // 4K Movies
           if (_fourKMovies.isNotEmpty)
@@ -354,7 +354,7 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
 
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
 
           // 4K Series
           if (_fourKSeries.isNotEmpty)
@@ -372,7 +372,7 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
 
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
 
           // Animation
           if (_animationMovies.isNotEmpty)
@@ -389,7 +389,7 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
 
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
 
           // Anime
           if (_animeMovies.isNotEmpty)
@@ -406,7 +406,7 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
 
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
 
           // Bollywood
           if (_bollywoodMovies.isNotEmpty)
@@ -438,7 +438,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
 
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
         ],
       ),
     );

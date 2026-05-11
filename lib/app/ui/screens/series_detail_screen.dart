@@ -380,8 +380,8 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
               ),
             ),
             leading: Container(
-                width: 32,
-                height: 32,
+                width: 28,
+                height: 28,
                 decoration: BoxDecoration(
                   color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
                   shape: BoxShape.circle,
@@ -389,10 +389,10 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                 child: IconButton(
                   icon: Icon(Icons.arrow_back,
                       color: isDark ? Colors.white : Colors.black87,
-                      size: 18),
+                      size: 16),
                   onPressed: () => Navigator.pop(context),
                   padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                 ),
               ),
             actions: [
@@ -400,8 +400,8 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
               Padding(
                 padding: const EdgeInsets.only(right: 4),
                 child: Container(
-                  width: 32,
-                  height: 32,
+                  width: 28,
+                  height: 28,
                   decoration: BoxDecoration(
                     color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
                     shape: BoxShape.circle,
@@ -414,11 +414,11 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                       color: _isInWatchlist
                           ? const Color(0xFF4CAF50)
                           : (isDark ? Colors.white : Colors.black54),
-                      size: 18,
+                      size: 16,
                     ),
                     onPressed: _toggleWatchlist,
                     padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                   ),
                 ),
               ),
@@ -426,8 +426,8 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
               Padding(
                 padding: const EdgeInsets.only(right: 8),
                 child: Container(
-                  width: 32,
-                  height: 32,
+                  width: 28,
+                  height: 28,
                   decoration: BoxDecoration(
                     color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
                     shape: BoxShape.circle,
@@ -440,11 +440,11 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                       color: _isBookmarked
                           ? accentColor
                           : (isDark ? Colors.white : Colors.black54),
-                      size: 18,
+                      size: 16,
                     ),
                     onPressed: _toggleBookmark,
                     padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                   ),
                 ),
               ),
@@ -658,7 +658,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
   ) {
     return ListView(
       physics: const ClampingScrollPhysics(),
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: 4),
       children: [
         // Overview Section
         if (detail.overview != null && detail.overview!.isNotEmpty)
@@ -871,7 +871,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
       data: const DividerThemeData(color: Colors.transparent),
       child: ListView(
         physics: const ClampingScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
         children: [
           Text('Download Options',
               style: TextStyle(

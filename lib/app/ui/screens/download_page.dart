@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/services/download_manager_service.dart';
+import 'package:cm_movies/app/core/services/saf_storage_service.dart';
 
 class DownloadPage extends StatefulWidget {
   const DownloadPage({super.key});
@@ -1060,7 +1061,7 @@ class _DownloadPageState extends State<DownloadPage> {
                   ),
                   const SizedBox(height: 20),
 
-                  // Storage Permission
+                  // Storage Permission (SAF-based on Android 11+)
                   if (Platform.isAndroid) ...[
                     Text(
                       'Storage Permission',
@@ -1096,8 +1097,8 @@ class _DownloadPageState extends State<DownloadPage> {
                           Expanded(
                             child: Text(
                               hasPermission
-                                  ? 'Storage permission granted. Downloads are accessible via file manager.'
-                                  : 'Storage permission not granted. Downloads only accessible within the app.',
+                                  ? 'Storage permission granted'
+                                  : 'Storage permission not granted',
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: hasPermission
                                     ? Colors.green.shade300
@@ -1107,7 +1108,7 @@ class _DownloadPageState extends State<DownloadPage> {
                           ),
                           if (!hasPermission) ...[
                             const SizedBox(width: 8),
-                            TextButton(
+                            ElevatedButton(
                               onPressed: () async {
                                 final granted = await _downloadManager.requestStoragePermission();
                                 setModalState(() => hasPermission = granted);
@@ -1115,13 +1116,15 @@ class _DownloadPageState extends State<DownloadPage> {
                                   setState(() => _hasStoragePermission = granted);
                                 }
                               },
-                              style: TextButton.styleFrom(
-                                foregroundColor: Colors.orange.shade400,
-                                padding: const EdgeInsets.symmetric(horizontal: 8),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green.shade600,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                                 minimumSize: Size.zero,
                                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
                               ),
-                              child: const Text('Grant', style: TextStyle(fontSize: 12)),
+                              child: const Text('Grant', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
                             ),
                           ],
                         ],
@@ -1130,7 +1133,7 @@ class _DownloadPageState extends State<DownloadPage> {
                     const SizedBox(height: 16),
                   ],
 
-                  // Download Location
+                  // Download Location (SAF Folder Picker)
                   Text(
                     'Download Location',
                     style: theme.textTheme.titleSmall?.copyWith(
@@ -1139,6 +1142,7 @@ class _DownloadPageState extends State<DownloadPage> {
                     ),
                   ),
                   const SizedBox(height: 8),
+                  // SAF Folder Picker Button
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(12),
@@ -1146,78 +1150,64 @@ class _DownloadPageState extends State<DownloadPage> {
                       color: isDark ? Colors.white10 : Colors.grey.shade100,
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Row(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          child: Text(
-                            currentPath,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              fontFamily: 'monospace',
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        IconButton(
-                          icon: const Icon(Icons.folder_open, size: 20),
-                          onPressed: () async {
-                            final controller = TextEditingController();
-                            final result = await showDialog<String>(
-                              context: context,
-                              builder: (dialogCtx) => AlertDialog(
-                                backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-                                title: const Text('Change Download Location'),
-                                content: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      'Enter the full path for downloads:',
-                                      style: theme.textTheme.bodySmall,
-                                    ),
-                                    const SizedBox(height: 12),
-                                    TextField(
-                                      controller: controller,
-                                      decoration: const InputDecoration(
-                                        labelText: 'Folder Path',
-                                        hintText: '/storage/emulated/0/Download/CM_Movies',
-                                        border: OutlineInputBorder(),
-                                      ),
-                                      autofocus: true,
-                                    ),
-                                  ],
+                        // Current path display
+                        Row(
+                          children: [
+                            Icon(Icons.folder_outlined, size: 18, color: theme.colorScheme.onSurface.withOpacity(0.6)),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                currentPath,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  fontFamily: 'monospace',
                                 ),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () => Navigator.pop(dialogCtx),
-                                    child: Text('Cancel', style: TextStyle(
-                                      color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
-                                    )),
-                                  ),
-                                  ElevatedButton(
-                                    onPressed: () => Navigator.pop(dialogCtx, controller.text.trim()),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFFE50914),
-                                      foregroundColor: Colors.white,
-                                    ),
-                                    child: const Text('Save'),
-                                  ),
-                                ],
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
                               ),
-                            );
-                            if (result != null && result.isNotEmpty) {
-                              await DownloadManagerService.setCustomDownloadDir(result);
-                              final newPath = await _downloadManager.getCurrentDownloadPath();
-                              setModalState(() => currentPath = newPath);
-                            }
-                          },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        // Choose Folder Button (SAF)
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: () async {
+                              // Open SAF folder picker
+                              final result = await _downloadManager.openSafFolderPicker();
+                              if (result != null) {
+                                // SAF folder selected successfully
+                                setModalState(() => currentPath = result.treePath);
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: const Text('Download location setup complete!'),
+                                      backgroundColor: Colors.green.shade600,
+                                      duration: const Duration(seconds: 2),
+                                    ),
+                                  );
+                                }
+                              }
+                            },
+                            icon: const Icon(Icons.folder_open, size: 18),
+                            label: const Text('Choose Folder', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFFE50914),
+                              side: const BorderSide(color: Color(0xFFE50914)),
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            ),
+                          ),
                         ),
                       ],
                     ),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Tap the folder icon to change the download location. Downloaded files will be accessible via your file manager.',
+                    'Tap "Choose Folder" to select a download location. The system file picker will open — select any folder and tap "Use this folder" to grant access.',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurface.withOpacity(0.5),
                     ),
