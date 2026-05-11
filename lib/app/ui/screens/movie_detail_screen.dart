@@ -653,21 +653,25 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
             ),
           ),
         ],
-        body: Container(
-          color: bgColor,
-          child: TabBarView(
-            controller: _tabController,
-            children: [
-              // ===== Detail Tab =====
-              _buildDetailTab(
-                  detail, isDark, bodyTextColor, metaTextColor, accentColor),
-              // ===== Download Tab =====
-              _buildDownloadTab(
-                  detail, isDark, accentColor, cardBgColor, metaTextColor, bodyTextColor),
-              // ===== Explore Tab =====
-              _buildExploreTab(
-                  isDark, accentColor, metaTextColor, cardBgColor),
-            ],
+        body: MediaQuery.removePadding(
+          context: context,
+          removeBottom: true,
+          child: Container(
+            color: bgColor,
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                // ===== Detail Tab =====
+                _buildDetailTab(
+                    detail, isDark, bodyTextColor, metaTextColor, accentColor),
+                // ===== Download Tab =====
+                _buildDownloadTab(
+                    detail, isDark, accentColor, cardBgColor, metaTextColor, bodyTextColor),
+                // ===== Explore Tab =====
+                _buildExploreTab(
+                    isDark, accentColor, metaTextColor, cardBgColor),
+              ],
+            ),
           ),
         ),
       ),
@@ -683,8 +687,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
     Color accentColor,
   ) {
     return ListView(
-      physics: const ClampingScrollPhysics(),
-      padding: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.only(bottom: 16),
       children: [
         // Overview Section
         if (detail.overview != null && detail.overview!.isNotEmpty)
@@ -783,6 +786,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                   height: 110,
                   child: ListView.builder(
                     scrollDirection: Axis.horizontal,
+                    clipBehavior: Clip.none,
                     itemCount: detail.casts.length,
                     itemBuilder: (context, index) {
                       final cast = detail.casts[index];
@@ -900,8 +904,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
     return DividerTheme(
       data: const DividerThemeData(color: Colors.transparent),
       child: ListView(
-        physics: const ClampingScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
         children: [
           Text('Download Options',
               style: TextStyle(
@@ -1125,7 +1128,6 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
     Color cardBgColor,
   ) {
     return ListView(
-      physics: const ClampingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
       children: [
         Text('You may also like',
