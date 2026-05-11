@@ -256,6 +256,9 @@ class DownloadManagerService extends ChangeNotifier {
   /// Queue for pending downloads when max concurrent is reached
   final List<String> _pendingQueue = [];
 
+  /// Tracks tasks explicitly paused by the user (prevents auto-reconnect from overriding pause)
+  final Set<String> _pausedByUser = {};
+
   /// Singleton factory constructor - always returns the same instance
   factory DownloadManagerService() {
     _instance ??= DownloadManagerService._internal();
@@ -1026,6 +1029,11 @@ class DownloadManagerService extends ChangeNotifier {
                 _stallDetectedAt ??= DateTime.now();
                 final stalledDuration = DateTime.now().difference(_stallDetectedAt!);
                 if (stalledDuration >= _stallTimeout) {
+                  // Don't auto-reconnect if user has paused
+                  if (_pausedByUser.contains(taskId)) {
+                    debugPrint('Stall detected but user paused $taskId — not reconnecting');
+                    break;
+                  }
                   debugPrint('Download stall detected for $taskId: speed=${_formatSpeed(speed)}, reconnecting...');
                   if (!cancelToken.isCancelled) {
                     cancelToken.cancel('Stall detected - reconnecting');
@@ -1110,9 +1118,10 @@ class DownloadManagerService extends ChangeNotifier {
         if (idx == -1) return;
 
         if (CancelToken.isCancel(e)) {
-          // Get cancel reason from either message or error
+          // Check if user explicitly paused (via _pausedByUser flag or cancel reason)
           final reason = e.message ?? (e.error?.toString() ?? '');
-          if (reason.contains('Paused by user')) {
+          final wasPausedByUser = _pausedByUser.contains(taskId) || reason.contains('Paused by user');
+          if (wasPausedByUser) {
             // User paused - save current progress for resume
             _tasks[idx] = _tasks[idx].copyWith(
               status: DownloadStatus.paused,
@@ -1124,11 +1133,24 @@ class DownloadManagerService extends ChangeNotifier {
             return;
           }
           // Stall or other auto-cancel - attempt auto-reconnect
+          // But NOT if the user has paused the download during the delay
           if (_autoRetryCount < _maxAutoRetries) {
             _autoRetryCount++;
             debugPrint('Auto-reconnect attempt $_autoRetryCount/$_maxAutoRetries for $taskId');
             // Brief pause before reconnecting
             await Future.delayed(const Duration(seconds: 2));
+            // Re-check if user paused during the delay
+            if (_pausedByUser.contains(taskId)) {
+              debugPrint('User paused during auto-reconnect delay for $taskId — aborting reconnect');
+              _tasks[idx] = _tasks[idx].copyWith(
+                status: DownloadStatus.paused,
+                speedBytesPerSec: 0.0,
+                etaSeconds: null,
+              );
+              await _saveTasks();
+              notifyListeners();
+              return;
+            }
             // Save current progress before retrying
             await _saveTasks();
             return doDownload(); // Reconnect with fresh connection
@@ -1146,6 +1168,18 @@ class DownloadManagerService extends ChangeNotifier {
         }
 
         // Network error - attempt auto-retry with resume
+        // But NOT if the user paused the download
+        if (_pausedByUser.contains(taskId)) {
+          debugPrint('User paused during network error for $taskId — aborting auto-retry');
+          _tasks[idx] = _tasks[idx].copyWith(
+            status: DownloadStatus.paused,
+            speedBytesPerSec: 0.0,
+            etaSeconds: null,
+          );
+          await _saveTasks();
+          notifyListeners();
+          return;
+        }
         final isRetryable = e.type == DioExceptionType.connectionTimeout ||
             e.type == DioExceptionType.receiveTimeout ||
             e.type == DioExceptionType.connectionError ||
@@ -1154,6 +1188,18 @@ class DownloadManagerService extends ChangeNotifier {
           _autoRetryCount++;
           debugPrint('Auto-retry attempt $_autoRetryCount/$_maxAutoRetries for $taskId after ${e.type}');
           await Future.delayed(Duration(seconds: 2 * _autoRetryCount)); // Exponential backoff
+          // Re-check if user paused during the backoff delay
+          if (_pausedByUser.contains(taskId)) {
+            debugPrint('User paused during auto-retry delay for $taskId — aborting retry');
+            _tasks[idx] = _tasks[idx].copyWith(
+              status: DownloadStatus.paused,
+              speedBytesPerSec: 0.0,
+              etaSeconds: null,
+            );
+            await _saveTasks();
+            notifyListeners();
+            return;
+          }
           await _saveTasks();
           return doDownload();
         }
@@ -1187,6 +1233,7 @@ class DownloadManagerService extends ChangeNotifier {
     } finally {
       _cancelTokens.remove(taskId);
       _speedTrackers.remove(taskId);
+      _pausedByUser.remove(taskId); // Clean up pause flag when download ends
       _activeDownloadCount--;
       _processQueue();
     }
@@ -1227,6 +1274,9 @@ class DownloadManagerService extends ChangeNotifier {
 
   /// Pause a download
   void pauseDownload(String taskId) {
+    // Mark as user-paused FIRST so auto-reconnect can check it
+    _pausedByUser.add(taskId);
+
     final cancelToken = _cancelTokens[taskId];
     if (cancelToken != null && !cancelToken.isCancelled) {
       cancelToken.cancel('Paused by user');
@@ -1246,11 +1296,16 @@ class DownloadManagerService extends ChangeNotifier {
 
   /// Resume a paused download (actually resumes from where it left off)
   Future<void> resumeDownload(String taskId) async {
+    // Clear the user-paused flag so auto-reconnect can work again
+    _pausedByUser.remove(taskId);
     await startDownload(taskId);
   }
 
   /// Retry a failed download (resumes from partial if possible)
   Future<void> retryDownload(String taskId) async {
+    // Clear the user-paused flag since user explicitly wants to retry
+    _pausedByUser.remove(taskId);
+
     final index = _tasks.indexWhere((t) => t.id == taskId);
     if (index == -1) return;
 
@@ -1275,6 +1330,7 @@ class DownloadManagerService extends ChangeNotifier {
 
     // Remove from queue if pending
     _pendingQueue.remove(taskId);
+    _pausedByUser.remove(taskId);
 
     // Delete file if not keeping it
     if (!keepFile) {
