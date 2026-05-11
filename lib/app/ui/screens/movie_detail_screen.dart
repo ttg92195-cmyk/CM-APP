@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -233,6 +234,28 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
       return;
     }
 
+    // Check storage permission first — require it before allowing download
+    if (Platform.isAndroid) {
+      final downloadManager = DownloadManagerService.instance;
+      final hasPermission = await downloadManager.checkStoragePermission();
+      if (!hasPermission) {
+        if (mounted) {
+          // Show permission dialog
+          final granted = await _showDownloadPermissionDialog();
+          if (!granted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Storage permission is required to download files'),
+                backgroundColor: Colors.redAccent,
+                duration: Duration(seconds: 3),
+              ),
+            );
+            return;
+          }
+        }
+      }
+    }
+
     // Check if download is enabled
     final appConfig = Provider.of<AppConfig>(context, listen: false);
     if (!appConfig.downloadEnabled) {
@@ -275,6 +298,10 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
         case AddTaskResult.alreadyExists:
           message = 'Already downloading ${link.quality ?? link.resolution ?? 'Standard'}';
           bgColor = Colors.orange;
+          break;
+        case AddTaskResult.permissionDenied:
+          message = 'Storage permission required. Grant permission in Download Settings.';
+          bgColor = Colors.redAccent;
           break;
       }
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1345,3 +1372,86 @@ class _TabBarDelegate extends SliverPersistentHeaderDelegate {
     );
   }
 }
+
+  /// Show dialog requesting storage permission before download
+  Future<bool> _showDownloadPermissionDialog() async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.shield_outlined, color: Colors.red.shade400, size: 24),
+            const SizedBox(width: 8),
+            const Text('Storage Permission', style: TextStyle(fontSize: 18)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Storage permission is required to download and save files to your device.',
+              style: TextStyle(
+                color: isDark ? Colors.grey.shade300 : Colors.grey.shade700,
+                fontSize: 14,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: isDark ? Colors.white10 : Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, size: 16, color: isDark ? Colors.grey.shade400 : Colors.grey.shade600),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Without this permission, downloads will fail. Grant access to continue.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('Cancel', style: TextStyle(color: isDark ? Colors.grey.shade400 : Colors.grey.shade600)),
+          ),
+          ElevatedButton.icon(
+            onPressed: () async {
+              Navigator.pop(ctx, true);
+              final granted = await _downloadManager.requestStoragePermission();
+              if (!granted && mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Permission denied. You can enable it in app settings.'),
+                    backgroundColor: Colors.redAccent,
+                    duration: Duration(seconds: 3),
+                  ),
+                );
+              }
+            },
+            icon: const Icon(Icons.verified_user_rounded, size: 18),
+            label: const Text('Grant Permission'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFE50914),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+          ),
+        ],
+      ),
+    ) ?? false;
+  }

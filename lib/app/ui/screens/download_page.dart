@@ -1071,7 +1071,7 @@ class _DownloadPageState extends State<DownloadPage> {
                   ),
                   const SizedBox(height: 20),
 
-                  // Storage Permission (SAF-based on Android 11+)
+                  // Storage Permission (Status Checker)
                   if (Platform.isAndroid) ...[
                     Text(
                       'Storage Permission',
@@ -1081,63 +1081,56 @@ class _DownloadPageState extends State<DownloadPage> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: hasPermission
-                            ? (isDark ? Colors.green.shade900.withOpacity(0.3) : Colors.green.shade50)
-                            : (isDark ? Colors.orange.shade900.withOpacity(0.3) : Colors.orange.shade50),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: hasPermission
-                              ? Colors.green.shade400.withOpacity(0.5)
-                              : Colors.orange.shade400.withOpacity(0.5),
-                          width: 0.5,
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            hasPermission ? Icons.check_circle : Icons.warning_amber_rounded,
-                            color: hasPermission ? Colors.green.shade400 : Colors.orange.shade400,
-                            size: 20,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              hasPermission
-                                  ? 'Storage permission granted'
-                                  : 'Storage permission not granted',
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: hasPermission
-                                    ? Colors.green.shade300
-                                    : Colors.orange.shade300,
-                              ),
-                            ),
-                          ),
-                          if (!hasPermission) ...[
-                            const SizedBox(width: 8),
-                            ElevatedButton(
-                              onPressed: () async {
-                                final granted = await _downloadManager.requestStoragePermission();
+                    // Status Checker - tappable to grant permission if not granted
+                    InkWell(
+                      onTap: hasPermission
+                          ? null
+                          : () => _showPermissionModal(appConfig, theme, (granted) {
                                 setModalState(() => hasPermission = granted);
                                 if (mounted) {
                                   setState(() => _hasStoragePermission = granted);
                                 }
-                              },
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green.shade600,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                minimumSize: Size.zero,
-                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-                              ),
-                              child: const Text('Grant', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                              }),
+                      borderRadius: BorderRadius.circular(10),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: hasPermission
+                              ? (isDark ? Colors.green.shade900.withOpacity(0.2) : Colors.green.shade50)
+                              : (isDark ? Colors.red.shade900.withOpacity(0.2) : Colors.red.shade50),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: hasPermission
+                                ? Colors.green.shade400.withOpacity(0.4)
+                                : Colors.red.shade400.withOpacity(0.4),
+                            width: 0.5,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              hasPermission ? Icons.verified_user_rounded : Icons.shield_outlined,
+                              color: hasPermission ? Colors.green.shade400 : Colors.red.shade400,
+                              size: 18,
                             ),
+                            const SizedBox(width: 8),
+                            Text(
+                              hasPermission ? 'Granted' : 'Not Granted — Tap to Allow',
+                              style: TextStyle(
+                                color: hasPermission
+                                    ? Colors.green.shade400
+                                    : Colors.red.shade400,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            if (!hasPermission) ...[
+                              const SizedBox(width: 4),
+                              Icon(Icons.arrow_forward_ios, size: 12, color: Colors.red.shade400),
+                            ],
                           ],
-                        ],
+                        ),
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -1250,6 +1243,81 @@ class _DownloadPageState extends State<DownloadPage> {
           },
         );
       },
+    );
+  }
+
+  /// Show modal dialog to grant storage permission
+  void _showPermissionModal(AppConfig appConfig, ThemeData theme, Function(bool) onResult) {
+    final isDark = theme.brightness == Brightness.dark;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.shield_outlined, color: Colors.red.shade400, size: 24),
+            const SizedBox(width: 8),
+            const Text('Storage Permission', style: TextStyle(fontSize: 18)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Storage permission is required to download and save files to your device.',
+              style: TextStyle(
+                color: isDark ? Colors.grey.shade300 : Colors.grey.shade700,
+                fontSize: 14,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: isDark ? Colors.white10 : Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, size: 16, color: isDark ? Colors.grey.shade400 : Colors.grey.shade600),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Without this permission, downloads will fail. Grant access to continue.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Cancel', style: TextStyle(color: isDark ? Colors.grey.shade400 : Colors.grey.shade600)),
+          ),
+          ElevatedButton.icon(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final granted = await _downloadManager.requestStoragePermission();
+              onResult(granted);
+            },
+            icon: const Icon(Icons.verified_user_rounded, size: 18),
+            label: const Text('Grant Permission'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFE50914),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

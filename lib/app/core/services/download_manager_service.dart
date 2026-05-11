@@ -188,6 +188,7 @@ enum AddTaskResult {
   blockedDomain,
   emptyUrl,
   alreadyExists,
+  permissionDenied,
 }
 
 /// Download Manager Service - handles all download operations
@@ -198,8 +199,8 @@ class DownloadManagerService extends ChangeNotifier {
   static const int _maxConcurrentDownloads = 3;
 
   final Dio _dio = Dio(BaseOptions(
-    connectTimeout: const Duration(seconds: 30),
-    receiveTimeout: const Duration(minutes: 120),
+    connectTimeout: const Duration(seconds: 20),
+    receiveTimeout: const Duration(minutes: 180),
     sendTimeout: const Duration(minutes: 10),
     // Follow redirects for file hosting services (MediaFire, etc.)
     followRedirects: true,
@@ -418,37 +419,56 @@ class DownloadManagerService extends ChangeNotifier {
 
   // ===== PERMISSION HANDLING =====
 
-  /// Check if storage permission is granted
-  /// Uses scoped storage on Android 11+ (no MANAGE_EXTERNAL_STORAGE needed)
-  /// Only checks legacy storage permission on Android 10 and below
+  /// Check if storage permission is granted.
+  /// On Android 11+ (scoped storage), also checks if SAF folder permission
+  /// is still valid. This is important for the Status Checker UI to show
+  /// the correct permission state.
   Future<bool> checkStoragePermission() async {
     if (!Platform.isAndroid) return true;
 
-    if (Platform.isAndroid) {
-      final sdkInt = await _getAndroidSdkVersion();
-      if (sdkInt >= 30) {
-        // Android 11+: Scoped storage - no special permission needed
-        // App-specific external directory is accessible without permission
-        return true;
-      } else {
-        return await Permission.storage.isGranted;
+    final sdkInt = await _getAndroidSdkVersion();
+    if (sdkInt >= 30) {
+      // Android 11+: Scoped storage for app directory works without permission,
+      // BUT if a SAF folder has been previously selected, we must verify
+      // the SAF permission is still valid (user may have revoked it).
+      final hasSaf = await SafStorageService.instance.hasStoredFolder();
+      if (hasSaf) {
+        final safValid = await SafStorageService.instance.isSafPermissionValid();
+        if (!safValid) {
+          // SAF permission revoked — clear stored folder so we fall back to app storage
+          await SafStorageService.instance.clearStoredFolder();
+          return false; // Permission no longer valid
+        }
       }
+      return true; // Either no SAF (app storage works) or SAF is valid
+    } else {
+      return await Permission.storage.isGranted;
     }
-    return true;
   }
 
-  /// Request storage permission
-  /// Returns true if permission is granted
-  /// On Android 11+, scoped storage is used (no permission request needed)
+  /// Request storage permission.
+  /// On Android 11+, this opens the SAF folder picker so the user can
+  /// grant access to a visible folder (like Downloads).
+  /// On Android 10 and below, requests the legacy storage permission.
   Future<bool> requestStoragePermission() async {
     if (!Platform.isAndroid) return true;
 
     final sdkInt = await _getAndroidSdkVersion();
 
     if (sdkInt >= 30) {
-      // Android 11+: Scoped storage - no permission needed
-      // App writes to its own external directory automatically
-      return true;
+      // Android 11+: Open SAF folder picker to let user grant access
+      // to a visible folder. This is the recommended way on Android 11+.
+      final result = await SafStorageService.instance.openFolderPicker();
+      if (result != null) {
+        // User selected a folder — permission granted
+        // Clear custom download dir since we're using SAF now
+        _customDownloadDir = null;
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('custom_download_dir');
+        notifyListeners();
+        return true;
+      }
+      return false; // User cancelled the picker
     } else {
       // Android 10 and below: request legacy storage permission
       final status = await Permission.storage.request();
@@ -595,6 +615,15 @@ class DownloadManagerService extends ChangeNotifier {
     if (url.trim().isEmpty) {
       debugPrint('Download URL is empty');
       return AddTaskResult.emptyUrl;
+    }
+
+    // PERMISSION GATE: Check storage permission before allowing download
+    if (Platform.isAndroid) {
+      final hasPermission = await checkStoragePermission();
+      if (!hasPermission) {
+        debugPrint('Download blocked: Storage permission not granted');
+        return AddTaskResult.permissionDenied;
+      }
     }
 
     // Normalize the URL (convert share URLs to direct download URLs)
@@ -784,6 +813,10 @@ class DownloadManagerService extends ChangeNotifier {
     final cancelToken = CancelToken();
     _cancelTokens[taskId] = cancelToken;
 
+    // Throttle UI notifications to avoid jank on mobile data
+    int _lastNotifyTime = 0;
+    const _notifyIntervalMs = 250; // Update UI max 4 times per second
+
     try {
       // Check if partial file exists for resume support
       int startByte = task.downloadedBytes;
@@ -833,6 +866,13 @@ class DownloadManagerService extends ChangeNotifier {
             }
           }
 
+          // Throttle UI updates to avoid jank on mobile data
+          final now = DateTime.now().millisecondsSinceEpoch;
+          final shouldNotify = (now - _lastNotifyTime >= _notifyIntervalMs) ||
+              progress >= 1.0 ||
+              actualTotal <= 0; // Always notify for unknown size
+
+          // Always update task data, but throttle notifyListeners()
           _tasks[idx] = _tasks[idx].copyWith(
             progress: progress.clamp(0.0, 1.0),
             downloadedBytes: actualReceived,
@@ -840,7 +880,10 @@ class DownloadManagerService extends ChangeNotifier {
             speedBytesPerSec: speed,
             etaSeconds: eta,
           );
-          notifyListeners();
+          if (shouldNotify) {
+            _lastNotifyTime = now;
+            notifyListeners();
+          }
         },
         options: Options(
           headers: headers,
@@ -1354,11 +1397,12 @@ class DownloadManagerService extends ChangeNotifier {
   }
 }
 
-/// Speed tracker that calculates download speed using a sliding window
+/// Speed tracker that calculates download speed using a sliding window.
+/// Uses a larger window for stable readings on variable-speed networks (mobile data).
 class _SpeedTracker {
   final List<_SpeedSample> _samples = [];
-  static const int _maxSamples = 10;
-  static const Duration _sampleWindow = Duration(seconds: 5);
+  static const int _maxSamples = 20;
+  static const Duration _sampleWindow = Duration(seconds: 10);
 
   void addSample(int totalBytes) {
     final now = DateTime.now();

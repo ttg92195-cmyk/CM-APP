@@ -276,6 +276,10 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
           message = 'Already downloading ${link.quality ?? link.resolution ?? 'Standard'}';
           bgColor = Colors.orange;
           break;
+        case AddTaskResult.permissionDenied:
+          message = 'Storage permission required. Grant permission in Download Settings.';
+          bgColor = Colors.redAccent;
+          break;
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
