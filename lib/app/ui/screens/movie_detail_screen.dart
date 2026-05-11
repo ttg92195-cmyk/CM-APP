@@ -1322,56 +1322,6 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
       ],
     );
   }
-}
-
-// Custom TabBar SliverPersistentHeaderDelegate
-class _TabBarDelegate extends SliverPersistentHeaderDelegate {
-  final TabController tabController;
-  final Color accentColor;
-  final bool isDark;
-
-  _TabBarDelegate({
-    required this.tabController,
-    required this.accentColor,
-    required this.isDark,
-  });
-
-  @override
-  double get minExtent => 52;
-
-  @override
-  double get maxExtent => 52;
-
-  @override
-  bool shouldRebuild(covariant _TabBarDelegate oldDelegate) {
-    return oldDelegate.isDark != isDark ||
-        oldDelegate.accentColor != accentColor;
-  }
-
-  @override
-  Widget build(
-      BuildContext context, double shrinkOffset, bool overlapsContent) {
-    return Container(
-      color: isDark ? const Color(0xFF0A0A0A) : const Color(0xFFF5F5F5),
-      child: TabBar(
-        controller: tabController,
-        labelColor: accentColor,
-        unselectedLabelColor: isDark ? Colors.grey.shade500 : Colors.grey.shade600,
-        indicator: const BoxDecoration(),
-        dividerColor: Colors.transparent,
-        labelStyle:
-            const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-        unselectedLabelStyle:
-            const TextStyle(fontSize: 14, fontWeight: FontWeight.normal),
-        tabs: const [
-          Tab(icon: Icon(Icons.info_outline, size: 20), text: 'Detail'),
-          Tab(icon: Icon(Icons.file_download_outlined, size: 20), text: 'Download'),
-          Tab(icon: Icon(Icons.explore_outlined, size: 20), text: 'Explore'),
-        ],
-      ),
-    );
-  }
-}
 
   /// Show dialog requesting storage permission before download
   Future<bool> _showDownloadPermissionDialog() async {
@@ -1455,3 +1405,53 @@ class _TabBarDelegate extends SliverPersistentHeaderDelegate {
       ),
     ) ?? false;
   }
+}
+
+// Custom TabBar SliverPersistentHeaderDelegate
+class _TabBarDelegate extends SliverPersistentHeaderDelegate {
+  final TabController tabController;
+  final Color accentColor;
+  final bool isDark;
+
+  _TabBarDelegate({
+    required this.tabController,
+    required this.accentColor,
+    required this.isDark,
+  });
+
+  @override
+  double get minExtent => 52;
+
+  @override
+  double get maxExtent => 52;
+
+  @override
+  bool shouldRebuild(covariant _TabBarDelegate oldDelegate) {
+    return oldDelegate.isDark != isDark ||
+        oldDelegate.accentColor != accentColor;
+  }
+
+  @override
+  Widget build(
+      BuildContext context, double shrinkOffset, bool overlapsContent) {
+    return Container(
+      color: isDark ? const Color(0xFF0A0A0A) : const Color(0xFFF5F5F5),
+      child: TabBar(
+        controller: tabController,
+        labelColor: accentColor,
+        unselectedLabelColor: isDark ? Colors.grey.shade500 : Colors.grey.shade600,
+        indicator: const BoxDecoration(),
+        dividerColor: Colors.transparent,
+        labelStyle:
+            const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+        unselectedLabelStyle:
+            const TextStyle(fontSize: 14, fontWeight: FontWeight.normal),
+        tabs: const [
+          Tab(icon: Icon(Icons.info_outline, size: 20), text: 'Detail'),
+          Tab(icon: Icon(Icons.file_download_outlined, size: 20), text: 'Download'),
+          Tab(icon: Icon(Icons.explore_outlined, size: 20), text: 'Explore'),
+        ],
+      ),
+    );
+  }
+}
