@@ -199,7 +199,7 @@ class DownloadManagerService extends ChangeNotifier {
   static const int _maxConcurrentDownloads = 3;
 
   final Dio _dio = Dio(BaseOptions(
-    connectTimeout: const Duration(seconds: 20),
+    connectTimeout: const Duration(seconds: 30),
     receiveTimeout: const Duration(minutes: 180),
     sendTimeout: const Duration(minutes: 10),
     // Follow redirects for file hosting services (MediaFire, etc.)
@@ -208,6 +208,11 @@ class DownloadManagerService extends ChangeNotifier {
     // Better buffer size for large file downloads
     receiveDataWhenStatusError: true,
   ));
+
+  /// Download performance tuning constants
+  static const int _maxAutoRetries = 3; // Auto-retry on network errors
+  static const Duration _stallTimeout = Duration(seconds: 20); // Reconnect if stalled this long
+  static const int _stallSpeedThreshold = 5 * 1024; // 5 KB/s = stalled
 
   static String? _customDownloadDir;
   static String? get customDownloadDir => _customDownloadDir;
@@ -740,6 +745,7 @@ class DownloadManagerService extends ChangeNotifier {
   }
 
   /// Start or resume a download with byte-range support
+  /// Includes stall detection (auto-reconnect if speed drops) and auto-retry on network errors
   Future<void> startDownload(String taskId) async {
     final index = _tasks.indexWhere((t) => t.id == taskId);
     if (index == -1) return;
@@ -810,162 +816,248 @@ class DownloadManagerService extends ChangeNotifier {
     );
     notifyListeners();
 
-    final cancelToken = CancelToken();
-    _cancelTokens[taskId] = cancelToken;
+    // Stall detection state
+    DateTime? _stallDetectedAt;
+    int _lastStallCheckBytes = 0;
+    int _autoRetryCount = 0;
 
     // Throttle UI notifications to avoid jank on mobile data
     int _lastNotifyTime = 0;
     const _notifyIntervalMs = 250; // Update UI max 4 times per second
 
-    try {
-      // Check if partial file exists for resume support
-      int startByte = task.downloadedBytes;
-      final file = File(task.savePath);
-      if (startByte > 0 && await file.exists()) {
-        final fileSize = await file.length();
-        if (fileSize < startByte) {
-          // File is smaller than recorded bytes - something went wrong, restart
-          startByte = 0;
+    Future<void> doDownload() async {
+      final cancelToken = CancelToken();
+      _cancelTokens[taskId] = cancelToken;
+
+      try {
+        // Check if partial file exists for resume support
+        int startByte = 0;
+        final currentTaskIdx = _tasks.indexWhere((t) => t.id == taskId);
+        if (currentTaskIdx == -1) return;
+        final currentTask = _tasks[currentTaskIdx];
+
+        final file = File(currentTask.savePath);
+        if (currentTask.downloadedBytes > 0 && await file.exists()) {
+          final fileSize = await file.length();
+          if (fileSize < currentTask.downloadedBytes) {
+            // File is smaller than recorded bytes - something went wrong, restart
+            startByte = 0;
+          } else {
+            startByte = fileSize; // Use actual file size for more reliable resume
+          }
         } else {
-          startByte = fileSize; // Use actual file size for more reliable resume
+          // No partial file, start from beginning
+          startByte = 0;
         }
-      } else {
-        // No partial file, start from beginning
-        startByte = 0;
-      }
 
-      // Build headers - add Range header for resume
-      final headers = <String, dynamic>{};
-      if (startByte > 0) {
-        headers['Range'] = 'bytes=$startByte-';
-      }
+        // Reset stall detection for new connection
+        _stallDetectedAt = null;
+        _lastStallCheckBytes = startByte;
 
-      await _dio.download(
-        task.url,
-        task.savePath,
-        cancelToken: cancelToken,
-        onReceiveProgress: (received, total) {
-          final idx = _tasks.indexWhere((t) => t.id == taskId);
-          if (idx == -1) return;
+        // Build headers - add Range header for resume
+        final headers = <String, dynamic>{};
+        if (startByte > 0) {
+          headers['Range'] = 'bytes=$startByte-';
+          debugPrint('Resuming download from byte $startByte for $taskId');
+        }
 
-          // For resumed downloads, received is relative to the Range request
-          final actualReceived = startByte + received;
-          final actualTotal = total > 0 ? startByte + total : -1;
-          final progress = actualTotal > 0 ? actualReceived / actualTotal : 0.0;
+        await _dio.download(
+          currentTask.url,
+          currentTask.savePath,
+          cancelToken: cancelToken,
+          onReceiveProgress: (received, total) {
+            final idx = _tasks.indexWhere((t) => t.id == taskId);
+            if (idx == -1) return;
 
-          // Calculate speed and ETA
-          final tracker = _speedTrackers[taskId];
-          double speed = 0.0;
-          int? eta;
-          if (tracker != null) {
-            tracker.addSample(actualReceived);
-            speed = tracker.speedBytesPerSec;
-            if (speed > 0 && actualTotal > 0) {
-              final remaining = actualTotal - actualReceived;
-              eta = (remaining / speed).round();
+            // For resumed downloads, received is relative to the Range request
+            final actualReceived = startByte + received;
+            final actualTotal = total > 0 ? startByte + total : -1;
+            final progress = actualTotal > 0 ? actualReceived / actualTotal : 0.0;
+
+            // Calculate speed and ETA
+            final tracker = _speedTrackers[taskId];
+            double speed = 0.0;
+            int? eta;
+            if (tracker != null) {
+              tracker.addSample(actualReceived);
+              speed = tracker.speedBytesPerSec;
+              if (speed > 0 && actualTotal > 0) {
+                final remaining = actualTotal - actualReceived;
+                eta = (remaining / speed).round();
+              }
             }
-          }
 
-          // Throttle UI updates to avoid jank on mobile data
-          final now = DateTime.now().millisecondsSinceEpoch;
-          final shouldNotify = (now - _lastNotifyTime >= _notifyIntervalMs) ||
-              progress >= 1.0 ||
-              actualTotal <= 0; // Always notify for unknown size
+            // === STALL DETECTION ===
+            // Check if download speed has dropped below threshold
+            if (actualReceived > _lastStallCheckBytes + 50 * 1024) {
+              // Only check every ~50KB of progress to avoid noise
+              _lastStallCheckBytes = actualReceived;
+              if (speed > 0 && speed < _stallSpeedThreshold) {
+                _stallDetectedAt ??= DateTime.now();
+                final stalledDuration = DateTime.now().difference(_stallDetectedAt!);
+                if (stalledDuration >= _stallTimeout) {
+                  debugPrint('Download stall detected for $taskId: speed=${_formatSpeed(speed)}, reconnecting...');
+                  // Cancel current connection - will auto-reconnect via retry
+                  if (!cancelToken.isCancelled) {
+                    cancelToken.cancel('Stall detected - reconnecting');
+                  }
+                  return;
+                }
+              } else {
+                _stallDetectedAt = null; // Speed recovered, reset stall timer
+              }
+            }
 
-          // Always update task data, but throttle notifyListeners()
-          _tasks[idx] = _tasks[idx].copyWith(
-            progress: progress.clamp(0.0, 1.0),
-            downloadedBytes: actualReceived,
-            totalBytes: actualTotal > 0 ? actualTotal : null,
-            speedBytesPerSec: speed,
-            etaSeconds: eta,
-          );
-          if (shouldNotify) {
-            _lastNotifyTime = now;
-            notifyListeners();
-          }
-        },
-        options: Options(
-          headers: headers,
-          receiveTimeout: const Duration(minutes: 60),
-          sendTimeout: const Duration(minutes: 10),
-        ),
-        deleteOnError: false, // Keep partial file for resume
-      );
+            // Throttle UI updates to avoid jank on mobile data
+            final now = DateTime.now().millisecondsSinceEpoch;
+            final shouldNotify = (now - _lastNotifyTime >= _notifyIntervalMs) ||
+                progress >= 1.0 ||
+                actualTotal <= 0; // Always notify for unknown size
 
-      // Download completed
-      final idx = _tasks.indexWhere((t) => t.id == taskId);
-      if (idx != -1) {
-        _tasks[idx] = _tasks[idx].copyWith(
-          status: DownloadStatus.completed,
-          progress: 1.0,
-          downloadedBytes: _tasks[idx].totalBytes ?? _tasks[idx].downloadedBytes,
-          completedAt: DateTime.now(),
-          speedBytesPerSec: 0.0,
-          etaSeconds: null,
+            // Always update task data, but throttle notifyListeners()
+            _tasks[idx] = _tasks[idx].copyWith(
+              progress: progress.clamp(0.0, 1.0),
+              downloadedBytes: actualReceived,
+              totalBytes: actualTotal > 0 ? actualTotal : null,
+              speedBytesPerSec: speed,
+              etaSeconds: eta,
+            );
+            if (shouldNotify) {
+              _lastNotifyTime = now;
+              notifyListeners();
+            }
+          },
+          options: Options(
+            headers: headers,
+            receiveTimeout: const Duration(minutes: 60),
+            sendTimeout: const Duration(minutes: 10),
+          ),
+          deleteOnError: false, // Keep partial file for resume
         );
 
-        // If using SAF folder, copy file to SAF folder for visibility in file managers
-        if (Platform.isAndroid) {
-          final safService = SafStorageService.instance;
-          final hasSaf = await safService.hasStoredFolder();
-          if (hasSaf) {
-            final fileName = idx != -1 ? _tasks[idx].savePath.split('/').last : '';
-            if (fileName.isNotEmpty) {
-              final saved = await safService.saveFileToSafFolder(
-                sourceFilePath: _tasks[idx].savePath,
-                fileName: fileName,
-              );
-              if (saved) {
-                debugPrint('Copied download to SAF folder: $fileName');
+        // Download completed
+        final idx = _tasks.indexWhere((t) => t.id == taskId);
+        if (idx != -1) {
+          _tasks[idx] = _tasks[idx].copyWith(
+            status: DownloadStatus.completed,
+            progress: 1.0,
+            downloadedBytes: _tasks[idx].totalBytes ?? _tasks[idx].downloadedBytes,
+            completedAt: DateTime.now(),
+            speedBytesPerSec: 0.0,
+            etaSeconds: null,
+          );
+
+          // If using SAF folder, copy file to SAF folder for visibility in file managers
+          if (Platform.isAndroid) {
+            final safService = SafStorageService.instance;
+            final hasSaf = await safService.hasStoredFolder();
+            if (hasSaf) {
+              final fileName = _tasks[idx].savePath.split('/').last;
+              if (fileName.isNotEmpty) {
+                final saved = await safService.saveFileToSafFolder(
+                  sourceFilePath: _tasks[idx].savePath,
+                  fileName: fileName,
+                );
+                if (saved) {
+                  debugPrint('Copied download to SAF folder: $fileName');
+                }
               }
             }
           }
-        }
 
-        await _saveTasks();
-        notifyListeners();
-      }
-    } on DioException catch (e) {
-      final idx = _tasks.indexWhere((t) => t.id == taskId);
-      if (idx != -1) {
+          await _saveTasks();
+          notifyListeners();
+        }
+      } on DioException catch (e) {
+        final idx = _tasks.indexWhere((t) => t.id == taskId);
+        if (idx == -1) return;
+
         if (CancelToken.isCancel(e)) {
-          // Was paused - save current progress for resume
-          _tasks[idx] = _tasks[idx].copyWith(
-            status: DownloadStatus.paused,
-            speedBytesPerSec: 0.0,
-            etaSeconds: null,
-          );
-        } else {
-          String errorMsg = _getDioErrorMessage(e);
+          final reason = e.message ?? '';
+          if (reason.contains('Paused by user')) {
+            // User paused - save current progress for resume
+            _tasks[idx] = _tasks[idx].copyWith(
+              status: DownloadStatus.paused,
+              speedBytesPerSec: 0.0,
+              etaSeconds: null,
+            );
+            await _saveTasks();
+            notifyListeners();
+            return;
+          }
+          // Stall or other auto-cancel - attempt auto-reconnect
+          if (_autoRetryCount < _maxAutoRetries) {
+            _autoRetryCount++;
+            debugPrint('Auto-reconnect attempt $_autoRetryCount/$_maxAutoRetries for $taskId');
+            // Brief pause before reconnecting
+            await Future.delayed(const Duration(seconds: 2));
+            // Save current progress before retrying
+            await _saveTasks();
+            return doDownload(); // Reconnect with fresh connection
+          }
+          // Exhausted retries
           _tasks[idx] = _tasks[idx].copyWith(
             status: DownloadStatus.failed,
-            errorMessage: errorMsg,
+            errorMessage: 'Download stalled repeatedly. Tap retry to continue.',
             speedBytesPerSec: 0.0,
             etaSeconds: null,
           );
+          await _saveTasks();
+          notifyListeners();
+          return;
         }
-        await _saveTasks();
-        notifyListeners();
-      }
-    } catch (e) {
-      final idx = _tasks.indexWhere((t) => t.id == taskId);
-      if (idx != -1) {
+
+        // Network error - attempt auto-retry with resume
+        final isRetryable = e.type == DioExceptionType.connectionTimeout ||
+            e.type == DioExceptionType.receiveTimeout ||
+            e.type == DioExceptionType.connectionError;
+        if (isRetryable && _autoRetryCount < _maxAutoRetries) {
+          _autoRetryCount++;
+          debugPrint('Auto-retry attempt $_autoRetryCount/$_maxAutoRetries for $taskId after ${e.type}');
+          await Future.delayed(Duration(seconds: 2 * _autoRetryCount)); // Exponential backoff
+          await _saveTasks();
+          return doDownload();
+        }
+
+        String errorMsg = _getDioErrorMessage(e);
         _tasks[idx] = _tasks[idx].copyWith(
           status: DownloadStatus.failed,
-          errorMessage: e.toString(),
+          errorMessage: errorMsg,
           speedBytesPerSec: 0.0,
           etaSeconds: null,
         );
         await _saveTasks();
         notifyListeners();
+      } catch (e) {
+        final idx = _tasks.indexWhere((t) => t.id == taskId);
+        if (idx != -1) {
+          _tasks[idx] = _tasks[idx].copyWith(
+            status: DownloadStatus.failed,
+            errorMessage: e.toString(),
+            speedBytesPerSec: 0.0,
+            etaSeconds: null,
+          );
+          await _saveTasks();
+          notifyListeners();
+        }
       }
+    }
+
+    try {
+      await doDownload();
     } finally {
       _cancelTokens.remove(taskId);
       _speedTrackers.remove(taskId);
       _activeDownloadCount--;
       _processQueue();
     }
+  }
+
+  /// Format speed for debug logging
+  String _formatSpeed(double bytesPerSec) {
+    if (bytesPerSec < 1024) return '${bytesPerSec.round()} B/s';
+    if (bytesPerSec < 1024 * 1024) return '${(bytesPerSec / 1024).toStringAsFixed(1)} KB/s';
+    return '${(bytesPerSec / (1024 * 1024)).toStringAsFixed(1)} MB/s';
   }
 
   /// Get a human-readable error message from DioException
