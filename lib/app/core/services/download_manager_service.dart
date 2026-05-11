@@ -72,6 +72,7 @@ class DownloadTask {
     DateTime? completedAt,
     double? speedBytesPerSec,
     int? etaSeconds,
+    String? savePath,
   }) {
     return DownloadTask(
       id: id,
@@ -82,7 +83,7 @@ class DownloadTask {
       quality: quality,
       size: size,
       serverName: serverName,
-      savePath: savePath,
+      savePath: savePath ?? this.savePath,
       addedAt: addedAt,
       completedAt: completedAt ?? this.completedAt,
       status: status ?? this.status,
