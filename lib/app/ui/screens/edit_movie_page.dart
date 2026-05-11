@@ -132,6 +132,8 @@ class _EditMoviePageState extends State<EditMoviePage> {
         'downloadLinks': _downloadLinks.map((l) => {
           'serverName': l.serverName,
           'url': l.url,
+          'watchName': l.watchName,
+          'watchUrl': l.watchUrl,
           'size': l.size,
           'quality': l.quality,
           'resolution': l.resolution,
@@ -596,6 +598,8 @@ class _EditMoviePageState extends State<EditMoviePage> {
   void _showAddDownloadLinkModal() {
     final serverController = TextEditingController();
     final urlController = TextEditingController();
+    final watchNameController = TextEditingController();
+    final watchUrlController = TextEditingController();
     final qualityController = TextEditingController();
     final resController = TextEditingController();
     final sizeController = TextEditingController();
@@ -608,13 +612,15 @@ class _EditMoviePageState extends State<EditMoviePage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(controller: serverController, decoration: const InputDecoration(labelText: 'Server Name *'), autofocus: true),
+              TextField(controller: serverController, decoration: const InputDecoration(labelText: 'Server Name *', hintText: 'e.g. Direct-1'), autofocus: true),
               const SizedBox(height: 8),
-              TextField(controller: urlController, decoration: const InputDecoration(labelText: 'URL *'), keyboardType: TextInputType.url),
+              TextField(controller: urlController, decoration: const InputDecoration(labelText: 'Download URL *', hintText: 'Direct download link'), keyboardType: TextInputType.url),
               const SizedBox(height: 8),
-              TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. FHD, HD')),
+              TextField(controller: watchNameController, decoration: const InputDecoration(labelText: 'Watch Name', hintText: 'e.g. Server-1')),
               const SizedBox(height: 8),
-              TextField(controller: resController, decoration: const InputDecoration(labelText: 'Resolution', hintText: 'e.g. 1080p')),
+              TextField(controller: watchUrlController, decoration: const InputDecoration(labelText: 'Watch URL', hintText: 'Player link for watching'), keyboardType: TextInputType.url),
+              const SizedBox(height: 8),
+              TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. 720p, 1080p')),
               const SizedBox(height: 8),
               TextField(controller: sizeController, decoration: const InputDecoration(labelText: 'Size', hintText: 'e.g. 1.5 GB')),
             ],
@@ -631,8 +637,10 @@ class _EditMoviePageState extends State<EditMoviePage> {
           _downloadLinks.add(MovieDownloadLink(
             serverName: serverController.text.trim(),
             url: urlController.text.trim(),
+            watchName: watchNameController.text.trim().isEmpty ? null : watchNameController.text.trim(),
+            watchUrl: watchUrlController.text.trim().isEmpty ? null : watchUrlController.text.trim(),
             quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-            resolution: resController.text.trim().isEmpty ? null : resController.text.trim(),
+            resolution: null,
             size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
           ));
         });
@@ -682,7 +690,7 @@ class _EditMoviePageState extends State<EditMoviePage> {
                           return ListTile(
                             dense: true,
                             title: Text(link.serverName),
-                            subtitle: Text('${link.quality ?? ''} ${link.size ?? ''}'.trim()),
+                            subtitle: Text('${link.quality ?? ''} ${link.size ?? ''}${link.watchUrl != null && link.watchUrl!.isNotEmpty ? ' · Watch: ${link.watchName ?? 'Available'}' : ''}'.trim()),
                             trailing: IconButton(
                               icon: const Icon(Icons.delete, size: 18, color: Colors.red),
                               onPressed: () {
@@ -716,6 +724,8 @@ class _EditMoviePageState extends State<EditMoviePage> {
   void _showAddEpisodeDownloadLinkDialog(int seasonIndex, int episodeIndex) {
     final serverController = TextEditingController();
     final urlController = TextEditingController();
+    final watchNameController = TextEditingController();
+    final watchUrlController = TextEditingController();
     final qualityController = TextEditingController();
     final resController = TextEditingController();
     final sizeController = TextEditingController();
@@ -728,13 +738,15 @@ class _EditMoviePageState extends State<EditMoviePage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(controller: serverController, decoration: const InputDecoration(labelText: 'Server Name *'), autofocus: true),
+              TextField(controller: serverController, decoration: const InputDecoration(labelText: 'Server Name *', hintText: 'e.g. Direct-1'), autofocus: true),
               const SizedBox(height: 8),
-              TextField(controller: urlController, decoration: const InputDecoration(labelText: 'URL *'), keyboardType: TextInputType.url),
+              TextField(controller: urlController, decoration: const InputDecoration(labelText: 'Download URL *', hintText: 'Direct download link'), keyboardType: TextInputType.url),
               const SizedBox(height: 8),
-              TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. FHD')),
+              TextField(controller: watchNameController, decoration: const InputDecoration(labelText: 'Watch Name', hintText: 'e.g. Server-1')),
               const SizedBox(height: 8),
-              TextField(controller: resController, decoration: const InputDecoration(labelText: 'Resolution', hintText: 'e.g. 1080p')),
+              TextField(controller: watchUrlController, decoration: const InputDecoration(labelText: 'Watch URL', hintText: 'Player link for watching'), keyboardType: TextInputType.url),
+              const SizedBox(height: 8),
+              TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. 720p, 1080p')),
               const SizedBox(height: 8),
               TextField(controller: sizeController, decoration: const InputDecoration(labelText: 'Size', hintText: 'e.g. 1.5 GB')),
             ],
@@ -751,8 +763,10 @@ class _EditMoviePageState extends State<EditMoviePage> {
           _seasons[seasonIndex].episodes[episodeIndex].downloadLinks.add(MovieDownloadLink(
             serverName: serverController.text.trim(),
             url: urlController.text.trim(),
+            watchName: watchNameController.text.trim().isEmpty ? null : watchNameController.text.trim(),
+            watchUrl: watchUrlController.text.trim().isEmpty ? null : watchUrlController.text.trim(),
             quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-            resolution: resController.text.trim().isEmpty ? null : resController.text.trim(),
+            resolution: null,
             size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
           ));
         });

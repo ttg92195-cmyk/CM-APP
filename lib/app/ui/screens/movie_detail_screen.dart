@@ -407,8 +407,8 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
               ),
             ),
             leading: Container(
-                width: 28,
-                height: 28,
+                width: 24,
+                height: 24,
                 decoration: BoxDecoration(
                   color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
                   shape: BoxShape.circle,
@@ -416,10 +416,10 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                 child: IconButton(
                   icon: Icon(Icons.arrow_back,
                       color: isDark ? Colors.white : Colors.black87,
-                      size: 16),
+                      size: 14),
                   onPressed: () => Navigator.pop(context),
                   padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                  constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
                 ),
               ),
             actions: [
@@ -427,8 +427,8 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
               Padding(
                 padding: const EdgeInsets.only(right: 4),
                 child: Container(
-                  width: 28,
-                  height: 28,
+                  width: 24,
+                  height: 24,
                   decoration: BoxDecoration(
                     color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
                     shape: BoxShape.circle,
@@ -441,11 +441,11 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                       color: _isInWatchlist
                           ? const Color(0xFF4CAF50)
                           : (isDark ? Colors.white : Colors.black54),
-                      size: 16,
+                      size: 14,
                     ),
                     onPressed: _toggleWatchlist,
                     padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                    constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
                   ),
                 ),
               ),
@@ -453,8 +453,8 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
               Padding(
                 padding: const EdgeInsets.only(right: 8),
                 child: Container(
-                  width: 28,
-                  height: 28,
+                  width: 24,
+                  height: 24,
                   decoration: BoxDecoration(
                     color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
                     shape: BoxShape.circle,
@@ -467,11 +467,11 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                       color: _isBookmarked
                           ? accentColor
                           : (isDark ? Colors.white : Colors.black54),
-                      size: 16,
+                      size: 14,
                     ),
                     onPressed: _toggleBookmark,
                     padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                    constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
                   ),
                 ),
               ),
@@ -632,6 +632,37 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                                       ),
                                     );
                                   }).toList(),
+                                ),
+                              // Views & Country row
+                              if (detail.views != null || (detail.country != null && detail.country!.isNotEmpty))
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 6),
+                                  child: Row(
+                                    children: [
+                                      if (detail.views != null) ...[
+                                        Icon(Icons.visibility,
+                                            size: 13, color: metaTextColor),
+                                        const SizedBox(width: 3),
+                                        Text(
+                                          _formatViews(detail.views!),
+                                          style: TextStyle(
+                                              color: metaTextColor, fontSize: 11),
+                                        ),
+                                        if (detail.country != null && detail.country!.isNotEmpty)
+                                          const SizedBox(width: 12),
+                                      ],
+                                      if (detail.country != null && detail.country!.isNotEmpty) ...[
+                                        Icon(Icons.public,
+                                            size: 13, color: metaTextColor),
+                                        const SizedBox(width: 3),
+                                        Text(
+                                          detail.country!,
+                                          style: TextStyle(
+                                              color: metaTextColor, fontSize: 11),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
                                 ),
                             ],
                           ),
@@ -1058,14 +1089,16 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                                   ),
                                 ),
                                 const SizedBox(width: 8),
-                                // External download
+                                // Watch / Open link
                                 Expanded(
                                   child: OutlinedButton.icon(
-                                    onPressed: link.url.isNotEmpty
-                                        ? () => _launchUrl(link.url)
-                                        : null,
-                                    icon: const Icon(Icons.open_in_new, size: 16),
-                                    label: Text('Open $qualityLabel'),
+                                    onPressed: (link.watchUrl != null && link.watchUrl!.isNotEmpty)
+                                        ? () => _launchUrl(link.watchUrl!)
+                                        : (link.url.isNotEmpty ? () => _launchUrl(link.url) : null),
+                                    icon: const Icon(Icons.play_circle_outline, size: 16),
+                                    label: Text(link.watchName != null && link.watchName!.isNotEmpty
+                                        ? link.watchName!
+                                        : 'Watch'),
                                     style: OutlinedButton.styleFrom(
                                       foregroundColor: accentColor,
                                       disabledForegroundColor:
@@ -1074,7 +1107,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                                       shape: RoundedRectangleBorder(
                                           borderRadius: BorderRadius.circular(8)),
                                       side: BorderSide(
-                                          color: link.url.isNotEmpty
+                                          color: (link.watchUrl != null && link.watchUrl!.isNotEmpty) || link.url.isNotEmpty
                                               ? accentColor
                                               : (isDark ? Colors.grey.shade700 : Colors.grey.shade400)),
                                       textStyle: const TextStyle(
@@ -1109,6 +1142,12 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
       return const Color(0xFFFFAB00); // Yellow/amber for 720p
     }
     return const Color(0xFF4CAF50); // Green for others
+  }
+
+  String _formatViews(int views) {
+    if (views >= 1000000) return '${(views / 1000000).toStringAsFixed(1)}M';
+    if (views >= 1000) return '${(views / 1000).toStringAsFixed(1)}K';
+    return '$views';
   }
 
   String _getQualityDescription(String quality) {

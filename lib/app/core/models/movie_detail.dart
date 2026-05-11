@@ -14,6 +14,8 @@ class MovieDetail {
   final int? isAdult;
   final String? type;
   final bool isTrending;
+  final int? views;
+  final String? country;
   final List<String> directors;
   final List<CastMember> casts;
   final List<String> categories;
@@ -37,6 +39,8 @@ class MovieDetail {
     this.isAdult,
     this.type,
     this.isTrending = false,
+    this.views,
+    this.country,
     this.directors = const [],
     this.casts = const [],
     this.categories = const [],
@@ -61,6 +65,8 @@ class MovieDetail {
       isAdult: map['isAdult'] as int?,
       type: map['type'] as String?,
       isTrending: map['isTrending'] as bool? ?? false,
+      views: map['views'] as int?,
+      country: map['country'] as String?,
       directors: map['directors'] != null
           ? List<String>.from(
               (map['directors'] as List).map((x) => x.toString()),
@@ -111,6 +117,8 @@ class MovieDetail {
       'isAdult': isAdult,
       'type': type,
       'isTrending': isTrending,
+      'views': views,
+      'country': country,
       'directors': directors,
       'casts': casts.map((x) => x.toMap()).toList(),
       'categories': categories,
@@ -169,6 +177,8 @@ class MovieDownloadLink {
   final String? size;
   final String? quality;
   final String? resolution;
+  final String? watchName;
+  final String? watchUrl;
 
   MovieDownloadLink({
     required this.serverName,
@@ -176,6 +186,8 @@ class MovieDownloadLink {
     this.size,
     this.quality,
     this.resolution,
+    this.watchName,
+    this.watchUrl,
   });
 
   factory MovieDownloadLink.fromMap(Map<String, dynamic> map) {
@@ -185,6 +197,8 @@ class MovieDownloadLink {
       size: map['size']?.toString(),
       quality: map['quality']?.toString(),
       resolution: map['resolution']?.toString(),
+      watchName: map['watchName'] as String?,
+      watchUrl: map['watchUrl'] as String?,
     );
   }
 
@@ -195,6 +209,8 @@ class MovieDownloadLink {
       'size': size,
       'quality': quality,
       'resolution': resolution,
+      'watchName': watchName,
+      'watchUrl': watchUrl,
     };
   }
 }

@@ -435,6 +435,8 @@ class _AddMoviePageState extends State<AddMoviePage> {
   void _showAddDownloadLinkModal() {
     final serverController = TextEditingController();
     final urlController = TextEditingController();
+    final watchNameController = TextEditingController();
+    final watchUrlController = TextEditingController();
     final qualityController = TextEditingController();
     final resController = TextEditingController();
     final sizeController = TextEditingController();
@@ -447,13 +449,15 @@ class _AddMoviePageState extends State<AddMoviePage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(controller: serverController, decoration: const InputDecoration(labelText: 'Server Name *'), autofocus: true),
+              TextField(controller: serverController, decoration: const InputDecoration(labelText: 'Server Name *', hintText: 'e.g. Direct-1'), autofocus: true),
               const SizedBox(height: 8),
-              TextField(controller: urlController, decoration: const InputDecoration(labelText: 'URL *'), keyboardType: TextInputType.url),
+              TextField(controller: urlController, decoration: const InputDecoration(labelText: 'Download URL *', hintText: 'Direct download link'), keyboardType: TextInputType.url),
               const SizedBox(height: 8),
-              TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. FHD, HD')),
+              TextField(controller: watchNameController, decoration: const InputDecoration(labelText: 'Watch Name', hintText: 'e.g. Server-1')),
               const SizedBox(height: 8),
-              TextField(controller: resController, decoration: const InputDecoration(labelText: 'Resolution', hintText: 'e.g. 1080p, 4K')),
+              TextField(controller: watchUrlController, decoration: const InputDecoration(labelText: 'Watch URL', hintText: 'Player link for watching'), keyboardType: TextInputType.url),
+              const SizedBox(height: 8),
+              TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. 720p, 1080p')),
               const SizedBox(height: 8),
               TextField(controller: sizeController, decoration: const InputDecoration(labelText: 'Size', hintText: 'e.g. 1.5 GB')),
             ],
@@ -470,6 +474,8 @@ class _AddMoviePageState extends State<AddMoviePage> {
           _downloadLinks.add(MovieDownloadLink(
             serverName: serverController.text.trim(),
             url: urlController.text.trim(),
+            watchName: watchNameController.text.trim().isEmpty ? null : watchNameController.text.trim(),
+            watchUrl: watchUrlController.text.trim().isEmpty ? null : watchUrlController.text.trim(),
             quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
             resolution: resController.text.trim().isEmpty ? null : resController.text.trim(),
             size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
