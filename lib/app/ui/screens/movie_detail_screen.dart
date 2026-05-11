@@ -1346,7 +1346,6 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
           children: [
             Text(
               'Storage permission is required to download and save videos to your device.',
-              'Storage permission is required to download and save videos to your device.',
               style: TextStyle(
                 color: isDark ? Colors.grey.shade300 : Colors.grey.shade700,
                 fontSize: 14,
@@ -1365,7 +1364,6 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'You will be asked to grant access. This is required for downloading videos.',
                       'You will be asked to grant access. This is required for downloading videos.',
                       style: TextStyle(
                         fontSize: 12,
@@ -1386,8 +1384,6 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
           ElevatedButton.icon(
             onPressed: () async {
               Navigator.pop(ctx, true);
-              // Use the native Android runtime permission dialog
-              final granted = await _downloadManager.requestRuntimePermission();
               // Use the native Android runtime permission dialog
               final granted = await _downloadManager.requestRuntimePermission();
               if (!granted && mounted) {
