@@ -43,6 +43,17 @@ class MainActivity: FlutterActivity() {
                     val deleted = deleteFileFromFolder(treeUri, fileName)
                     result.success(deleted)
                 }
+                "openFileFromSaf" -> {
+                    val treeUri = call.argument<String>("treeUri") ?: ""
+                    val fileName = call.argument<String>("fileName") ?: ""
+                    val opened = openFileFromSaf(treeUri, fileName)
+                    result.success(opened)
+                }
+                "isSafPermissionValid" -> {
+                    val treeUri = call.argument<String>("treeUri") ?: ""
+                    val valid = isSafPermissionValid(treeUri)
+                    result.success(valid)
+                }
                 else -> result.notImplemented()
             }
         }
@@ -244,6 +255,73 @@ class MainActivity: FlutterActivity() {
             }
         } catch (e: Exception) {
             android.util.Log.e("SafStorage", "deleteFileFromFolder error: ${e.message}")
+        }
+        return false
+    }
+
+    /**
+     * Open a file from the SAF folder using the system's default app.
+     * Finds the file in the SAF folder and opens it via an ACTION_VIEW Intent.
+     */
+    private fun openFileFromSaf(treeUriStr: String, fileName: String): Boolean {
+        try {
+            val treeUri = Uri.parse(treeUriStr)
+            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+                treeUri,
+                DocumentsContract.getTreeDocumentId(treeUri)
+            )
+
+            contentResolver.query(
+                childrenUri,
+                arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, OpenableColumns.DISPLAY_NAME),
+                null, null, null
+            )?.use { cursor ->
+                val docIdColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                val nameColumn = cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME)
+                while (cursor.moveToNext()) {
+                    val name = cursor.getString(nameColumn)
+                    if (name == fileName) {
+                        val docId = cursor.getString(docIdColumn)
+                        val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+                        val mimeType = getMimeType(fileName)
+
+                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(docUri, mimeType)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        startActivity(intent)
+                        return true
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("SafStorage", "openFileFromSaf error: ${e.message}")
+        }
+        return false
+    }
+
+    /**
+     * Check if the SAF permission is still valid for the given tree URI.
+     * Permissions can be revoked by the user or system.
+     */
+    private fun isSafPermissionValid(treeUriStr: String): Boolean {
+        try {
+            val treeUri = Uri.parse(treeUriStr)
+            // Try to list children - if this succeeds, permission is valid
+            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+                treeUri,
+                DocumentsContract.getTreeDocumentId(treeUri)
+            )
+            contentResolver.query(
+                childrenUri,
+                arrayOf(OpenableColumns.DISPLAY_NAME),
+                null, null, null
+            )?.use { cursor ->
+                return true // If we can query, permission is valid
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("SafStorage", "isSafPermissionValid error: ${e.message}")
         }
         return false
     }

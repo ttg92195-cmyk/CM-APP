@@ -294,6 +294,7 @@ class DownloadManagerService extends ChangeNotifier {
     _isInitialized = true;
     await _loadTasks();
     await _migrateOldDownloads();
+    await fixExistingTaskPaths();
   }
 
   /// Auto-migrate download files from old public directory to new scoped storage.
@@ -475,38 +476,48 @@ class DownloadManagerService extends ChangeNotifier {
     }
   }
 
-  /// Get cross-platform download directory
-  /// Uses scoped storage on Android 11+ (app-specific external directory)
-  /// which doesn't require MANAGE_EXTERNAL_STORAGE permission.
-  /// Files are accessible via file managers and persist across app updates.
+  /// Get cross-platform download directory for ACTUAL file writing.
+  /// IMPORTANT: This always returns the app's private storage directory on Android,
+  /// NOT the SAF folder path. On Android 11+ with scoped storage, we cannot write
+  /// to arbitrary directories (like SAF-selected folders) using standard File I/O.
+  /// Instead, we download to app private storage first, then copy to the SAF folder
+  /// after completion using ContentResolver.
   Future<String> _getDownloadDir() async {
-    // Check custom download directory first
+    // Check custom download directory first (only if it's within app storage)
     if (_customDownloadDir != null && _customDownloadDir!.isNotEmpty) {
-      final dir = Directory(_customDownloadDir!);
-      if (await dir.exists()) return dir.path;
-      // Try to create the custom directory
-      try {
-        await dir.create(recursive: true);
-        return dir.path;
-      } catch (_) {
-        // Fall through to default
-      }
-    }
-
-    // Check SAF folder selection (takes priority over default location)
-    if (Platform.isAndroid) {
-      final safPath = await SafStorageService.instance.getStoredTreePath();
-      if (safPath != null && safPath.isNotEmpty) {
-        final dir = Directory(safPath);
+      // Only use custom dir if it's within app's external storage
+      // (custom dirs outside app storage won't be writable on Android 11+)
+      if (Platform.isAndroid) {
+        final appDir = await getExternalStorageDirectory();
+        if (appDir != null && _customDownloadDir!.startsWith(appDir.path)) {
+          final dir = Directory(_customDownloadDir!);
+          if (await dir.exists()) return dir.path;
+          try {
+            await dir.create(recursive: true);
+            return dir.path;
+          } catch (_) {
+            // Fall through to default
+          }
+        }
+        // Custom dir is outside app storage - skip it on Android 11+
+      } else {
+        final dir = Directory(_customDownloadDir!);
         if (await dir.exists()) return dir.path;
         try {
           await dir.create(recursive: true);
           return dir.path;
         } catch (_) {
-          // SAF path not directly writable, fall through to default
+          // Fall through to default
         }
       }
     }
+
+    // NOTE: SAF folder path is NOT used for actual download path because
+    // on Android 11+ with scoped storage, we cannot write to arbitrary
+    // directories (like /storage/emulated/0/Download) using standard File I/O.
+    // Files are downloaded to app private storage first, then copied to
+    // the SAF folder after completion using ContentResolver.
+    // See startDownload() -> completion handler -> saveFileToSafFolder()
 
     // On Android, use app-specific external storage (scoped storage)
     // This avoids needing MANAGE_EXTERNAL_STORAGE and Play Store rejection.
@@ -544,6 +555,23 @@ class DownloadManagerService extends ChangeNotifier {
       await dir.create(recursive: true);
     }
     return dir.path;
+  }
+
+  /// Get the display path for the download location (shown in UI).
+  /// If a SAF folder has been selected, returns the human-readable SAF path.
+  /// Otherwise returns the actual download directory.
+  Future<String> getDownloadDisplayPath() async {
+    // If SAF folder is configured, show that path (where files end up visible)
+    if (Platform.isAndroid) {
+      final safPath = await SafStorageService.instance.getStoredTreePath();
+      if (safPath != null && safPath.isNotEmpty) {
+        return safPath;
+      }
+    }
+    if (_customDownloadDir != null && _customDownloadDir!.isNotEmpty) {
+      return _customDownloadDir!;
+    }
+    return await _getDownloadDir();
   }
 
   /// Get current download path for display
@@ -686,8 +714,22 @@ class DownloadManagerService extends ChangeNotifier {
     final index = _tasks.indexWhere((t) => t.id == taskId);
     if (index == -1) return;
 
-    final task = _tasks[index];
+    var task = _tasks[index];
     if (task.status == DownloadStatus.downloading) return;
+
+    // Recalculate save path if the current path is invalid (e.g., outside app storage)
+    // This fixes tasks that were created with SAF paths that aren't directly writable
+    if (Platform.isAndroid) {
+      final downloadDir = await _getDownloadDir();
+      final fileName = task.savePath.split('/').last;
+      final correctPath = '$downloadDir/$fileName';
+      if (task.savePath != correctPath) {
+        debugPrint('Fixing download path: ${task.savePath} -> $correctPath');
+        task = task.copyWith(savePath: correctPath);
+        _tasks[index] = task;
+        await _saveTasks();
+      }
+    }
 
     // Ensure save directory exists
     try {
@@ -992,21 +1034,37 @@ class DownloadManagerService extends ChangeNotifier {
   }
 
   /// Open a downloaded file using the system's default app
+  /// Tries the local file first, then falls back to SAF folder if configured
   Future<bool> openFile(String taskId) async {
     final index = _tasks.indexWhere((t) => t.id == taskId);
     if (index == -1) return false;
 
     final task = _tasks[index];
     final file = File(task.savePath);
-    if (!await file.exists()) return false;
 
-    try {
-      final result = await OpenFilex.open(task.savePath);
-      return result.type == ResultType.done;
-    } catch (e) {
-      debugPrint('Error opening file: $e');
-      return false;
+    // Try opening the local file first
+    if (await file.exists()) {
+      try {
+        final result = await OpenFilex.open(task.savePath);
+        return result.type == ResultType.done;
+      } catch (e) {
+        debugPrint('Error opening local file: $e');
+        // Fall through to SAF
+      }
     }
+
+    // If local file doesn't exist and SAF is configured, try opening from SAF
+    if (Platform.isAndroid) {
+      final safService = SafStorageService.instance;
+      final hasSaf = await safService.hasStoredFolder();
+      if (hasSaf) {
+        final fileName = task.savePath.split('/').last;
+        final opened = await safService.openFileFromSafFolder(fileName);
+        if (opened) return true;
+      }
+    }
+
+    return false;
   }
 
   /// Clear all completed downloads (removes from list, keeps files)
@@ -1056,6 +1114,42 @@ class DownloadManagerService extends ChangeNotifier {
         }
       }
     }
+    if (changed) {
+      await _saveTasks();
+      notifyListeners();
+    }
+  }
+
+  /// Fix existing task save paths that point to non-app-storage directories.
+  /// On Android 11+, tasks with paths like /storage/emulated/0/Alarms/ or
+  /// /storage/emulated/0/Download/ won't be writable. This recalculates
+  /// their savePath to point to the app's private storage directory.
+  Future<void> fixExistingTaskPaths() async {
+    if (!Platform.isAndroid) return;
+
+    final downloadDir = await _getDownloadDir();
+    bool changed = false;
+
+    for (int i = 0; i < _tasks.length; i++) {
+      final task = _tasks[i];
+      // Only fix tasks whose savePath is outside app storage
+      if (!task.savePath.startsWith(downloadDir) &&
+          (task.status == DownloadStatus.failed ||
+           task.status == DownloadStatus.idle ||
+           task.status == DownloadStatus.paused)) {
+        final fileName = task.savePath.split('/').last;
+        final correctPath = '$downloadDir/$fileName';
+        debugPrint('Fixing task path: ${task.savePath} -> $correctPath');
+        _tasks[i] = task.copyWith(
+          savePath: correctPath,
+          // Reset download progress since we're changing the path
+          downloadedBytes: 0,
+          progress: 0.0,
+        );
+        changed = true;
+      }
+    }
+
     if (changed) {
       await _saveTasks();
       notifyListeners();

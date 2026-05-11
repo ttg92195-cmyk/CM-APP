@@ -149,6 +149,51 @@ class SafStorageService {
       return false;
     }
   }
+
+  /// Open a file from the SAF folder using the system's default app.
+  /// This finds the file in the SAF folder and opens it via ACTION_VIEW Intent.
+  Future<bool> openFileFromSafFolder(String fileName) async {
+    if (!Platform.isAndroid) return false;
+
+    final treeUri = await getStoredTreeUri();
+    if (treeUri == null || treeUri.isEmpty) return false;
+
+    try {
+      final result = await _channel.invokeMethod<bool>('openFileFromSaf', {
+        'treeUri': treeUri,
+        'fileName': fileName,
+      });
+      return result ?? false;
+    } on PlatformException catch (e) {
+      debugPrint('SAF open file error: ${e.code} - ${e.message}');
+      return false;
+    } catch (e) {
+      debugPrint('SAF open file error: $e');
+      return false;
+    }
+  }
+
+  /// Check if the SAF permission is still valid for the stored tree URI.
+  /// Permissions can be revoked by the user or system.
+  Future<bool> isSafPermissionValid() async {
+    if (!Platform.isAndroid) return false;
+
+    final treeUri = await getStoredTreeUri();
+    if (treeUri == null || treeUri.isEmpty) return false;
+
+    try {
+      final result = await _channel.invokeMethod<bool>('isSafPermissionValid', {
+        'treeUri': treeUri,
+      });
+      return result ?? false;
+    } on PlatformException catch (e) {
+      debugPrint('SAF permission check error: ${e.code} - ${e.message}');
+      return false;
+    } catch (e) {
+      debugPrint('SAF permission check error: $e');
+      return false;
+    }
+  }
 }
 
 /// Result from SAF folder picker

@@ -1022,8 +1022,18 @@ class _DownloadPageState extends State<DownloadPage> {
 
   void _showDownloadSettings(AppConfig appConfig, ThemeData theme) async {
     final isDark = theme.brightness == Brightness.dark;
-    String currentPath = await _downloadManager.getCurrentDownloadPath();
+    String currentPath = await _downloadManager.getDownloadDisplayPath();
     bool hasPermission = await _downloadManager.checkStoragePermission();
+    // Check if SAF permission is still valid (can be revoked by user/system)
+    bool safPermissionValid = true;
+    if (Platform.isAndroid) {
+      safPermissionValid = await SafStorageService.instance.isSafPermissionValid();
+      if (!safPermissionValid) {
+        // SAF permission was revoked - clear the stored folder
+        await SafStorageService.instance.clearStoredFolder();
+        currentPath = await _downloadManager.getDownloadDisplayPath();
+      }
+    }
 
     if (!mounted) return;
     showModalBottomSheet(
@@ -1181,6 +1191,8 @@ class _DownloadPageState extends State<DownloadPage> {
                               if (result != null) {
                                 // SAF folder selected successfully
                                 setModalState(() => currentPath = result.treePath);
+                                // Also fix any existing failed tasks that have wrong save paths
+                                await _downloadManager.fixExistingTaskPaths();
                                 if (mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
