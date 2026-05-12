@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 import 'package:chewie/chewie.dart';
-import 'package:wakelock_plus/wakelock_plus.dart';
 
 class VideoPlayerScreen extends StatefulWidget {
   final String videoUrl;
@@ -27,15 +26,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   @override
   void initState() {
     super.initState();
-    // Keep screen on during video playback
-    WakelockPlus.enable();
-    // Lock to landscape for better video experience
+    // Allow landscape rotation for better video experience
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
       DeviceOrientation.portraitUp,
     ]);
-    // Hide system UI for immersive experience
+    // Immersive mode - hide system bars
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    // Keep screen on while video plays (via window flags)
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _initializePlayer();
   }
@@ -57,6 +56,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         allowMuting: true,
         allowPlaybackSpeedChanging: true,
         playbackSpeeds: const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0],
+        // Chewie handles wakelock internally
         optionsTranslation: OptionsTranslation(
           playbackSpeedButtonText: 'Speed',
           subtitlesButtonText: 'Subtitles',
@@ -110,8 +110,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   void dispose() {
     _chewieController?.dispose();
     _videoPlayerController.dispose();
-    // Disable wakelock when leaving player
-    WakelockPlus.disable();
     // Reset orientation to portrait when leaving
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
@@ -133,7 +131,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     if (_isInitializing) {
       return Stack(
         children: [
-          // Back button overlay
           Positioned(
             top: MediaQuery.of(context).padding.top + 8,
             left: 8,
@@ -146,7 +143,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
               ),
             ),
           ),
-          // Loading spinner
           Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -175,7 +171,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     if (_errorMessage != null) {
       return Stack(
         children: [
-          // Back button overlay
           Positioned(
             top: MediaQuery.of(context).padding.top + 8,
             left: 8,
@@ -188,7 +183,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
               ),
             ),
           ),
-          // Error content
           Center(
             child: Padding(
               padding: const EdgeInsets.all(32),

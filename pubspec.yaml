@@ -22,7 +22,6 @@ dependencies:
   open_filex: ^4.5.0
   flutter_dotenv: ^5.1.0
   flutter_secure_storage: ^9.2.2
-  wakelock_plus: ^1.2.8
   # Firebase
   firebase_core: ^3.6.0
   firebase_auth: ^5.3.1
@@ -32,6 +31,7 @@ dependencies:
 # Force compatible versions for Flutter 3.24.5 / AGP 8.2
 dependency_overrides:
   package_info_plus: 8.1.2
+  wakelock_plus: 1.2.8
 
 flutter:
   uses-material-design: true
