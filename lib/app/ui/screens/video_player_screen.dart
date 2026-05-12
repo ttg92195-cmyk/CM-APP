@@ -11,11 +11,13 @@ import 'package:device_info_plus/device_info_plus.dart';
 /// Supports: MP4, MKV, HEVC (H.265), 4K, AC3/DTS audio, embedded subtitles
 ///
 /// Key features:
-/// - Manual toggle controls (tap to show/hide, NO auto-hide)
-/// - Audio Boost up to 300% (vertical drag on right side of screen)
+/// - Manual toggle controls (tap to show/hide, NO auto-hide, NO pause on toggle)
+/// - Audio Boost up to 300% (vertical drag on right 30% of screen)
+/// - Volume side indicator (right edge, doesn't cover video)
 /// - Hardware decoding first, software fallback if HW fails
-/// - Auto-retry with software decoding when "Could not open codec"
-/// - Video output downscaling for low-end devices
+/// - Video fit: BoxFit.contain for proper landscape/portrait display
+/// - Subtitle margin above bottom bar
+/// - Playback Speed bottom sheet (50% width, centered, scrollable)
 /// - App lifecycle handling (pause/resume on background/foreground)
 class VideoPlayerScreen extends StatefulWidget {
   final String videoUrl;
@@ -60,6 +62,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   bool _showVolumeIndicator = false;
   Timer? _volumeIndicatorTimer;
 
+  // Volume drag tracking — only active on right 30% of screen
+  bool _isDraggingVolume = false;
+
   // App lifecycle
   bool _wasPlayingBeforePause = false;
 
@@ -93,9 +98,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
         break;
       case AppLifecycleState.inactive:
-        break;
       case AppLifecycleState.detached:
-        break;
       case AppLifecycleState.hidden:
         break;
     }
@@ -178,6 +181,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           logLevel: MPVLogLevel.error,
         ),
       );
+
+      // FIX #2: Push subtitles above the bottom player bar (80px bottom margin)
+      _player.setProperty('sub-margin-y', '80');
 
       _controller = VideoController(
         _player,
@@ -268,11 +274,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
   }
 
+  // FIX #5: ONLY toggle controls visibility — NEVER pause the video
   void _toggleControls() {
     setState(() => _showControls = !_showControls);
   }
 
+  // Volume drag handler — only processes if drag started on right 30% of screen
   void _handleVolumeDrag(DragUpdateDetails details) {
+    if (!_isDraggingVolume) return;
     final screenHeight = MediaQuery.of(context).size.height;
     final volumeChange = (-details.delta.dy / screenHeight) * _maxVolume;
     double newVolume = (_currentVolume + volumeChange).clamp(0.0, _maxVolume);
@@ -320,12 +329,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   // ==============================================================
-  // BUILD - Layer order is CRITICAL for touch handling
+  // BUILD — Layer ordering for correct touch handling
   //
-  // Layer 1: Video (IgnorePointer) - BOTTOM - doesn't consume taps
-  // Layer 2: GestureDetector (opaque) - catches taps on empty areas
-  // Layer 3: Controls - TOP - buttons/sliders absorb their own taps
-  //          Decorative backgrounds use IgnorePointer so taps pass through
+  // Layer 1: Video (IgnorePointer) — BOTTOM — never consumes taps
+  // Layer 2: GestureDetector (opaque) — catches taps on empty areas
+  //          onTap: ONLY toggles controls (FIX #5 — no pause!)
+  //          onVerticalDrag: Volume on right 30% only
+  // Layer 3: Controls (when _showControls) — interactive buttons/sliders
+  //          ABOVE GestureDetector so they absorb their own taps
+  //          Decorative backgrounds use IgnorePointer (taps pass through)
+  // Layer 4: Volume side indicator (IgnorePointer) — right edge (FIX #3)
+  // Layer 5: Buffering indicator (IgnorePointer)
+  // Layer 6: SW badge (IgnorePointer)
   // ==============================================================
 
   @override
@@ -335,7 +350,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       body: Stack(
         children: [
           // ====== LAYER 1: Video (IgnorePointer) ======
-          // Video must NOT consume tap events
           Positioned.fill(
             child: IgnorePointer(
               child: _buildVideoLayer(),
@@ -343,29 +357,33 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           ),
 
           // ====== LAYER 2: GestureDetector (BELOW controls) ======
-          // This catches taps on EMPTY areas
-          // When controls are visible, buttons/sliders in Layer 3 get hit FIRST
-          // When controls are hidden, ALL taps come here → toggle ON
+          // Catches taps on EMPTY areas. Controls in Layer 3 get hit FIRST
+          // because they're above in the Stack.
+          // FIX #1: Positioned.fill + opaque for reliable toggle
+          // FIX #5: onTap ONLY toggles controls — NO pause, NO double-tap seek
           Positioned.fill(
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
+              // FIX #5: ONLY toggle controls, NEVER pause video
               onTap: _toggleControls,
-              onDoubleTapDown: (details) {
-                final halfWidth = MediaQuery.of(context).size.width / 2;
-                if (details.globalPosition.dx < halfWidth) {
-                  _player.seek(_player.state.position - const Duration(seconds: 10));
-                } else {
-                  _player.seek(_player.state.position + const Duration(seconds: 10));
-                }
+              // Volume drag: only on right 30% of screen
+              onVerticalDragStart: (details) {
+                final screenWidth = MediaQuery.of(context).size.width;
+                _isDraggingVolume =
+                    details.globalPosition.dx > screenWidth * 0.7;
               },
               onVerticalDragUpdate: _handleVolumeDrag,
+              onVerticalDragEnd: (_) {
+                _isDraggingVolume = false;
+              },
               child: Container(color: Colors.transparent),
             ),
           ),
 
-          // ====== LAYER 3: Controls (TOP - above GestureDetector) ======
-          // Interactive elements (buttons, sliders) absorb their own taps
-          // Decorative backgrounds (gradients) use IgnorePointer
+          // ====== LAYER 3: Controls (when visible) ======
+          // Interactive elements (buttons, sliders) absorb their own taps.
+          // Decorative backgrounds (gradients) use IgnorePointer → taps pass
+          // through to Layer 2 GestureDetector.
           if (_showControls) ...[
             // Top gradient decoration (IgnorePointer → taps pass through)
             Positioned(
@@ -385,7 +403,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 ),
               ),
             ),
-            // Top bar buttons (interactive - NOT IgnorePointer)
+
+            // Top bar buttons (interactive — NOT IgnorePointer)
             Positioned(
               top: 0,
               left: 0,
@@ -393,12 +412,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               child: _buildTopBar(),
             ),
 
-            // Center: Play/Pause big button
+            // Center: Play/Pause big button (interactive)
+            // FIX #5: Icon ALWAYS reflects player.state.playing
             Center(
               child: StreamBuilder<bool>(
                 stream: _player.stream.playing,
                 builder: (context, snapshot) {
-                  final isPlaying = snapshot.data ?? false;
+                  // FIX #5: Always use player.state.playing for icon state
+                  final isPlaying = _player.state.playing;
                   return GestureDetector(
                     onTap: () {
                       if (isPlaying) {
@@ -442,7 +463,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 ),
               ),
             ),
-            // Bottom bar (interactive - seek bar + buttons)
+
+            // Bottom bar (interactive — seek bar + buttons)
             Positioned(
               bottom: 0,
               left: 0,
@@ -451,7 +473,20 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             ),
           ],
 
-          // ====== LAYER 4: Buffering indicator ======
+          // ====== LAYER 4: Volume side indicator ======
+          // FIX #3: Volume indicator on RIGHT edge, does NOT cover video center
+          if (_showVolumeIndicator)
+            Positioned(
+              right: 16,
+              top: 0,
+              bottom: 0,
+              width: 56,
+              child: IgnorePointer(
+                child: _buildVolumeSideIndicator(),
+              ),
+            ),
+
+          // ====== LAYER 5: Buffering indicator ======
           if (_isBuffering)
             const Positioned.fill(
               child: IgnorePointer(
@@ -461,12 +496,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               ),
             ),
 
-          // ====== LAYER 5: Volume indicator ======
-          if (_showVolumeIndicator)
-            Positioned.fill(
-              child: IgnorePointer(child: _buildVolumeIndicator()),
-            ),
-
           // ====== LAYER 6: SW badge ======
           if (_useSoftwareDecoding && _hasVideoOutput)
             Positioned(
@@ -474,14 +503,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               right: 8,
               child: IgnorePointer(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
                     color: Colors.black54,
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: const Text(
                     'SW',
-                    style: TextStyle(color: Colors.orange, fontSize: 10, fontWeight: FontWeight.w600),
+                    style: TextStyle(
+                        color: Colors.orange,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600),
                   ),
                 ),
               ),
@@ -492,11 +525,24 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   // ====== Video Layer ======
-
+  // FIX #2: BoxFit.contain for proper video fit in landscape mode
   Widget _buildVideoLayer() {
     if (!_isInitialized) return _buildLoadingScreen();
     if (_errorMessage != null) return _buildErrorScreen();
-    return Video(controller: _controller, controls: NoVideoControls);
+    return Center(
+      child: AspectRatio(
+        aspectRatio: _player.state.width != null &&
+                _player.state.height != null &&
+                _player.state.height! > 0
+            ? _player.state.width! / _player.state.height!
+            : 16 / 9,
+        child: Video(
+          controller: _controller,
+          controls: NoVideoControls,
+          fit: BoxFit.contain,
+        ),
+      ),
+    );
   }
 
   Widget _buildLoadingScreen() {
@@ -510,7 +556,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             padding: const EdgeInsets.symmetric(horizontal: 32),
             child: Text(
               widget.title,
-              style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+              style: const TextStyle(
+                  color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
@@ -518,7 +565,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           ),
           const SizedBox(height: 8),
           Text(
-            _useSoftwareDecoding ? 'Switching to software decoder...' : 'Loading video...',
+            _useSoftwareDecoding
+                ? 'Switching to software decoder...'
+                : 'Loading video...',
             style: TextStyle(
               color: _useSoftwareDecoding ? Colors.orange : Colors.white70,
               fontSize: 14,
@@ -530,13 +579,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   Widget _buildErrorScreen() {
-    final isCodecError = _errorMessage != null && (
-      _errorMessage!.contains('codec') ||
-      _errorMessage!.contains('Could not open') ||
-      _errorMessage!.contains('decoder') ||
-      _errorMessage!.contains('HEVC') ||
-      _errorMessage!.contains('H.265')
-    );
+    final isCodecError = _errorMessage != null &&
+        (_errorMessage!.contains('codec') ||
+            _errorMessage!.contains('Could not open') ||
+            _errorMessage!.contains('decoder') ||
+            _errorMessage!.contains('HEVC') ||
+            _errorMessage!.contains('H.265'));
 
     return Center(
       child: Padding(
@@ -545,14 +593,19 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
-              isCodecError ? Icons.high_quality_outlined : Icons.error_outline,
+              isCodecError
+                  ? Icons.high_quality_outlined
+                  : Icons.error_outline,
               color: isCodecError ? Colors.orange : Colors.redAccent,
               size: 56,
             ),
             const SizedBox(height: 16),
             Text(
-              isCodecError ? 'Video codec not supported' : 'Failed to load video',
-              style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600),
+              isCodecError
+                  ? 'Video codec not supported'
+                  : 'Failed to load video',
+              style: const TextStyle(
+                  color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 8),
             if (isCodecError)
@@ -594,8 +647,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFFE50914),
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 24, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -606,8 +661,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Colors.white70,
                     side: const BorderSide(color: Colors.white38),
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 24, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
                   ),
                 ),
               ],
@@ -626,6 +683,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         child: Row(
           children: [
+            // Back button
             IconButton(
               icon: const Icon(Icons.arrow_back, color: Colors.white, size: 24),
               onPressed: () => Navigator.pop(context),
@@ -635,36 +693,53 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               ),
             ),
             const SizedBox(width: 12),
+            // Title
             Expanded(
               child: Text(
                 widget.title,
-                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
+            // Audio track button
             IconButton(
               icon: const Icon(Icons.audiotrack, color: Colors.white, size: 22),
-              onPressed: _showAudioTrackDialog,
-              style: IconButton.styleFrom(backgroundColor: Colors.black45, padding: const EdgeInsets.all(8)),
+              onPressed: _showAudioTrackSheet,
+              style: IconButton.styleFrom(
+                  backgroundColor: Colors.black45,
+                  padding: const EdgeInsets.all(8)),
             ),
             const SizedBox(width: 4),
+            // Subtitle button
             IconButton(
-              icon: const Icon(Icons.subtitles, color: Colors.white, size: 22),
-              onPressed: _showSubtitleTrackDialog,
-              style: IconButton.styleFrom(backgroundColor: Colors.black45, padding: const EdgeInsets.all(8)),
+              icon:
+                  const Icon(Icons.subtitles, color: Colors.white, size: 22),
+              onPressed: _showSubtitleTrackSheet,
+              style: IconButton.styleFrom(
+                  backgroundColor: Colors.black45,
+                  padding: const EdgeInsets.all(8)),
             ),
             const SizedBox(width: 4),
+            // Speed button
             IconButton(
               icon: const Icon(Icons.speed, color: Colors.white, size: 22),
-              onPressed: _showSpeedDialog,
-              style: IconButton.styleFrom(backgroundColor: Colors.black45, padding: const EdgeInsets.all(8)),
+              onPressed: _showSpeedSheet,
+              style: IconButton.styleFrom(
+                  backgroundColor: Colors.black45,
+                  padding: const EdgeInsets.all(8)),
             ),
             const SizedBox(width: 4),
+            // Fullscreen toggle
             IconButton(
-              icon: const Icon(Icons.fullscreen, color: Colors.white, size: 22),
+              icon: const Icon(Icons.fullscreen,
+                  color: Colors.white, size: 22),
               onPressed: () {
-                final isPortrait = MediaQuery.of(context).orientation == Orientation.portrait;
+                final isPortrait =
+                    MediaQuery.of(context).orientation == Orientation.portrait;
                 if (isPortrait) {
                   SystemChrome.setPreferredOrientations([
                     DeviceOrientation.landscapeLeft,
@@ -678,7 +753,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   ]);
                 }
               },
-              style: IconButton.styleFrom(backgroundColor: Colors.black45, padding: const EdgeInsets.all(8)),
+              style: IconButton.styleFrom(
+                  backgroundColor: Colors.black45,
+                  padding: const EdgeInsets.all(8)),
             ),
           ],
         ),
@@ -718,8 +795,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               SliderTheme(
                 data: SliderThemeData(
                   trackHeight: 3,
-                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                  overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                  thumbShape:
+                      const RoundSliderThumbShape(enabledThumbRadius: 6),
+                  overlayShape:
+                      const RoundSliderOverlayShape(overlayRadius: 12),
                   activeTrackColor: const Color(0xFFE50914),
                   inactiveTrackColor: Colors.white24,
                   thumbColor: const Color(0xFFE50914),
@@ -729,7 +808,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   value: progress.clamp(0.0, 1.0),
                   onChanged: (value) {
                     final seekPosition = Duration(
-                      milliseconds: (duration.inMilliseconds * value).round(),
+                      milliseconds:
+                          (duration.inMilliseconds * value).round(),
                     );
                     _player.seek(seekPosition);
                   },
@@ -740,8 +820,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(_formatDuration(position), style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                    Text(_formatDuration(duration), style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                    Text(_formatDuration(position),
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 12)),
+                    Text(_formatDuration(duration),
+                        style: const TextStyle(
+                            color: Colors.white54, fontSize: 12)),
                   ],
                 ),
               ),
@@ -758,16 +842,19 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
+          // Rewind 10s
           IconButton(
             icon: const Icon(Icons.replay_10, color: Colors.white, size: 28),
-            onPressed: () => _player.seek(_player.state.position - const Duration(seconds: 10)),
+            onPressed: () => _player
+                .seek(_player.state.position - const Duration(seconds: 10)),
           ),
           const SizedBox(width: 16),
           // Play/Pause (center)
+          // FIX #5: Icon ALWAYS reflects player.state.playing
           StreamBuilder<bool>(
             stream: _player.stream.playing,
             builder: (context, snapshot) {
-              final isPlaying = snapshot.data ?? false;
+              final isPlaying = _player.state.playing;
               return IconButton(
                 icon: Icon(
                   isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
@@ -785,18 +872,21 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             },
           ),
           const SizedBox(width: 16),
+          // Forward 10s
           IconButton(
             icon: const Icon(Icons.forward_10, color: Colors.white, size: 28),
-            onPressed: () => _player.seek(_player.state.position + const Duration(seconds: 10)),
+            onPressed: () => _player
+                .seek(_player.state.position + const Duration(seconds: 10)),
           ),
           const Spacer(),
+          // Volume slider with boost
           _buildVolumeSlider(),
         ],
       ),
     );
   }
 
-  // ====== Volume Slider with Boost ======
+  // ====== Volume Slider with Boost (in bottom bar) ======
 
   Widget _buildVolumeSlider() {
     final isBoosted = _currentVolume > _normalVolume;
@@ -809,13 +899,20 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           onTap: () {
             if (_currentVolume == 0) {
               _player.setVolume(_normalVolume);
-              setState(() { _currentVolume = _normalVolume; _isVolumeBoosted = false; });
+              setState(() {
+                _currentVolume = _normalVolume;
+                _isVolumeBoosted = false;
+              });
             } else {
               _player.setVolume(0);
-              setState(() { _currentVolume = 0; _isVolumeBoosted = false; });
+              setState(() {
+                _currentVolume = 0;
+                _isVolumeBoosted = false;
+              });
             }
           },
-          child: Icon(_getVolumeIcon(_currentVolume), color: _getVolumeColor(_currentVolume), size: 22),
+          child: Icon(_getVolumeIcon(_currentVolume),
+              color: _getVolumeColor(_currentVolume), size: 22),
         ),
         const SizedBox(width: 4),
         SizedBox(
@@ -823,12 +920,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           child: SliderTheme(
             data: SliderThemeData(
               trackHeight: 3,
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
-              overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
-              activeTrackColor: isBoosted ? const Color(0xFFFF4444) : Colors.white,
+              thumbShape:
+                  const RoundSliderThumbShape(enabledThumbRadius: 5),
+              overlayShape:
+                  const RoundSliderOverlayShape(overlayRadius: 10),
+              activeTrackColor:
+                  isBoosted ? const Color(0xFFFF4444) : Colors.white,
               inactiveTrackColor: Colors.white24,
-              thumbColor: isBoosted ? const Color(0xFFFF4444) : Colors.white,
-              overlayColor: isBoosted ? const Color(0xFFFF4444).withOpacity(0.2) : Colors.white.withOpacity(0.2),
+              thumbColor:
+                  isBoosted ? const Color(0xFFFF4444) : Colors.white,
+              overlayColor: isBoosted
+                  ? const Color(0xFFFF4444).withOpacity(0.2)
+                  : Colors.white.withOpacity(0.2),
             ),
             child: Slider(
               value: sliderValue,
@@ -851,166 +954,347 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     );
   }
 
-  // ====== Volume Indicator Popup ======
+  // ====== Volume Side Indicator (right edge — FIX #3) ======
+  // Appears when dragging volume on right 30% of screen
+  // Positioned on the RIGHT edge so it does NOT cover the video center
 
-  Widget _buildVolumeIndicator() {
-    final volumePercent = (_currentVolume / _maxVolume * 100).round();
+  Widget _buildVolumeSideIndicator() {
     final isBoosted = _currentVolume > _normalVolume;
-    final normalPercent = _normalVolume / _maxVolume;
+    final fillPercent = (_currentVolume / _maxVolume).clamp(0.0, 1.0);
+    final normalLinePercent = _normalVolume / _maxVolume;
 
     return Center(
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        width: 48,
+        height: 200,
         decoration: BoxDecoration(
           color: Colors.black87,
           borderRadius: BorderRadius.circular(12),
         ),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(_getVolumeIcon(_currentVolume), color: _getVolumeColor(_currentVolume), size: 32),
+            Icon(_getVolumeIcon(_currentVolume),
+                color: _getVolumeColor(_currentVolume), size: 24),
             const SizedBox(height: 8),
-            Text(
-              '$volumePercent%',
-              style: TextStyle(color: _getVolumeColor(_currentVolume), fontSize: 18, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 6),
+            // Vertical volume bar
             Container(
-              width: 160,
-              height: 4,
-              decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+              width: 6,
+              height: 100,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(3),
+              ),
               child: Stack(
+                alignment: Alignment.bottomCenter,
                 children: [
                   FractionallySizedBox(
-                    widthFactor: (_currentVolume / _maxVolume).clamp(0.0, 1.0),
+                    heightFactor: fillPercent,
                     child: Container(
                       decoration: BoxDecoration(
-                        color: isBoosted ? const Color(0xFFFF4444) : Colors.white,
-                        borderRadius: BorderRadius.circular(2),
+                        color: isBoosted
+                            ? const Color(0xFFFF4444)
+                            : Colors.white,
+                        borderRadius: BorderRadius.circular(3),
                       ),
                     ),
                   ),
+                  // Normal volume (100%) marker line
                   Positioned(
-                    left: normalPercent / 100 * 160 - 1,
-                    top: -2,
-                    child: Container(width: 2, height: 8, color: Colors.white70),
+                    bottom: normalLinePercent * 100 - 1,
+                    left: -2,
+                    right: -2,
+                    child: Container(height: 2, color: Colors.white70),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 8),
+            Text(
+              '${_currentVolume.round()}%',
+              style: TextStyle(
+                color: _getVolumeColor(_currentVolume),
+                fontSize: 10,
+                fontWeight: _isVolumeBoosted ? FontWeight.w700 : FontWeight.normal,
+              ),
+            ),
             if (isBoosted)
-              const Text('BOOST', style: TextStyle(color: Color(0xFFFF4444), fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.5))
-            else if (_currentVolume == 0)
-              const Text('MUTED', style: TextStyle(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 1.5)),
+              const Text(
+                'BOOST',
+                style: TextStyle(
+                  color: Color(0xFFFF4444),
+                  fontSize: 8,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1,
+                ),
+              ),
           ],
         ),
       ),
     );
   }
 
-  // ====== Dialog: Audio Track ======
+  // ====== Bottom Sheet: Audio Track (FIX #4 — scrollable, constrained) ======
 
-  void _showAudioTrackDialog() {
+  void _showAudioTrackSheet() {
     final audioTracks = _player.state.tracks.audio;
     if (audioTracks.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No audio tracks available'), backgroundColor: Colors.orange, duration: Duration(seconds: 2)),
+        const SnackBar(
+          content: Text('No audio tracks available'),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 2),
+        ),
       );
       return;
     }
-    showDialog(
+    final isLandscape =
+        MediaQuery.of(context).orientation == Orientation.landscape;
+    final screenWidth = MediaQuery.of(context).size.width;
+
+    showModalBottomSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E1E),
-        title: const Text('Audio Track', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: audioTracks.map((track) {
-            final isSelected = _player.state.track.audio == track;
-            return ListTile(
-              leading: Icon(isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-                  color: isSelected ? const Color(0xFFE50914) : Colors.white54),
-              title: Text(track.title?.isNotEmpty == true ? track.title! : 'Audio ${track.id}',
-                  style: TextStyle(color: isSelected ? Colors.white : Colors.white70,
-                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal)),
-              subtitle: track.language != null ? Text(track.language!, style: const TextStyle(color: Colors.white38, fontSize: 12)) : null,
-              onTap: () { _player.setAudioTrack(track); Navigator.pop(context); },
-            );
-          }).toList(),
-        ),
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
+      builder: (context) {
+        Widget content = SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text('Audio Track',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600)),
+              ),
+              const Divider(color: Colors.white12, height: 1),
+              ...audioTracks.map((track) {
+                final isSelected = _player.state.track.audio == track;
+                return ListTile(
+                  dense: true,
+                  leading: Icon(
+                      isSelected
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_unchecked,
+                      color: isSelected
+                          ? const Color(0xFFE50914)
+                          : Colors.white54),
+                  title: Text(
+                      track.title?.isNotEmpty == true
+                          ? track.title!
+                          : 'Audio ${track.id}',
+                      style: TextStyle(
+                          color: isSelected ? Colors.white : Colors.white70,
+                          fontWeight: isSelected
+                              ? FontWeight.w600
+                              : FontWeight.normal)),
+                  subtitle: track.language != null
+                      ? Text(track.language!,
+                          style: const TextStyle(
+                              color: Colors.white38, fontSize: 12))
+                      : null,
+                  onTap: () {
+                    _player.setAudioTrack(track);
+                    Navigator.pop(context);
+                  },
+                );
+              }),
+            ],
+          ),
+        );
+
+        // FIX #4: In landscape, constrain to 50% width and center
+        if (isLandscape) {
+          return Center(
+            child: SizedBox(
+              width: screenWidth * 0.5,
+              child: content,
+            ),
+          );
+        }
+        return content;
+      },
     );
   }
 
-  // ====== Dialog: Subtitles ======
+  // ====== Bottom Sheet: Subtitles (FIX #4 — scrollable, constrained) ======
 
-  void _showSubtitleTrackDialog() {
+  void _showSubtitleTrackSheet() {
     final subtitleTracks = _player.state.tracks.subtitle;
     if (subtitleTracks.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No subtitle tracks available'), backgroundColor: Colors.orange, duration: Duration(seconds: 2)),
+        const SnackBar(
+          content: Text('No subtitle tracks available'),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 2),
+        ),
       );
       return;
     }
-    showDialog(
+    final isLandscape =
+        MediaQuery.of(context).orientation == Orientation.landscape;
+    final screenWidth = MediaQuery.of(context).size.width;
+
+    showModalBottomSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E1E),
-        title: const Text('Subtitles', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: Icon(_player.state.track.subtitle == AudioTrack.no() ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-                  color: const Color(0xFFE50914)),
-              title: const Text('Off', style: TextStyle(color: Colors.white)),
-              onTap: () { _player.setSubtitleTrack(SubtitleTrack.no()); Navigator.pop(context); },
-            ),
-            const Divider(color: Colors.white12),
-            ...subtitleTracks.map((track) {
-              final isSelected = _player.state.track.subtitle == track;
-              return ListTile(
-                leading: Icon(isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-                    color: isSelected ? const Color(0xFFE50914) : Colors.white54),
-                title: Text(track.title?.isNotEmpty == true ? track.title! : 'Subtitle ${track.id}',
-                    style: TextStyle(color: isSelected ? Colors.white : Colors.white70,
-                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal)),
-                subtitle: track.language != null ? Text(track.language!, style: const TextStyle(color: Colors.white38, fontSize: 12)) : null,
-                onTap: () { _player.setSubtitleTrack(track); Navigator.pop(context); },
-              );
-            }),
-          ],
-        ),
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
+      builder: (context) {
+        Widget content = SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text('Subtitles',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600)),
+              ),
+              const Divider(color: Colors.white12, height: 1),
+              // "Off" option
+              ListTile(
+                dense: true,
+                leading: Icon(
+                    _player.state.track.subtitle == AudioTrack.no()
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                    color: const Color(0xFFE50914)),
+                title: const Text('Off',
+                    style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  _player.setSubtitleTrack(SubtitleTrack.no());
+                  Navigator.pop(context);
+                },
+              ),
+              const Divider(color: Colors.white12),
+              ...subtitleTracks.map((track) {
+                final isSelected = _player.state.track.subtitle == track;
+                return ListTile(
+                  dense: true,
+                  leading: Icon(
+                      isSelected
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_unchecked,
+                      color: isSelected
+                          ? const Color(0xFFE50914)
+                          : Colors.white54),
+                  title: Text(
+                      track.title?.isNotEmpty == true
+                          ? track.title!
+                          : 'Subtitle ${track.id}',
+                      style: TextStyle(
+                          color: isSelected ? Colors.white : Colors.white70,
+                          fontWeight: isSelected
+                              ? FontWeight.w600
+                              : FontWeight.normal)),
+                  subtitle: track.language != null
+                      ? Text(track.language!,
+                          style: const TextStyle(
+                              color: Colors.white38, fontSize: 12))
+                      : null,
+                  onTap: () {
+                    _player.setSubtitleTrack(track);
+                    Navigator.pop(context);
+                  },
+                );
+              }),
+            ],
+          ),
+        );
+
+        // FIX #4: In landscape, constrain to 50% width and center
+        if (isLandscape) {
+          return Center(
+            child: SizedBox(
+              width: screenWidth * 0.5,
+              child: content,
+            ),
+          );
+        }
+        return content;
+      },
     );
   }
 
-  // ====== Dialog: Speed ======
+  // ====== Bottom Sheet: Playback Speed (FIX #4 — scrollable, 50% width, centered) ======
 
-  void _showSpeedDialog() {
+  void _showSpeedSheet() {
     const speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
     final currentSpeed = _player.state.rate;
-    showDialog(
+    final isLandscape =
+        MediaQuery.of(context).orientation == Orientation.landscape;
+    final screenWidth = MediaQuery.of(context).size.width;
+
+    showModalBottomSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E1E),
-        title: const Text('Playback Speed', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: speeds.map((speed) {
-            final isSelected = (currentSpeed - speed).abs() < 0.01;
-            return ListTile(
-              leading: Icon(isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-                  color: isSelected ? const Color(0xFFE50914) : Colors.white54),
-              title: Text(speed == 1.0 ? 'Normal' : '${speed}x',
-                  style: TextStyle(color: isSelected ? Colors.white : Colors.white70,
-                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal)),
-              onTap: () { _player.setRate(speed); Navigator.pop(context); },
-            );
-          }).toList(),
-        ),
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
+      builder: (context) {
+        Widget content = SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text('Playback Speed',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600)),
+              ),
+              const Divider(color: Colors.white12, height: 1),
+              ...speeds.map((speed) {
+                final isSelected = (currentSpeed - speed).abs() < 0.01;
+                return ListTile(
+                  dense: true,
+                  leading: Icon(
+                      isSelected
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_unchecked,
+                      color: isSelected
+                          ? const Color(0xFFE50914)
+                          : Colors.white54),
+                  title: Text(
+                      speed == 1.0 ? 'Normal' : '${speed}x',
+                      style: TextStyle(
+                          color: isSelected ? Colors.white : Colors.white70,
+                          fontWeight: isSelected
+                              ? FontWeight.w600
+                              : FontWeight.normal)),
+                  onTap: () {
+                    _player.setRate(speed);
+                    Navigator.pop(context);
+                  },
+                );
+              }),
+            ],
+          ),
+        );
+
+        // FIX #4: In landscape, constrain to 50% width and center
+        if (isLandscape) {
+          return Center(
+            child: SizedBox(
+              width: screenWidth * 0.5,
+              child: content,
+            ),
+          );
+        }
+        return content;
+      },
     );
   }
 }
