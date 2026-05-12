@@ -182,8 +182,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         ),
       );
 
-      // FIX #2: Push subtitles above the bottom player bar (80px bottom margin)
-      _player.setProperty('sub-margin-y', '80');
+      // FIX #2: Subtitles rendered by libmpv appear at bottom of video frame.
+      // When controls are visible, bottom bar overlays subtitles (standard behavior).
+      // When controls are hidden, subtitles are fully visible at the bottom.
 
       _controller = VideoController(
         _player,
