@@ -1108,11 +1108,14 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                                   ),
                                 ),
                                 const SizedBox(width: 8),
-                                // Watch button
+                                // Watch button — fallback to download URL if watchUrl is empty
                                 Expanded(
                                   child: OutlinedButton.icon(
-                                    onPressed: link.watchUrl != null && link.watchUrl!.isNotEmpty
-                                        ? () => _openVideoPlayer(link.watchUrl!, link.watchName ?? qualityLabel)
+                                    onPressed: (link.watchUrl != null && link.watchUrl!.isNotEmpty) || link.url.isNotEmpty
+                                        ? () => _openVideoPlayer(
+                                            (link.watchUrl != null && link.watchUrl!.isNotEmpty) ? link.watchUrl! : link.url,
+                                            link.watchName ?? qualityLabel,
+                                          )
                                         : null,
                                     icon: const Icon(Icons.play_circle_outline, size: 16),
                                     label: const Text('Watch'),
@@ -1124,7 +1127,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                                       shape: RoundedRectangleBorder(
                                           borderRadius: BorderRadius.circular(8)),
                                       side: BorderSide(
-                                          color: link.watchUrl != null && link.watchUrl!.isNotEmpty
+                                          color: (link.watchUrl != null && link.watchUrl!.isNotEmpty) || link.url.isNotEmpty
                                               ? accentColor
                                               : (isDark ? Colors.grey.shade700 : Colors.grey.shade400)),
                                       textStyle: const TextStyle(

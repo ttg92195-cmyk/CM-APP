@@ -1059,11 +1059,14 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                                               ),
                                             ),
                                             const SizedBox(width: 8),
-                                            // Watch button
+                                            // Watch button — fallback to download URL if watchUrl is empty
                                             Expanded(
                                               child: OutlinedButton.icon(
-                                                onPressed: link.watchUrl != null && link.watchUrl!.isNotEmpty
-                                                    ? () => _openVideoPlayer(link.watchUrl!, link.watchName ?? qualityLabel)
+                                                onPressed: (link.watchUrl != null && link.watchUrl!.isNotEmpty) || link.url.isNotEmpty
+                                                    ? () => _openVideoPlayer(
+                                                        (link.watchUrl != null && link.watchUrl!.isNotEmpty) ? link.watchUrl! : link.url,
+                                                        link.watchName ?? qualityLabel,
+                                                      )
                                                     : null,
                                                 icon: const Icon(Icons.play_circle_outline, size: 16),
                                                 label: const Text('Watch'),
@@ -1075,7 +1078,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                                                   shape: RoundedRectangleBorder(
                                                       borderRadius: BorderRadius.circular(8)),
                                                   side: BorderSide(
-                                                      color: link.watchUrl != null && link.watchUrl!.isNotEmpty
+                                                      color: (link.watchUrl != null && link.watchUrl!.isNotEmpty) || link.url.isNotEmpty
                                                           ? accentColor
                                                           : (isDark ? Colors.grey.shade700 : Colors.grey.shade400)),
                                                   textStyle: const TextStyle(
@@ -1255,11 +1258,14 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                               ),
                             ),
                             const SizedBox(width: 8),
-                            // Watch button
+                            // Watch button — fallback to download URL if watchUrl is empty
                             Expanded(
                               child: OutlinedButton.icon(
-                                onPressed: link.watchUrl != null && link.watchUrl!.isNotEmpty
-                                    ? () => _openVideoPlayer(link.watchUrl!, link.watchName ?? qualityLabel)
+                                onPressed: (link.watchUrl != null && link.watchUrl!.isNotEmpty) || link.url.isNotEmpty
+                                    ? () => _openVideoPlayer(
+                                        (link.watchUrl != null && link.watchUrl!.isNotEmpty) ? link.watchUrl! : link.url,
+                                        link.watchName ?? qualityLabel,
+                                      )
                                     : null,
                                 icon: const Icon(Icons.play_circle_outline, size: 16),
                                 label: const Text('Watch'),
@@ -1270,7 +1276,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                                   padding: const EdgeInsets.symmetric(vertical: 10),
                                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                                   side: BorderSide(
-                                      color: link.watchUrl != null && link.watchUrl!.isNotEmpty
+                                      color: (link.watchUrl != null && link.watchUrl!.isNotEmpty) || link.url.isNotEmpty
                                           ? accentColor
                                           : (isDark ? Colors.grey.shade700 : Colors.grey.shade400)),
                                   textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),

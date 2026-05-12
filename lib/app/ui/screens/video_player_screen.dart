@@ -26,6 +26,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   String? _errorMessage;
   bool _isBuffering = false;
   bool _showControls = true;
+  bool _hasVideoOutput = false;
 
   @override
   void initState() {
@@ -43,6 +44,21 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   Future<void> _initializePlayer() async {
     try {
+      // Validate URL first
+      if (widget.videoUrl.isEmpty) {
+        if (mounted) {
+          setState(() {
+            _isInitialized = true;
+            _errorMessage = 'Video URL is empty';
+          });
+        }
+        return;
+      }
+
+      debugPrint('=== Video Player ===');
+      debugPrint('Title: ${widget.title}');
+      debugPrint('URL: ${widget.videoUrl}');
+
       // Create player with optimized settings for 4K/MKV streaming
       _player = Player(
         configuration: const PlayerConfiguration(
@@ -68,12 +84,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           setState(() {
             _isBuffering = buffering;
           });
+          debugPrint('Buffering: $buffering');
         }
       });
 
       // Listen for errors
       _player.stream.error.listen((error) {
         if (mounted && error.isNotEmpty) {
+          debugPrint('Player error: $error');
           setState(() {
             _errorMessage = error;
             _isInitialized = true;
@@ -84,14 +102,43 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       // Listen for playback completion
       _player.stream.completed.listen((completed) {
         if (completed && mounted) {
-          // Video ended - could auto-close or show replay option
           debugPrint('Video playback completed');
         }
       });
 
-      // Open the video URL with encoded URI for special characters
-      final encodedUrl = Uri.encodeFull(widget.videoUrl);
-      await _player.open(Media(encodedUrl));
+      // Listen for playing state changes
+      _player.stream.playing.listen((playing) {
+        debugPrint('Playing state: $playing');
+        if (playing && !_hasVideoOutput && mounted) {
+          setState(() {
+            _hasVideoOutput = true;
+          });
+        }
+      });
+
+      // Listen for width/height to detect video output
+      _player.stream.width.listen((width) {
+        debugPrint('Video width: $width');
+        if (width != null && width > 0 && !_hasVideoOutput && mounted) {
+          setState(() {
+            _hasVideoOutput = true;
+          });
+        }
+      });
+
+      // Open the video URL
+      // Do NOT use Uri.encodeFull() - it breaks URLs with query params like ?token=abc&
+      // media_kit's libmpv handles URL encoding internally
+      final url = widget.videoUrl;
+      debugPrint('Opening media: $url');
+
+      await _player.open(Media(url));
+
+      // Explicitly call play() to ensure playback starts
+      // Some streams need this after open()
+      await _player.play();
+
+      debugPrint('Player open+play completed successfully');
 
       if (mounted) {
         setState(() {
@@ -99,6 +146,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         });
       }
     } catch (e) {
+      debugPrint('Player initialization error: $e');
       if (mounted) {
         setState(() {
           _isInitialized = true;
@@ -325,8 +373,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // Video display layer
-          _buildVideoLayer(),
+          // Video display layer - must fill entire screen
+          Positioned.fill(
+            child: _buildVideoLayer(),
+          ),
 
           // Gesture layer (tap to toggle controls)
           Positioned.fill(
@@ -365,9 +415,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       return _buildErrorScreen();
     }
 
-    return Video(
-      controller: _controller,
-      controls: NoVideoControls,
+    // Use Video widget with fill behavior
+    return Center(
+      child: AspectRatio(
+        aspectRatio: _player.state.width != null && _player.state.height != null && _player.state.height! > 0
+            ? _player.state.width! / _player.state.height!
+            : 16 / 9,
+        child: Video(
+          controller: _controller,
+          controls: NoVideoControls,
+        ),
+      ),
     );
   }
 
@@ -378,12 +436,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         children: [
           const CircularProgressIndicator(color: Color(0xFFE50914)),
           const SizedBox(height: 16),
-          Text(
-            widget.title,
-            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: Text(
+              widget.title,
+              style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
           ),
           const SizedBox(height: 8),
           const Text(
@@ -420,26 +481,56 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
             ),
+            const SizedBox(height: 8),
+            // Show URL for debugging
+            Text(
+              'URL: ${widget.videoUrl.length > 80 ? '${widget.videoUrl.substring(0, 80)}...' : widget.videoUrl}',
+              style: const TextStyle(color: Colors.white38, fontSize: 10),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
             const SizedBox(height: 24),
-            ElevatedButton.icon(
-              onPressed: () {
-                _player.dispose();
-                setState(() {
-                  _isInitialized = false;
-                  _errorMessage = null;
-                });
-                _initializePlayer();
-              },
-              icon: const Icon(Icons.refresh),
-              label: const Text('Retry'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFE50914),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: () {
+                    _player.dispose();
+                    setState(() {
+                      _isInitialized = false;
+                      _errorMessage = null;
+                      _hasVideoOutput = false;
+                    });
+                    _initializePlayer();
+                  },
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Retry'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFE50914),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
                 ),
-              ),
+                const SizedBox(width: 12),
+                // Open in browser as fallback
+                OutlinedButton.icon(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close),
+                  label: const Text('Close'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white70,
+                    side: const BorderSide(color: Colors.white38),
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
