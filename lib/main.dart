@@ -21,53 +21,69 @@ const Color kDarkCard = Color(0xFF1E1E1E);
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize media_kit (libmpv/VLC engine) for video playback
-  MediaKit.ensureInitialized();
+  // FIX: Global error handlers to prevent unhandled exceptions from crashing the app.
+  // This is critical for the video player — media_kit's native engine can throw
+  // errors that would otherwise kill the app process.
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.presentError(details);
+    debugPrint('FlutterError: ${details.exceptionAsString()}');
+    // Don't rethrow — keep the app alive
+  };
 
-  // Load environment variables before Firebase init
-  try {
-    await dotenv.load(fileName: '.env');
-  } catch (_) {
-    debugPrint('Warning: .env file not found. Firebase config may be missing.');
-  }
+  runZonedGuarded(() async {
+    // Initialize media_kit (libmpv/VLC engine) for video playback
+    MediaKit.ensureInitialized();
 
-  // Initialize Firebase with error handling
-  try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
+    // Load environment variables before Firebase init
+    try {
+      await dotenv.load(fileName: '.env');
+    } catch (_) {
+      debugPrint('Warning: .env file not found. Firebase config may be missing.');
+    }
+
+    // Initialize Firebase with error handling
+    try {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+    } catch (e) {
+      debugPrint('Firebase initialization error: $e');
+    }
+
+    // Initialize Firebase App Check — use Debug provider always for now
+    // because Play Integrity requires SHA-256 fingerprint registration
+    // in Firebase Console (not yet set up).
+    // TODO: Switch to Play Integrity when SHA-256 is registered
+    try {
+      await FirebaseAppCheck.instance.activate(
+        androidProvider: AndroidProvider.debug,
+      );
+    } catch (e) {
+      debugPrint('App Check activation error: $e');
+    }
+
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+      ),
     );
-  } catch (e) {
-    debugPrint('Firebase initialization error: $e');
-  }
-
-  // Initialize Firebase App Check — use Debug provider always for now
-  // because Play Integrity requires SHA-256 fingerprint registration
-  // in Firebase Console (not yet set up).
-  // TODO: Switch to Play Integrity when SHA-256 is registered
-  try {
-    await FirebaseAppCheck.instance.activate(
-      androidProvider: AndroidProvider.debug,
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+    runApp(
+      ChangeNotifierProvider(
+        create: (_) => AppConfig(),
+        child: const CMMoviesApp(),
+      ),
     );
-  } catch (e) {
-    debugPrint('App Check activation error: $e');
-  }
-
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
-    ),
-  );
-  SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-  ]);
-  runApp(
-    ChangeNotifierProvider(
-      create: (_) => AppConfig(),
-      child: const CMMoviesApp(),
-    ),
-  );
+  }, (error, stackTrace) {
+    // Catch any unhandled async errors — prevent app crash
+    debugPrint('Unhandled async error: $error');
+    debugPrint('Stack trace: $stackTrace');
+    // Don't rethrow — keep the app alive
+  });
 }
 
 class CMMoviesApp extends StatefulWidget {

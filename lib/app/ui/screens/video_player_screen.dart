@@ -97,6 +97,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   // App lifecycle
   bool _wasPlayingBeforePause = false;
 
+  // Stream subscriptions — MUST be stored and cancelled in dispose()
+  List<StreamSubscription> _streamSubscriptions = [];
+
+  // Guard against double-exit (prevents double-pop causing app close)
+  bool _isExiting = false;
+
   @override
   void initState() {
     super.initState();
@@ -159,10 +165,40 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
   }
 
-  // Safe exit: properly clean up and pop
+  // Safe exit: pause player first, then pop
+  // Guard against double-exit which could pop the detail screen too,
+  // returning to HomePage, and then another pop closing the app entirely.
   void _exitPlayer() {
-    if (_isDisposed) return;
-    Navigator.pop(context);
+    if (_isDisposed || _isExiting || !mounted) return;
+    _isExiting = true; // Prevent double-exit
+
+    try {
+      // 1. Pause player immediately to stop native engine processing
+      //    This reduces the chance of native crash after dispose
+      if (!_isDisposed) {
+        try { _player.pause(); } catch (_) {}
+      }
+
+      // 2. Save progress synchronously before pop
+      try { _saveWatchProgressSync(); } catch (_) {}
+
+      // 3. Cancel timers immediately to prevent any callbacks after pop
+      _positionSaveTimer?.cancel();
+      _volumeIndicatorTimer?.cancel();
+      _brightnessIndicatorTimer?.cancel();
+      _seekAnimationTimer?.cancel();
+
+      // 4. Pop the route — this triggers dispose() which cleans up the rest
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    } catch (e) {
+      debugPrint('Exit player error: $e');
+      // Fallback: try to pop anyway
+      if (mounted && !_isDisposed) {
+        try { Navigator.of(context).pop(); } catch (_) {}
+      }
+    }
   }
 
   @override
@@ -170,15 +206,36 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     // CRITICAL: Mark as disposed FIRST to prevent any async callbacks from crashing
     _isDisposed = true;
     WidgetsBinding.instance.removeObserver(this);
+
+    // Cancel all timers
     _volumeIndicatorTimer?.cancel();
     _brightnessIndicatorTimer?.cancel();
     _seekAnimationTimer?.cancel();
     _positionSaveTimer?.cancel();
-    // FIX: Save position BEFORE disposing player using last known values
+
+    // FIX: Cancel ALL stream subscriptions explicitly to prevent
+    // stream events from firing after the widget is disposed.
+    // This is critical — without this, stream callbacks can call setState()
+    // on a disposed widget, causing unhandled exceptions that crash the app.
+    for (final sub in _streamSubscriptions) {
+      try { sub.cancel(); } catch (_) {}
+    }
+    _streamSubscriptions.clear();
+
+    // FIX: Pause player BEFORE disposing to reduce native crash risk.
+    // media_kit's libmpv engine can crash if disposed while actively decoding.
+    try { _player.pause(); } catch (_) {}
+
+    // Save position using last known values (doesn't read from player)
     try { _saveWatchProgressSync(); } catch (e) { debugPrint('Save progress error on dispose: $e'); }
+
+    // Dispose player — wrap in try-catch because native crash may throw
     try { _player.dispose(); } catch (e) { debugPrint('Player dispose error: $e'); }
+
     // Reset brightness to system default
     try { ScreenBrightness().resetScreenBrightness(); } catch (_) {}
+
+    // Reset system UI and orientation
     try {
       SystemChrome.setPreferredOrientations([
         DeviceOrientation.portraitUp,
@@ -228,7 +285,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   // Async save — reads from player directly (for timer & background)
   Future<void> _saveWatchProgress() async {
-    if (_isDisposed) return;
+    if (_isDisposed || _isExiting) return;
     try {
       if (_videoCompleted) {
         final prefs = await SharedPreferences.getInstance();
@@ -396,49 +453,68 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         ),
       );
 
-      _player.stream.buffering.listen((buffering) {
-        if (mounted) setState(() => _isBuffering = buffering);
-      });
+      // FIX: Store stream subscriptions so they can be cancelled in dispose().
+      // Without explicit cancellation, stream events can fire after the widget
+      // is disposed, causing setState() on a disposed widget → unhandled exception → app crash.
+      _streamSubscriptions.add(
+        _player.stream.buffering.listen((buffering) {
+          if (mounted && !_isDisposed) setState(() => _isBuffering = buffering);
+        }),
+      );
 
-      _player.stream.error.listen((error) {
-        if (mounted && error.isNotEmpty) _handlePlayerError(error);
-      });
+      _streamSubscriptions.add(
+        _player.stream.error.listen((error) {
+          if (mounted && !_isDisposed && error.isNotEmpty) _handlePlayerError(error);
+        }),
+      );
 
-      _player.stream.completed.listen((completed) {
-        if (completed && mounted) {
-          _videoCompleted = true;
-          _saveWatchProgress(); // Clear saved position since video ended
-        }
-      });
+      _streamSubscriptions.add(
+        _player.stream.completed.listen((completed) {
+          if (completed && mounted && !_isDisposed) {
+            _videoCompleted = true;
+            _saveWatchProgress(); // Clear saved position since video ended
+          }
+        }),
+      );
 
-      _player.stream.playing.listen((playing) {
-        if (playing && !_hasVideoOutput && mounted) {
-          setState(() => _hasVideoOutput = true);
-        }
-      });
+      _streamSubscriptions.add(
+        _player.stream.playing.listen((playing) {
+          if (playing && !_hasVideoOutput && mounted && !_isDisposed) {
+            setState(() => _hasVideoOutput = true);
+          }
+        }),
+      );
 
-      _player.stream.width.listen((width) {
-        if (width != null && width > 0 && !_hasVideoOutput && mounted) {
-          setState(() => _hasVideoOutput = true);
-        }
-      });
+      _streamSubscriptions.add(
+        _player.stream.width.listen((width) {
+          if (width != null && width > 0 && !_hasVideoOutput && mounted && !_isDisposed) {
+            setState(() => _hasVideoOutput = true);
+          }
+        }),
+      );
 
-      _player.stream.volume.listen((volume) {
-        if (mounted) {
-          setState(() {
-            _currentVolume = volume;
-            _isVolumeBoosted = volume > _normalVolume;
-          });
-        }
-      });
+      _streamSubscriptions.add(
+        _player.stream.volume.listen((volume) {
+          if (mounted && !_isDisposed) {
+            setState(() {
+              _currentVolume = volume;
+              _isVolumeBoosted = volume > _normalVolume;
+            });
+          }
+        }),
+      );
 
       // Track position from stream for reliable resume playback saving
-      _player.stream.position.listen((position) {
-        _lastKnownPosition = position;
-      });
-      _player.stream.duration.listen((duration) {
-        _lastKnownDuration = duration;
-      });
+      _streamSubscriptions.add(
+        _player.stream.position.listen((position) {
+          _lastKnownPosition = position;
+        }),
+      );
+      _streamSubscriptions.add(
+        _player.stream.duration.listen((duration) {
+          _lastKnownDuration = duration;
+        }),
+      );
 
       await _player.open(Media(widget.videoUrl));
       await _player.play();
