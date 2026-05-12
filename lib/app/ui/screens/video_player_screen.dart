@@ -165,7 +165,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
   }
 
-  // Safe exit: pause player first, then pop
+  // Safe exit: pause player first, reset orientation/UI, then pop
   // Guard against double-exit which could pop the detail screen too,
   // returning to HomePage, and then another pop closing the app entirely.
   void _exitPlayer() {
@@ -188,7 +188,23 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       _brightnessIndicatorTimer?.cancel();
       _seekAnimationTimer?.cancel();
 
-      // 4. Pop the route — this triggers dispose() which cleans up the rest
+      // 4. Reset orientation and system UI BEFORE popping
+      //    Doing this before pop prevents the orientation change from
+      //    triggering an Android activity recreation that could cause
+      //    a synthetic back press event on the previous route
+      try {
+        SystemChrome.setPreferredOrientations([
+          DeviceOrientation.portraitUp,
+        ]);
+        SystemChrome.setEnabledSystemUIMode(
+          SystemUiMode.manual,
+          overlays: SystemUiOverlay.values,
+        );
+      } catch (_) {}
+
+      // 5. Pop the route — this triggers dispose() which cleans up the rest
+      //    Using maybePop is NOT used here because PopScope has canPop: false
+      //    We intentionally want to pop regardless.
       if (mounted) {
         Navigator.of(context).pop();
       }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -35,6 +36,16 @@ class _HomePageState extends State<HomePage> {
   final GlobalKey<State<MoviesPage>> _moviesKey = GlobalKey();
   final GlobalKey<State<SeriesPage>> _seriesKey = GlobalKey();
 
+  // Double-back-to-exit: prevent accidental app exit from root route
+  bool _canExit = false;
+  Timer? _exitTimer;
+
+  @override
+  void dispose() {
+    _exitTimer?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final appConfig = Provider.of<AppConfig>(context);
@@ -50,7 +61,35 @@ class _HomePageState extends State<HomePage> {
       const SettingsPage(),
     ];
 
-    return Scaffold(
+    return PopScope(
+      // Prevent accidental app exit: require double-back press
+      canPop: _canExit,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (_canExit) {
+          // Second back press within 2 seconds → allow exit
+          Navigator.of(context).pop();
+        } else {
+          // First back press → show toast and start 2-second window
+          setState(() => _canExit = true);
+          ScaffoldMessenger.of(context).clearSnackBars();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(appConfig.translate('press_back_again_exit')),
+              duration: const Duration(seconds: 2),
+              backgroundColor: const Color(0xFFE50914),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          _exitTimer?.cancel();
+          _exitTimer = Timer(const Duration(seconds: 2), () {
+            if (mounted) {
+              setState(() => _canExit = false);
+            }
+          });
+        }
+      },
+      child: Scaffold(
       appBar: AppBar(
         leading: Builder(
           builder: (context) => IconButton(
@@ -84,6 +123,7 @@ class _HomePageState extends State<HomePage> {
         children: bottomNavPages,
       ),
       bottomNavigationBar: _buildBottomNav(appConfig, theme),
+    ),
     );
   }
 
