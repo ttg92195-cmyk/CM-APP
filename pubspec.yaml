@@ -33,6 +33,7 @@ dependencies:
 # Force compatible versions for Flutter 3.24.5 / AGP 8.2
 dependency_overrides:
   package_info_plus: 8.1.2
+  wakelock_plus: 1.2.8
 
 flutter:
   uses-material-design: true
