@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-class MovieCard extends StatelessWidget {
+class MovieCard extends StatefulWidget {
   final Movie movie;
   final VoidCallback onTap;
 
@@ -13,12 +14,46 @@ class MovieCard extends StatelessWidget {
   });
 
   @override
+  State<MovieCard> createState() => _MovieCardState();
+}
+
+class _MovieCardState extends State<MovieCard> {
+  double? _watchProgress; // 0.0 to 1.0, null = not watched
+
+  @override
+  void initState() {
+    super.initState();
+    _loadWatchProgress();
+  }
+
+  Future<void> _loadWatchProgress() async {
+    final prefs = await SharedPreferences.getInstance();
+    final posMs = prefs.getInt('watch_pos_${widget.movie.id}');
+    final durMs = prefs.getInt('watch_dur_${widget.movie.id}');
+    if (posMs != null && durMs != null && posMs > 5000 && durMs > 0) {
+      final progress = (posMs / durMs).clamp(0.0, 1.0);
+      if (progress < 0.95 && mounted) {
+        setState(() => _watchProgress = progress);
+      }
+    }
+  }
+
+  String _formatWatchPosition() {
+    if (_watchProgress == null) return '';
+    // Get position in minutes
+    final prefsAsync = SharedPreferences.getInstance();
+    // We'll show percentage-based position
+    final percent = (_watchProgress! * 100).round();
+    return '$percent%';
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
     return GestureDetector(
-      onTap: onTap,
+      onTap: widget.onTap,
       child: Container(
         width: 130,
         margin: const EdgeInsets.symmetric(horizontal: 4),
@@ -34,9 +69,9 @@ class MovieCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(8),
                   child: AspectRatio(
                     aspectRatio: 2 / 3,
-                    child: movie.fullPosterUrl.isNotEmpty
+                    child: widget.movie.fullPosterUrl.isNotEmpty
                         ? CachedNetworkImage(
-                            imageUrl: movie.fullPosterUrl,
+                            imageUrl: widget.movie.fullPosterUrl,
                             fit: BoxFit.cover,
                             placeholder: (context, url) => Container(
                               color: theme.colorScheme.surfaceContainerHighest,
@@ -65,14 +100,14 @@ class MovieCard extends StatelessWidget {
                 ),
 
                 // Quality Badge - top left corner
-                if (movie.resolution != null && movie.resolution!.isNotEmpty)
+                if (widget.movie.resolution != null && widget.movie.resolution!.isNotEmpty)
                   Positioned(
                     top: 4,
                     left: 4,
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                       decoration: BoxDecoration(
-                        color: _getQualityBadgeColor(movie.resolution!),
+                        color: _getQualityBadgeColor(widget.movie.resolution!),
                         borderRadius: BorderRadius.circular(3),
                         boxShadow: [
                           BoxShadow(
@@ -83,7 +118,7 @@ class MovieCard extends StatelessWidget {
                         ],
                       ),
                       child: Text(
-                        _getQualityLabel(movie.resolution!),
+                        _getQualityLabel(widget.movie.resolution!),
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 8,
@@ -94,7 +129,7 @@ class MovieCard extends StatelessWidget {
                   ),
 
                 // IMDb Rating Badge - bottom right corner
-                if (movie.rating != null && movie.rating!.isNotEmpty)
+                if (widget.movie.rating != null && widget.movie.rating!.isNotEmpty)
                   Positioned(
                     bottom: 6,
                     right: 6,
@@ -121,7 +156,7 @@ class MovieCard extends StatelessWidget {
                           ),
                           const SizedBox(width: 3),
                           Text(
-                            movie.rating!,
+                            widget.movie.rating!,
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 10,
@@ -132,6 +167,43 @@ class MovieCard extends StatelessWidget {
                       ),
                     ),
                   ),
+
+                // Feature 5: Watch Progress Bar — bottom of poster (YouTube-style)
+                if (_watchProgress != null)
+                  Positioned(
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Thin progress bar at bottom of poster
+                        ClipRRect(
+                          borderRadius: const BorderRadius.only(
+                            bottomLeft: Radius.circular(8),
+                            bottomRight: Radius.circular(8),
+                          ),
+                          child: Stack(
+                            children: [
+                              // Background
+                              Container(
+                                height: 3,
+                                color: Colors.white24,
+                              ),
+                              // Progress fill
+                              FractionallySizedBox(
+                                widthFactor: _watchProgress!,
+                                child: Container(
+                                  height: 3,
+                                  color: const Color(0xFFE50914),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 2),
@@ -139,7 +211,7 @@ class MovieCard extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 2),
               child: Text(
-                movie.title,
+                widget.movie.title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.bodySmall?.copyWith(
@@ -149,16 +221,39 @@ class MovieCard extends StatelessWidget {
                 ),
               ),
             ),
-            // Year below title
-            if (movie.year != null && movie.year!.isNotEmpty)
+            // Year + Watch progress indicator below title
+            if (widget.movie.year != null && widget.movie.year!.isNotEmpty || _watchProgress != null)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 2),
-                child: Text(
-                  movie.year!,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: theme.colorScheme.onSurface.withOpacity(0.6),
-                    fontSize: 10,
-                  ),
+                child: Row(
+                  children: [
+                    if (widget.movie.year != null && widget.movie.year!.isNotEmpty)
+                      Text(
+                        widget.movie.year!,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: theme.colorScheme.onSurface.withOpacity(0.6),
+                          fontSize: 10,
+                        ),
+                      ),
+                    if (_watchProgress != null) ...[
+                      if (widget.movie.year != null && widget.movie.year!.isNotEmpty)
+                        const SizedBox(width: 4),
+                      Icon(
+                        Icons.play_circle_filled,
+                        size: 10,
+                        color: const Color(0xFFE50914).withOpacity(0.8),
+                      ),
+                      const SizedBox(width: 2),
+                      Text(
+                        _formatWatchPosition(),
+                        style: TextStyle(
+                          color: const Color(0xFFE50914).withOpacity(0.8),
+                          fontSize: 9,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
           ],

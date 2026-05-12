@@ -340,7 +340,11 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => VideoPlayerScreen(videoUrl: url, title: title),
+        builder: (_) => VideoPlayerScreen(
+          videoUrl: url,
+          title: title,
+          videoId: _movieDetail?.id, // Pass movie ID for resume playback
+        ),
       ),
     );
   }

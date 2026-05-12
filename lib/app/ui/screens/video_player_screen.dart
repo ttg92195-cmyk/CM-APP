@@ -6,27 +6,31 @@ import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:screen_brightness/screen_brightness.dart';
 
 /// Professional Video Player using media_kit (libmpv/VLC engine)
 /// Supports: MP4, MKV, HEVC (H.265), 4K, AC3/DTS audio, embedded subtitles
 ///
-/// Key features:
-/// - Manual toggle controls (tap to show/hide, NO auto-hide, NO pause on toggle)
-/// - Audio Boost up to 300% (vertical drag on right 30% of screen)
-/// - Volume side indicator (right edge, doesn't cover video)
-/// - Hardware decoding first, software fallback if HW fails
-/// - Video fit: BoxFit.contain for proper landscape/portrait display
-/// - Subtitle margin above bottom bar
-/// - Playback Speed bottom sheet (50% width, centered, scrollable)
+/// Features:
+/// - Double Tap to Seek 10s (YouTube-style animation)
+/// - Brightness Control (left 50% vertical drag)
+/// - Audio Boost up to 300% (right 30% vertical drag)
+/// - Manual toggle controls (tap to show/hide, NO pause on toggle)
+/// - Zoom/Fit toggle (Contain ↔ Cover)
+/// - Resume Playback (save position, auto-resume dialog)
+/// - HW/SW decoding auto-fallback for 4K HEVC
 /// - App lifecycle handling (pause/resume on background/foreground)
 class VideoPlayerScreen extends StatefulWidget {
   final String videoUrl;
   final String title;
+  final String? videoId; // For resume playback (movie/episode ID)
 
   const VideoPlayerScreen({
     super.key,
     required this.videoUrl,
     required this.title,
+    this.videoId,
   });
 
   @override
@@ -62,8 +66,29 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   bool _showVolumeIndicator = false;
   Timer? _volumeIndicatorTimer;
 
-  // Volume drag tracking — only active on right 30% of screen
+  // Brightness Control
+  double _currentBrightness = 0.5;
+  bool _showBrightnessIndicator = false;
+  Timer? _brightnessIndicatorTimer;
+
+  // Gesture tracking
   bool _isDraggingVolume = false;
+  bool _isDraggingBrightness = false;
+
+  // Feature 1: Zoom/Fit toggle
+  BoxFit _videoFit = BoxFit.contain;
+
+  // Feature 2: Double Tap to Seek animation
+  bool _showSeekForward = false;
+  bool _showSeekBackward = false;
+  Timer? _seekAnimationTimer;
+
+  // Feature 4: Resume Playback
+  Timer? _positionSaveTimer;
+  Duration _savedPosition = Duration.zero;
+  Duration _savedDuration = Duration.zero;
+  bool _hasResumed = false;
+  bool _videoCompleted = false;
 
   // App lifecycle
   bool _wasPlayingBeforePause = false;
@@ -78,7 +103,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       DeviceOrientation.portraitUp,
     ]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    _initBrightness();
     _detectDeviceAndInitialize();
+  }
+
+  Future<void> _initBrightness() async {
+    try {
+      _currentBrightness = await ScreenBrightness().current;
+    } catch (e) {
+      _currentBrightness = 0.5;
+    }
   }
 
   @override
@@ -89,6 +123,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         if (_player.state.playing) {
           _player.pause();
         }
+        _saveWatchProgress(); // Save on background
         break;
       case AppLifecycleState.resumed:
         if (_wasPlayingBeforePause && mounted) {
@@ -108,7 +143,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _volumeIndicatorTimer?.cancel();
+    _brightnessIndicatorTimer?.cancel();
+    _seekAnimationTimer?.cancel();
+    _positionSaveTimer?.cancel();
+    _saveWatchProgress(); // Save on dispose
     _player.dispose();
+    // Reset brightness to system default
+    ScreenBrightness().resetScreenBrightness();
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
     ]);
@@ -125,6 +166,103 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     ));
     super.dispose();
   }
+
+  // ==============================================================
+  // Feature 4: Resume Playback — Save/Load watch progress
+  // ==============================================================
+
+  String get _progressKey => 'watch_pos_${widget.videoId ?? widget.videoUrl.hashCode}';
+  String get _durationKey => 'watch_dur_${widget.videoId ?? widget.videoUrl.hashCode}';
+
+  Future<void> _saveWatchProgress() async {
+    if (_videoCompleted) {
+      // Video finished — clear saved position
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_progressKey);
+      await prefs.remove(_durationKey);
+      return;
+    }
+    final position = _player.state.position;
+    final duration = _player.state.duration;
+    if (position.inSeconds > 0 && duration.inSeconds > 0) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_progressKey, position.inMilliseconds);
+      await prefs.setInt(_durationKey, duration.inMilliseconds);
+    }
+  }
+
+  Future<Duration?> _loadSavedPosition() async {
+    final prefs = await SharedPreferences.getInstance();
+    final posMs = prefs.getInt(_progressKey);
+    final durMs = prefs.getInt(_durationKey);
+    if (posMs != null && durMs != null && posMs > 5000) {
+      // Only resume if watched more than 5s and less than 95%
+      final progress = posMs / durMs;
+      if (progress < 0.95) {
+        _savedDuration = Duration(milliseconds: durMs);
+        return Duration(milliseconds: posMs);
+      }
+    }
+    return null;
+  }
+
+  void _startPositionSaveTimer() {
+    _positionSaveTimer?.cancel();
+    _positionSaveTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      _saveWatchProgress();
+    });
+  }
+
+  void _showResumeDialog(Duration savedPosition) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: const Row(
+          children: [
+            Icon(Icons.history, color: Color(0xFFE50914), size: 24),
+            SizedBox(width: 8),
+            Text('Continue Watching?',
+                style: TextStyle(color: Colors.white, fontSize: 18)),
+          ],
+        ),
+        content: Text(
+          'You watched up to ${_formatDuration(savedPosition)}. Continue?',
+          style: const TextStyle(color: Colors.white70, fontSize: 15),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _hasResumed = true;
+            },
+            child: const Text('From Start',
+                style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _player.seek(savedPosition);
+              _hasResumed = true;
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFE50914),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==============================================================
+  // Device Detection & Player Initialization
+  // ==============================================================
 
   Future<void> _detectDeviceAndInitialize() async {
     try {
@@ -182,10 +320,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         ),
       );
 
-      // FIX #2: Subtitles rendered by libmpv appear at bottom of video frame.
-      // When controls are visible, bottom bar overlays subtitles (standard behavior).
-      // When controls are hidden, subtitles are fully visible at the bottom.
-
       _controller = VideoController(
         _player,
         configuration: VideoControllerConfiguration(
@@ -207,7 +341,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       });
 
       _player.stream.completed.listen((completed) {
-        if (completed && mounted) debugPrint('Video playback completed');
+        if (completed && mounted) {
+          _videoCompleted = true;
+          _saveWatchProgress(); // Clear saved position since video ended
+        }
       });
 
       _player.stream.playing.listen((playing) {
@@ -239,6 +376,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           _isInitialized = true;
           _showControls = true;
         });
+        // Feature 4: Check for saved position and show resume dialog
+        _checkResumePosition();
+        // Start periodic position saving
+        _startPositionSaveTimer();
       }
     } catch (e) {
       if (mounted) {
@@ -247,6 +388,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           _errorMessage = e.toString();
         });
       }
+    }
+  }
+
+  Future<void> _checkResumePosition() async {
+    if (widget.videoId == null && widget.videoUrl.isEmpty) return;
+    final savedPos = await _loadSavedPosition();
+    if (savedPos != null && mounted) {
+      _showResumeDialog(savedPos);
     }
   }
 
@@ -275,12 +424,46 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
   }
 
-  // FIX #5: ONLY toggle controls visibility — NEVER pause the video
+  // ==============================================================
+  // Gesture Handlers
+  // ==============================================================
+
+  // ONLY toggle controls visibility — NEVER pause the video
   void _toggleControls() {
     setState(() => _showControls = !_showControls);
   }
 
-  // Volume drag handler — only processes if drag started on right 30% of screen
+  // Feature 2: Double Tap to Seek
+  void _handleDoubleTapSeek(Offset position) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isRight = position.dx > screenWidth / 2;
+
+    if (isRight) {
+      _player.seek(_player.state.position + const Duration(seconds: 10));
+      setState(() {
+        _showSeekForward = true;
+        _showSeekBackward = false;
+      });
+    } else {
+      _player.seek(_player.state.position - const Duration(seconds: 10));
+      setState(() {
+        _showSeekBackward = true;
+        _showSeekForward = false;
+      });
+    }
+
+    _seekAnimationTimer?.cancel();
+    _seekAnimationTimer = Timer(const Duration(milliseconds: 800), () {
+      if (mounted) {
+        setState(() {
+          _showSeekForward = false;
+          _showSeekBackward = false;
+        });
+      }
+    });
+  }
+
+  // Volume drag — right 30% of screen
   void _handleVolumeDrag(DragUpdateDetails details) {
     if (!_isDraggingVolume) return;
     final screenHeight = MediaQuery.of(context).size.height;
@@ -292,11 +475,60 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       _currentVolume = newVolume;
       _isVolumeBoosted = newVolume > _normalVolume;
       _showVolumeIndicator = true;
+      _showBrightnessIndicator = false;
     });
     _volumeIndicatorTimer?.cancel();
     _volumeIndicatorTimer = Timer(const Duration(milliseconds: 1500), () {
       if (mounted) setState(() => _showVolumeIndicator = false);
     });
+  }
+
+  // Feature 3: Brightness drag — left 50% of screen
+  void _handleBrightnessDrag(DragUpdateDetails details) {
+    if (!_isDraggingBrightness) return;
+    final screenHeight = MediaQuery.of(context).size.height;
+    final brightnessChange = -details.delta.dy / screenHeight;
+    double newBrightness =
+        (_currentBrightness + brightnessChange).clamp(0.0, 1.0);
+    newBrightness = (newBrightness * 100).roundToDouble() / 100;
+    ScreenBrightness().setScreenBrightness(newBrightness);
+    setState(() {
+      _currentBrightness = newBrightness;
+      _showBrightnessIndicator = true;
+      _showVolumeIndicator = false;
+    });
+    _brightnessIndicatorTimer?.cancel();
+    _brightnessIndicatorTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (mounted) setState(() => _showBrightnessIndicator = false);
+    });
+  }
+
+  void _handleVerticalDragStart(DragStartDetails details) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final x = details.globalPosition.dx;
+    if (x > screenWidth * 0.7) {
+      _isDraggingVolume = true;
+      _isDraggingBrightness = false;
+    } else if (x < screenWidth * 0.5) {
+      _isDraggingBrightness = true;
+      _isDraggingVolume = false;
+    } else {
+      _isDraggingVolume = false;
+      _isDraggingBrightness = false;
+    }
+  }
+
+  void _handleVerticalDragUpdate(DragUpdateDetails details) {
+    if (_isDraggingVolume) {
+      _handleVolumeDrag(details);
+    } else if (_isDraggingBrightness) {
+      _handleBrightnessDrag(details);
+    }
+  }
+
+  void _handleVerticalDragEnd(DragEndDetails details) {
+    _isDraggingVolume = false;
+    _isDraggingBrightness = false;
   }
 
   void _handleVolumeSliderChange(double value) {
@@ -306,6 +538,21 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       _isVolumeBoosted = value > _normalVolume;
     });
   }
+
+  // Feature 1: Zoom/Fit toggle
+  void _toggleVideoFit() {
+    setState(() {
+      if (_videoFit == BoxFit.contain) {
+        _videoFit = BoxFit.cover;
+      } else {
+        _videoFit = BoxFit.contain;
+      }
+    });
+  }
+
+  // ==============================================================
+  // Utility Methods
+  // ==============================================================
 
   IconData _getVolumeIcon(double volume) {
     if (volume == 0) return Icons.volume_off;
@@ -320,6 +567,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     return const Color(0xFFFF4444);
   }
 
+  IconData _getBrightnessIcon(double brightness) {
+    if (brightness <= 0.2) return Icons.brightness_low;
+    if (brightness <= 0.6) return Icons.brightness_medium;
+    return Icons.brightness_high;
+  }
+
   String _formatDuration(Duration duration) {
     String twoDigits(int n) => n.toString().padLeft(2, '0');
     final hours = duration.inHours;
@@ -330,18 +583,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   // ==============================================================
-  // BUILD — Layer ordering for correct touch handling
+  // BUILD
   //
-  // Layer 1: Video (IgnorePointer) — BOTTOM — never consumes taps
-  // Layer 2: GestureDetector (opaque) — catches taps on empty areas
-  //          onTap: ONLY toggles controls (FIX #5 — no pause!)
-  //          onVerticalDrag: Volume on right 30% only
-  // Layer 3: Controls (when _showControls) — interactive buttons/sliders
-  //          ABOVE GestureDetector so they absorb their own taps
-  //          Decorative backgrounds use IgnorePointer (taps pass through)
-  // Layer 4: Volume side indicator (IgnorePointer) — right edge (FIX #3)
-  // Layer 5: Buffering indicator (IgnorePointer)
-  // Layer 6: SW badge (IgnorePointer)
+  // Layer 1: Video (IgnorePointer) — BOTTOM
+  // Layer 2: GestureDetector — tap toggle + double-tap seek + drag
+  // Layer 3: Seek animations (IgnorePointer)
+  // Layer 4: Controls (when visible)
+  // Layer 5: Volume/Brightness side indicators (IgnorePointer)
+  // Layer 6: Buffering indicator (IgnorePointer)
+  // Layer 7: SW badge (IgnorePointer)
   // ==============================================================
 
   @override
@@ -357,34 +607,46 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             ),
           ),
 
-          // ====== LAYER 2: GestureDetector (BELOW controls) ======
-          // Catches taps on EMPTY areas. Controls in Layer 3 get hit FIRST
-          // because they're above in the Stack.
-          // FIX #1: Positioned.fill + opaque for reliable toggle
-          // FIX #5: onTap ONLY toggles controls — NO pause, NO double-tap seek
+          // ====== LAYER 2: GestureDetector ======
+          // Single tap: toggle controls (with delay for double-tap detection)
+          // Double tap: seek 10s (left=backward, right=forward)
+          // Vertical drag left 50%: brightness, right 30%: volume
           Positioned.fill(
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
-              // FIX #5: ONLY toggle controls, NEVER pause video
+              // Single tap → toggle controls (Flutter adds ~250ms delay
+              // when onDoubleTap is also registered — this is expected)
               onTap: _toggleControls,
-              // Volume drag: only on right 30% of screen
-              onVerticalDragStart: (details) {
-                final screenWidth = MediaQuery.of(context).size.width;
-                _isDraggingVolume =
-                    details.globalPosition.dx > screenWidth * 0.7;
+              // Double tap → seek 10s based on position
+              onDoubleTap: () {}, // Required to activate double-tap recognizer
+              onDoubleTapDown: (details) {
+                _handleDoubleTapSeek(details.globalPosition);
               },
-              onVerticalDragUpdate: _handleVolumeDrag,
-              onVerticalDragEnd: (_) {
-                _isDraggingVolume = false;
-              },
+              // Vertical drag: brightness (left 50%) or volume (right 30%)
+              onVerticalDragStart: _handleVerticalDragStart,
+              onVerticalDragUpdate: _handleVerticalDragUpdate,
+              onVerticalDragEnd: _handleVerticalDragEnd,
               child: Container(color: Colors.transparent),
             ),
           ),
 
-          // ====== LAYER 3: Controls (when visible) ======
-          // Interactive elements (buttons, sliders) absorb their own taps.
-          // Decorative backgrounds (gradients) use IgnorePointer → taps pass
-          // through to Layer 2 GestureDetector.
+          // ====== LAYER 3: Double-tap Seek Animation ======
+          if (_showSeekForward)
+            Positioned(
+              right: MediaQuery.of(context).size.width * 0.15,
+              top: 0,
+              bottom: 0,
+              child: IgnorePointer(child: _buildSeekAnimation(isForward: true)),
+            ),
+          if (_showSeekBackward)
+            Positioned(
+              left: MediaQuery.of(context).size.width * 0.15,
+              top: 0,
+              bottom: 0,
+              child: IgnorePointer(child: _buildSeekAnimation(isForward: false)),
+            ),
+
+          // ====== LAYER 4: Controls (when visible) ======
           if (_showControls) ...[
             // Top gradient decoration (IgnorePointer → taps pass through)
             Positioned(
@@ -414,12 +676,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             ),
 
             // Center: Play/Pause big button (interactive)
-            // FIX #5: Icon ALWAYS reflects player.state.playing
             Center(
               child: StreamBuilder<bool>(
                 stream: _player.stream.playing,
                 builder: (context, snapshot) {
-                  // FIX #5: Always use player.state.playing for icon state
                   final isPlaying = _player.state.playing;
                   return GestureDetector(
                     onTap: () {
@@ -474,20 +734,25 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             ),
           ],
 
-          // ====== LAYER 4: Volume side indicator ======
-          // FIX #3: Volume indicator on RIGHT edge, does NOT cover video center
+          // ====== LAYER 5: Volume/Brightness side indicators ======
           if (_showVolumeIndicator)
             Positioned(
               right: 16,
               top: 0,
               bottom: 0,
               width: 56,
-              child: IgnorePointer(
-                child: _buildVolumeSideIndicator(),
-              ),
+              child: IgnorePointer(child: _buildVolumeSideIndicator()),
+            ),
+          if (_showBrightnessIndicator)
+            Positioned(
+              left: 16,
+              top: 0,
+              bottom: 0,
+              width: 56,
+              child: IgnorePointer(child: _buildBrightnessSideIndicator()),
             ),
 
-          // ====== LAYER 5: Buffering indicator ======
+          // ====== LAYER 6: Buffering indicator ======
           if (_isBuffering)
             const Positioned.fill(
               child: IgnorePointer(
@@ -497,7 +762,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               ),
             ),
 
-          // ====== LAYER 6: SW badge ======
+          // ====== LAYER 7: SW badge ======
           if (_useSoftwareDecoding && _hasVideoOutput)
             Positioned(
               top: 48,
@@ -525,8 +790,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     );
   }
 
-  // ====== Video Layer ======
-  // FIX #2: BoxFit.contain for proper video fit in landscape mode
+  // ==============================================================
+  // Video Layer
+  // ==============================================================
+
   Widget _buildVideoLayer() {
     if (!_isInitialized) return _buildLoadingScreen();
     if (_errorMessage != null) return _buildErrorScreen();
@@ -540,11 +807,51 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         child: Video(
           controller: _controller,
           controls: NoVideoControls,
-          fit: BoxFit.contain,
+          fit: _videoFit,
         ),
       ),
     );
   }
+
+  // ==============================================================
+  // Feature 2: YouTube-style Seek Animation
+  // ==============================================================
+
+  Widget _buildSeekAnimation({required bool isForward}) {
+    return Center(
+      child: Container(
+        width: 100,
+        height: 100,
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(50),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              isForward ? Icons.fast_forward : Icons.fast_rewind,
+              color: Colors.white,
+              size: 36,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '10s',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ==============================================================
+  // Loading / Error Screens
+  // ==============================================================
 
   Widget _buildLoadingScreen() {
     return Center(
@@ -676,7 +983,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     );
   }
 
-  // ====== Top Bar ======
+  // ==============================================================
+  // Top Bar
+  // ==============================================================
 
   Widget _buildTopBar() {
     return SafeArea(
@@ -706,7 +1015,23 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            // Audio track button
+            // Feature 1: Zoom/Fit toggle button
+            IconButton(
+              icon: Icon(
+                _videoFit == BoxFit.contain
+                    ? Icons.fit_screen
+                    : Icons.fullscreen,
+                color: Colors.white,
+                size: 22,
+              ),
+              onPressed: _toggleVideoFit,
+              style: IconButton.styleFrom(
+                  backgroundColor: Colors.black45,
+                  padding: const EdgeInsets.all(8)),
+              tooltip: _videoFit == BoxFit.contain ? 'Zoom In' : 'Zoom Out',
+            ),
+            const SizedBox(width: 4),
+            // Audio track
             IconButton(
               icon: const Icon(Icons.audiotrack, color: Colors.white, size: 22),
               onPressed: _showAudioTrackSheet,
@@ -715,7 +1040,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   padding: const EdgeInsets.all(8)),
             ),
             const SizedBox(width: 4),
-            // Subtitle button
+            // Subtitle
             IconButton(
               icon:
                   const Icon(Icons.subtitles, color: Colors.white, size: 22),
@@ -725,7 +1050,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   padding: const EdgeInsets.all(8)),
             ),
             const SizedBox(width: 4),
-            // Speed button
+            // Speed
             IconButton(
               icon: const Icon(Icons.speed, color: Colors.white, size: 22),
               onPressed: _showSpeedSheet,
@@ -764,7 +1089,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     );
   }
 
-  // ====== Bottom Bar ======
+  // ==============================================================
+  // Bottom Bar
+  // ==============================================================
 
   Widget _buildBottomBar() {
     return Padding(
@@ -851,7 +1178,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           ),
           const SizedBox(width: 16),
           // Play/Pause (center)
-          // FIX #5: Icon ALWAYS reflects player.state.playing
           StreamBuilder<bool>(
             stream: _player.stream.playing,
             builder: (context, snapshot) {
@@ -887,7 +1213,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     );
   }
 
-  // ====== Volume Slider with Boost (in bottom bar) ======
+  // ==============================================================
+  // Volume Slider (in bottom bar)
+  // ==============================================================
 
   Widget _buildVolumeSlider() {
     final isBoosted = _currentVolume > _normalVolume;
@@ -955,9 +1283,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     );
   }
 
-  // ====== Volume Side Indicator (right edge — FIX #3) ======
-  // Appears when dragging volume on right 30% of screen
-  // Positioned on the RIGHT edge so it does NOT cover the video center
+  // ==============================================================
+  // Volume Side Indicator (right edge)
+  // ==============================================================
 
   Widget _buildVolumeSideIndicator() {
     final isBoosted = _currentVolume > _normalVolume;
@@ -978,7 +1306,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             Icon(_getVolumeIcon(_currentVolume),
                 color: _getVolumeColor(_currentVolume), size: 24),
             const SizedBox(height: 8),
-            // Vertical volume bar
             Container(
               width: 6,
               height: 100,
@@ -1000,7 +1327,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                       ),
                     ),
                   ),
-                  // Normal volume (100%) marker line
                   Positioned(
                     bottom: normalLinePercent * 100 - 1,
                     left: -2,
@@ -1035,7 +1361,66 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     );
   }
 
-  // ====== Bottom Sheet: Audio Track (FIX #4 — scrollable, constrained) ======
+  // ==============================================================
+  // Feature 3: Brightness Side Indicator (left edge)
+  // ==============================================================
+
+  Widget _buildBrightnessSideIndicator() {
+    final fillPercent = _currentBrightness.clamp(0.0, 1.0);
+
+    return Center(
+      child: Container(
+        width: 48,
+        height: 200,
+        decoration: BoxDecoration(
+          color: Colors.black87,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(_getBrightnessIcon(_currentBrightness),
+                color: Colors.white, size: 24),
+            const SizedBox(height: 8),
+            Container(
+              width: 6,
+              height: 100,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(3),
+              ),
+              child: Stack(
+                alignment: Alignment.bottomCenter,
+                children: [
+                  FractionallySizedBox(
+                    heightFactor: fillPercent,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.amber,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '${(_currentBrightness * 100).round()}%',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 10,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ==============================================================
+  // Bottom Sheets: Audio Track, Subtitles, Speed
+  // ==============================================================
 
   void _showAudioTrackSheet() {
     final audioTracks = _player.state.tracks.audio;
@@ -1067,7 +1452,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             children: [
               Padding(
                 padding: const EdgeInsets.all(16),
-                child: Text('Audio Track',
+                child: const Text('Audio Track',
                     style: TextStyle(
                         color: Colors.white,
                         fontSize: 18,
@@ -1108,22 +1493,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             ],
           ),
         );
-
-        // FIX #4: In landscape, constrain to 50% width and center
         if (isLandscape) {
           return Center(
-            child: SizedBox(
-              width: screenWidth * 0.5,
-              child: content,
-            ),
+            child: SizedBox(width: screenWidth * 0.5, child: content),
           );
         }
         return content;
       },
     );
   }
-
-  // ====== Bottom Sheet: Subtitles (FIX #4 — scrollable, constrained) ======
 
   void _showSubtitleTrackSheet() {
     final subtitleTracks = _player.state.tracks.subtitle;
@@ -1155,14 +1533,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             children: [
               Padding(
                 padding: const EdgeInsets.all(16),
-                child: Text('Subtitles',
+                child: const Text('Subtitles',
                     style: TextStyle(
                         color: Colors.white,
                         fontSize: 18,
                         fontWeight: FontWeight.w600)),
               ),
               const Divider(color: Colors.white12, height: 1),
-              // "Off" option
               ListTile(
                 dense: true,
                 leading: Icon(
@@ -1212,22 +1589,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             ],
           ),
         );
-
-        // FIX #4: In landscape, constrain to 50% width and center
         if (isLandscape) {
           return Center(
-            child: SizedBox(
-              width: screenWidth * 0.5,
-              child: content,
-            ),
+            child: SizedBox(width: screenWidth * 0.5, child: content),
           );
         }
         return content;
       },
     );
   }
-
-  // ====== Bottom Sheet: Playback Speed (FIX #4 — scrollable, 50% width, centered) ======
 
   void _showSpeedSheet() {
     const speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
@@ -1250,7 +1620,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             children: [
               Padding(
                 padding: const EdgeInsets.all(16),
-                child: Text('Playback Speed',
+                child: const Text('Playback Speed',
                     style: TextStyle(
                         color: Colors.white,
                         fontSize: 18,
@@ -1284,14 +1654,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             ],
           ),
         );
-
-        // FIX #4: In landscape, constrain to 50% width and center
         if (isLandscape) {
           return Center(
-            child: SizedBox(
-              width: screenWidth * 0.5,
-              child: content,
-            ),
+            child: SizedBox(width: screenWidth * 0.5, child: content),
           );
         }
         return content;

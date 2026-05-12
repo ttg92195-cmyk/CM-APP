@@ -308,7 +308,11 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => VideoPlayerScreen(videoUrl: url, title: title),
+        builder: (_) => VideoPlayerScreen(
+          videoUrl: url,
+          title: title,
+          videoId: _seriesDetail?.id, // Pass series ID for resume playback
+        ),
       ),
     );
   }
