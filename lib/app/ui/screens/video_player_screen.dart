@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
@@ -25,7 +26,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   bool _isInitialized = false;
   String? _errorMessage;
   bool _isBuffering = false;
-  bool _showControls = true;
+  bool _showControls = false; // Start hidden - tap to show
+  Timer? _hideControlsTimer;
   bool _hasVideoOutput = false;
 
   @override
@@ -64,17 +66,36 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         configuration: const PlayerConfiguration(
           // 32MB buffer for 4K high-bitrate streams - prevents stuttering
           bufferSize: 32 * 1024 * 1024,
-          // Hardware acceleration enabled by default (GPU decoding for HEVC)
           title: 'CM Movies Player',
+          // GPU video output driver - enables hardware rendering
+          vo: 'gpu',
+          // Show errors in log for debugging
+          logLevel: MPVLogLevel.error,
         ),
       );
 
       // Create video controller with hardware-accelerated rendering
+      // Key settings for 4K HEVC/MKV playback:
+      // - vo: 'gpu' → Force GPU video output
+      // - hwdec: 'auto' → Auto-select best hardware decoder (MediaCodec on Android)
+      // - androidAttachSurfaceAfterVideoParameters: true → Wait for video info before rendering
+      //   This fixes "Could not open codec" on some devices by allowing the surface
+      //   to be configured with correct parameters before attaching
       _controller = VideoController(
         _player,
         configuration: const VideoControllerConfiguration(
-          // Enable hardware acceleration (GPU rendering)
+          // Force GPU video output driver
+          vo: 'gpu',
+          // Auto hardware decoding: tries MediaCodec first, falls back to software
+          // 'auto' is better than 'auto-safe' for 4K HEVC because it will attempt
+          // hardware decode even if resolution seems high for the device
+          hwdec: 'auto',
+          // Enable hardware acceleration
           enableHardwareAcceleration: true,
+          // On Android, wait for video parameters before attaching Surface.
+          // This is crucial for 4K HEVC - the surface needs to know the video
+          // dimensions before it can properly configure the hardware decoder
+          androidAttachSurfaceAfterVideoParameters: true,
         ),
       );
 
@@ -126,8 +147,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         }
       });
 
-      // Open the video URL
-      // Do NOT use Uri.encodeFull() - it breaks URLs with query params like ?token=abc&
+      // Open the video URL - do NOT use Uri.encodeFull(), it breaks query params
       // media_kit's libmpv handles URL encoding internally
       final url = widget.videoUrl;
       debugPrint('Opening media: $url');
@@ -135,7 +155,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       await _player.open(Media(url));
 
       // Explicitly call play() to ensure playback starts
-      // Some streams need this after open()
       await _player.play();
 
       debugPrint('Player open+play completed successfully');
@@ -144,6 +163,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         setState(() {
           _isInitialized = true;
         });
+        // Show controls briefly when video starts, then auto-hide
+        _showControlsWithAutoHide();
       }
     } catch (e) {
       debugPrint('Player initialization error: $e');
@@ -158,6 +179,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   @override
   void dispose() {
+    _hideControlsTimer?.cancel();
     _player.dispose();
     // Reset orientation to portrait when leaving
     SystemChrome.setPreferredOrientations([
@@ -168,14 +190,52 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     super.dispose();
   }
 
-  void _toggleControls() {
+  /// Show controls and start auto-hide timer (3 seconds)
+  void _showControlsWithAutoHide() {
+    _hideControlsTimer?.cancel();
     setState(() {
-      _showControls = !_showControls;
+      _showControls = true;
     });
+    _hideControlsTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) {
+        setState(() {
+          _showControls = false;
+        });
+      }
+    });
+  }
+
+  /// Toggle controls visibility with auto-hide
+  void _toggleControls() {
+    if (_showControls) {
+      // Controls are visible - hide immediately
+      _hideControlsTimer?.cancel();
+      setState(() {
+        _showControls = false;
+      });
+    } else {
+      // Controls are hidden - show and auto-hide after 3 seconds
+      _showControlsWithAutoHide();
+    }
+  }
+
+  /// Reset auto-hide timer (e.g., on seek or button press)
+  void _resetAutoHideTimer() {
+    if (_showControls) {
+      _hideControlsTimer?.cancel();
+      _hideControlsTimer = Timer(const Duration(seconds: 3), () {
+        if (mounted) {
+          setState(() {
+            _showControls = false;
+          });
+        }
+      });
+    }
   }
 
   /// Show audio track selection dialog for MKV files with multiple audio tracks
   void _showAudioTrackDialog() {
+    _resetAutoHideTimer();
     final audioTracks = _player.state.tracks.audio;
     if (audioTracks.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -235,6 +295,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   /// Show subtitle track selection dialog for MKV files with embedded subtitles
   void _showSubtitleTrackDialog() {
+    _resetAutoHideTimer();
     final subtitleTracks = _player.state.tracks.subtitle;
     if (subtitleTracks.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -314,6 +375,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   /// Show playback speed selection dialog
   void _showSpeedDialog() {
+    _resetAutoHideTimer();
     const speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
     final currentSpeed = _player.state.rate;
 
@@ -391,15 +453,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                 } else {
                   _player.seek(_player.state.position + const Duration(seconds: 10));
                 }
+                _resetAutoHideTimer();
               },
               child: Container(color: Colors.transparent),
             ),
           ),
 
-          // Controls overlay layer
+          // Controls overlay layer (auto-hides after 3 seconds)
           if (_showControls) _buildControlsOverlay(),
 
-          // Buffering indicator
+          // Buffering indicator (always visible when buffering)
           if (_isBuffering) _buildBufferingIndicator(),
         ],
       ),
@@ -415,17 +478,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       return _buildErrorScreen();
     }
 
-    // Use Video widget with fill behavior
-    return Center(
-      child: AspectRatio(
-        aspectRatio: _player.state.width != null && _player.state.height != null && _player.state.height! > 0
-            ? _player.state.width! / _player.state.height!
-            : 16 / 9,
-        child: Video(
-          controller: _controller,
-          controls: NoVideoControls,
-        ),
-      ),
+    // Use Video widget - let it fill the entire screen
+    // media_kit handles aspect ratio and scaling internally
+    return Video(
+      controller: _controller,
+      controls: NoVideoControls,
     );
   }
 
@@ -457,39 +514,55 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   }
 
   Widget _buildErrorScreen() {
+    // Detect if this is a codec error (4K HEVC not supported by device)
+    final isCodecError = _errorMessage != null && (
+      _errorMessage!.contains('codec') ||
+      _errorMessage!.contains('Could not open') ||
+      _errorMessage!.contains('decoder') ||
+      _errorMessage!.contains('hardware') ||
+      _errorMessage!.contains('HEVC') ||
+      _errorMessage!.contains('H.265')
+    );
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.error_outline, color: Colors.redAccent, size: 56),
+            Icon(
+              isCodecError ? Icons.high_quality_outlined : Icons.error_outline,
+              color: isCodecError ? Colors.orange : Colors.redAccent,
+              size: 56,
+            ),
             const SizedBox(height: 16),
-            const Text(
-              'Failed to load video',
-              style: TextStyle(
+            Text(
+              isCodecError ? 'Video codec not supported' : 'Failed to load video',
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 18,
                 fontWeight: FontWeight.w600,
               ),
             ),
             const SizedBox(height: 8),
-            Text(
-              _errorMessage ?? 'Unknown error',
-              style: const TextStyle(color: Colors.white54, fontSize: 12),
-              textAlign: TextAlign.center,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 8),
-            // Show URL for debugging
-            Text(
-              'URL: ${widget.videoUrl.length > 80 ? '${widget.videoUrl.substring(0, 80)}...' : widget.videoUrl}',
-              style: const TextStyle(color: Colors.white38, fontSize: 10),
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
+            if (isCodecError)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  'This video uses a codec or resolution that your device may not fully support. '
+                  'Try a lower quality version or open in browser.',
+                  style: TextStyle(color: Colors.white70, fontSize: 13),
+                  textAlign: TextAlign.center,
+                ),
+              )
+            else
+              Text(
+                _errorMessage ?? 'Unknown error',
+                style: const TextStyle(color: Colors.white54, fontSize: 12),
+                textAlign: TextAlign.center,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+              ),
             const SizedBox(height: 24),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -516,7 +589,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                // Open in browser as fallback
                 OutlinedButton.icon(
                   onPressed: () => Navigator.pop(context),
                   icon: const Icon(Icons.close),
@@ -697,6 +769,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                       milliseconds: (duration.inMilliseconds * value).round(),
                     );
                     _player.seek(seekPosition);
+                    _resetAutoHideTimer();
                   },
                 ),
               ),
@@ -734,6 +807,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
             icon: const Icon(Icons.replay_10, color: Colors.white, size: 28),
             onPressed: () {
               _player.seek(_player.state.position - const Duration(seconds: 10));
+              _resetAutoHideTimer();
             },
           ),
           const SizedBox(width: 16),
@@ -754,6 +828,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                   } else {
                     _player.play();
                   }
+                  _resetAutoHideTimer();
                 },
               );
             },
@@ -764,6 +839,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
             icon: const Icon(Icons.forward_10, color: Colors.white, size: 28),
             onPressed: () {
               _player.seek(_player.state.position + const Duration(seconds: 10));
+              _resetAutoHideTimer();
             },
           ),
           const Spacer(),
@@ -780,6 +856,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                 ),
                 onPressed: () {
                   _player.setVolume(volume == 0 ? 100 : 0);
+                  _resetAutoHideTimer();
                 },
               );
             },
@@ -789,7 +866,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           IconButton(
             icon: const Icon(Icons.fullscreen, color: Colors.white, size: 24),
             onPressed: () {
-              // Toggle between landscape-only and portrait-allowed
               final isPortrait = MediaQuery.of(context).orientation == Orientation.portrait;
               if (isPortrait) {
                 SystemChrome.setPreferredOrientations([
@@ -803,6 +879,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                   DeviceOrientation.portraitUp,
                 ]);
               }
+              _resetAutoHideTimer();
             },
           ),
         ],
