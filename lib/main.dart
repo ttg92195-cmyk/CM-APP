@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:media_kit/media_kit.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/ui/home/home_page.dart';
 import 'package:cm_movies/app/ui/screens/login_page.dart';
@@ -19,6 +20,9 @@ const Color kDarkCard = Color(0xFF1E1E1E);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize media_kit (libmpv/VLC engine) for video playback
+  MediaKit.ensureInitialized();
 
   // Load environment variables before Firebase init
   try {
