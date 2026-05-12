@@ -1,11 +1,20 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 
 /// Professional Video Player using media_kit (libmpv/VLC engine)
 /// Supports: MP4, MKV, HEVC (H.265), 4K, AC3/DTS audio, embedded subtitles
+///
+/// Key features for 4K HEVC on all Android versions:
+/// - Hardware decoding first (MediaCodec GPU), software fallback if HW fails
+/// - Auto-retry with software decoding when "Could not open codec" error occurs
+/// - Video output downscaling to match device screen (reduces GPU load on low-end devices)
+/// - Optimized buffering for 4K high-bitrate network streams
+/// - Performance mpv properties for smoother playback on older devices
 class VideoPlayerScreen extends StatefulWidget {
   final String videoUrl;
   final String title;
@@ -30,6 +39,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   Timer? _hideControlsTimer;
   bool _hasVideoOutput = false;
 
+  // Hardware/Software decoding fallback
+  bool _useSoftwareDecoding = false;
+  int _retryCount = 0;
+  static const int _maxRetries = 2;
+
+  // Device info for adaptive configuration
+  bool _isLowEndDevice = false;
+  int _screenWidth = 1080;
+  int _screenHeight = 1920;
+  int _androidVersion = 30; // Default to Android 11
+
   @override
   void initState() {
     super.initState();
@@ -41,9 +61,41 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     ]);
     // Immersive mode - hide status bar and navigation bar
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    _detectDeviceAndInitialize();
+  }
+
+  /// Detect device capabilities and initialize player with optimal settings
+  Future<void> _detectDeviceAndInitialize() async {
+    try {
+      // Get screen resolution for adaptive video output sizing
+      final view = WidgetsBinding.instance.renderView;
+      if (view != null) {
+        _screenWidth = view.physicalSize.width.toInt();
+        _screenHeight = view.physicalSize.height.toInt();
+        debugPrint('Screen resolution: ${_screenWidth}x$_screenHeight');
+      }
+
+      // Get Android version for capability detection
+      if (Platform.isAndroid) {
+        final deviceInfo = DeviceInfoPlugin();
+        final androidInfo = await deviceInfo.androidInfo;
+        _androidVersion = androidInfo.version.sdkInt;
+        debugPrint('Android SDK: $_androidVersion');
+
+        // Detect low-end device: Android 10 (SDK 29) or below, or screen < 1080p
+        _isLowEndDevice = _androidVersion <= 29 ||
+            _screenWidth < 1080 ||
+            _screenHeight < 1920;
+        debugPrint('Is low-end device: $_isLowEndDevice');
+      }
+    } catch (e) {
+      debugPrint('Device detection error (non-critical): $e');
+    }
+
     _initializePlayer();
   }
 
+  /// Initialize the video player with hardware or software decoding
   Future<void> _initializePlayer() async {
     try {
       // Validate URL first
@@ -60,15 +112,46 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       debugPrint('=== Video Player ===');
       debugPrint('Title: ${widget.title}');
       debugPrint('URL: ${widget.videoUrl}');
+      debugPrint('Software decoding: $_useSoftwareDecoding');
+      debugPrint('Low-end device: $_isLowEndDevice');
+      debugPrint('Retry count: $_retryCount');
 
-      // Create player with optimized settings for 4K/MKV streaming
+      // Calculate optimal video output size for the device
+      // On low-end devices with 720p screens, output at max 1280x720 to reduce GPU load
+      // On mid-range devices with 1080p screens, output at max 1920x1080
+      // On high-end devices, let mpv decide (no width/height constraint)
+      int? outputWidth;
+      int? outputHeight;
+
+      if (_isLowEndDevice) {
+        // For 720p screens: limit output to 1280x720 (saves GPU on 4K content)
+        outputWidth = 1280;
+        outputHeight = 720;
+      } else if (_screenWidth <= 1080) {
+        // For 1080p screens: limit output to 1920x1080
+        outputWidth = 1920;
+        outputHeight = 1080;
+      }
+      // For higher-res screens, no limit needed - mpv handles it
+
+      // Choose decoding strategy
+      final bool useHWAccel = !_useSoftwareDecoding;
+      final String hwdecValue = _useSoftwareDecoding ? 'no' : 'auto';
+      final String voValue = 'gpu';
+
+      debugPrint('HW acceleration: $useHWAccel, hwdec: $hwdecValue, vo: $voValue');
+      debugPrint('Output size: ${outputWidth ?? 'auto'}x${outputHeight ?? 'auto'}');
+
+      // Create player with optimized buffer settings for 4K streaming
+      // bufferSize maps to mpv's demuxer-max-bytes and demuxer-max-back-bytes
       _player = Player(
-        configuration: const PlayerConfiguration(
-          // 32MB buffer for 4K high-bitrate streams - prevents stuttering
-          bufferSize: 32 * 1024 * 1024,
+        configuration: PlayerConfiguration(
+          // 64MB buffer for 4K high-bitrate streams - prevents stuttering
+          // (increased from 32MB default for better 4K experience)
+          bufferSize: 64 * 1024 * 1024,
           title: 'CM Movies Player',
           // GPU video output driver - enables hardware rendering
-          vo: 'gpu',
+          vo: voValue,
           // Show errors in log for debugging
           logLevel: MPVLogLevel.error,
         ),
@@ -78,26 +161,63 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       // Key settings for 4K HEVC/MKV playback:
       // - vo: 'gpu' → Force GPU video output
       // - hwdec: 'auto' → Auto-select best hardware decoder (MediaCodec on Android)
+      //   Falls back to software decoding if hardware decoder fails
       // - androidAttachSurfaceAfterVideoParameters: true → Wait for video info before rendering
       //   This fixes "Could not open codec" on some devices by allowing the surface
       //   to be configured with correct parameters before attaching
+      // - width/height → Limit video output size for low-end devices
+      //   Reduces GPU rendering load when playing 4K on 720p/1080p screens
       _controller = VideoController(
         _player,
-        configuration: const VideoControllerConfiguration(
+        configuration: VideoControllerConfiguration(
           // Force GPU video output driver
-          vo: 'gpu',
-          // Auto hardware decoding: tries MediaCodec first, falls back to software
-          // 'auto' is better than 'auto-safe' for 4K HEVC because it will attempt
-          // hardware decode even if resolution seems high for the device
-          hwdec: 'auto',
-          // Enable hardware acceleration
-          enableHardwareAcceleration: true,
+          vo: voValue,
+          // Hardware decoding mode:
+          // 'auto' = try MediaCodec first, fall back to FFmpeg software decoder
+          // 'no' = force FFmpeg software decoder only (fallback mode)
+          hwdec: hwdecValue,
+          // Enable/disable hardware acceleration
+          enableHardwareAcceleration: useHWAccel,
           // On Android, wait for video parameters before attaching Surface.
           // This is crucial for 4K HEVC - the surface needs to know the video
           // dimensions before it can properly configure the hardware decoder
           androidAttachSurfaceAfterVideoParameters: true,
+          // Limit video output size for low-end devices
+          // This tells mpv to downscale the output to match the device screen,
+          // reducing GPU rendering load when playing 4K on 720p/1080p screens
+          width: outputWidth,
+          height: outputHeight,
         ),
       );
+
+      // Set performance-optimizing mpv properties via setProperty()
+      // These must be called AFTER player creation (requires initialized native backend)
+      try {
+        if (_useSoftwareDecoding) {
+          // Software decoding performance optimizations for low-end devices:
+          // Skip loop filter (reduces CPU load by ~30-40%, slight quality loss)
+          await _player.setProperty('vd-lavc-skiploopfilter', 'nonref');
+          // Skip non-reference frames when CPU can't keep up (smoother playback)
+          await _player.setProperty('vd-lavc-skipframe', 'noref');
+          // Allow dropping frames to maintain A/V sync on slow devices
+          await _player.setProperty('framedrop', 'vo');
+          debugPrint('Software decoding performance properties set');
+        }
+
+        // Network/stream buffering optimizations for 4K:
+        // Buffer 30 seconds of content ahead (prevents stuttering on slow networks)
+        await _player.setProperty('demuxer-secs', '30');
+        // Allow seeking in network streams
+        await _player.setProperty('force-seekable', 'yes');
+        // User agent for streaming servers
+        await _player.setProperty('user-agent',
+            'CM-Movies/1.0 (Android; SDK $_androidVersion)');
+
+        debugPrint('Network buffering properties set');
+      } catch (e) {
+        // setProperty errors are non-critical - playback can continue
+        debugPrint('setProperty error (non-critical): $e');
+      }
 
       // Listen to player state for buffering indicator
       _player.stream.buffering.listen((buffering) {
@@ -109,14 +229,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         }
       });
 
-      // Listen for errors
+      // Listen for errors - critical for hardware/software fallback
       _player.stream.error.listen((error) {
         if (mounted && error.isNotEmpty) {
           debugPrint('Player error: $error');
-          setState(() {
-            _errorMessage = error;
-            _isInitialized = true;
-          });
+          _handlePlayerError(error);
         }
       });
 
@@ -174,6 +291,48 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           _errorMessage = e.toString();
         });
       }
+    }
+  }
+
+  /// Handle player errors with intelligent hardware/software fallback
+  ///
+  /// Flow:
+  /// 1. First attempt: hwdec='auto' (tries GPU MediaCodec, falls back to software)
+  /// 2. If "Could not open codec" or similar: retry with hwdec='no' (pure software)
+  /// 3. Software decoding uses performance optimizations (frame skip, loop filter skip)
+  /// 4. If software also fails: show error with helpful message
+  void _handlePlayerError(String error) {
+    final isCodecError = error.contains('codec') ||
+        error.contains('Could not open') ||
+        error.contains('decoder') ||
+        error.contains('HEVC') ||
+        error.contains('H.265') ||
+        error.contains('h265') ||
+        error.contains('hevc') ||
+        error.contains('not supported') ||
+        error.contains('failed to initialize');
+
+    if (isCodecError && _retryCount < _maxRetries && !_useSoftwareDecoding) {
+      // Hardware decoding failed - retry with software decoding
+      _retryCount++;
+      debugPrint('=== Retrying with SOFTWARE decoding (attempt $_retryCount) ===');
+
+      // Dispose current player
+      _player.dispose();
+      _hideControlsTimer?.cancel();
+
+      // Switch to software decoding
+      _useSoftwareDecoding = true;
+      _hasVideoOutput = false;
+
+      // Re-initialize with software decoding
+      _initializePlayer();
+    } else if (mounted) {
+      // All retries exhausted or non-codec error
+      setState(() {
+        _isInitialized = true;
+        _errorMessage = error;
+      });
     }
   }
 
@@ -464,6 +623,24 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
           // Buffering indicator (always visible when buffering)
           if (_isBuffering) _buildBufferingIndicator(),
+
+          // Decoding mode indicator (small badge in corner)
+          if (_useSoftwareDecoding && _hasVideoOutput)
+            Positioned(
+              top: 48,
+              right: 8,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text(
+                  'SW',
+                  style: TextStyle(color: Colors.orange, fontSize: 10, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -504,10 +681,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
-            'Loading video...',
-            style: TextStyle(color: Colors.white70, fontSize: 14),
-          ),
+          if (_useSoftwareDecoding)
+            const Text(
+              'Switching to software decoder...',
+              style: TextStyle(color: Colors.orange, fontSize: 13),
+            )
+          else
+            const Text(
+              'Loading video...',
+              style: TextStyle(color: Colors.white70, fontSize: 14),
+            ),
         ],
       ),
     );
@@ -570,6 +753,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                 ElevatedButton.icon(
                   onPressed: () {
                     _player.dispose();
+                    _retryCount = 0;
+                    _useSoftwareDecoding = true; // Try software on manual retry
                     setState(() {
                       _isInitialized = false;
                       _errorMessage = null;
@@ -578,7 +763,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                     _initializePlayer();
                   },
                   icon: const Icon(Icons.refresh),
-                  label: const Text('Retry'),
+                  label: const Text('Retry (SW)'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFFE50914),
                     foregroundColor: Colors.white,
@@ -611,15 +796,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   }
 
   Widget _buildBufferingIndicator() {
-    return const Center(
+    return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          CircularProgressIndicator(color: Color(0xFFE50914)),
-          SizedBox(height: 12),
+          const CircularProgressIndicator(color: Color(0xFFE50914)),
+          const SizedBox(height: 12),
           Text(
-            'Buffering...',
-            style: TextStyle(color: Colors.white70, fontSize: 14),
+            _isBuffering ? 'Buffering...' : '',
+            style: const TextStyle(color: Colors.white70, fontSize: 14),
           ),
         ],
       ),
