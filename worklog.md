@@ -48,3 +48,26 @@ Stage Summary:
 - Storage Permission gate already implemented (from previous session)
 - Download speed optimization: stall detection + auto-reconnect + auto-retry with resume
 - All changes pushed to GitHub Main branch
+---
+Task ID: 1
+Agent: Main
+Task: Add Watch button, Video Player, Views/Country, Back icon fix, Admin Panel watch fields
+
+Work Log:
+- Updated MovieDetail model: added `views` (int?) and `country` (String?) fields
+- Updated MovieDownloadLink model: added `watchName` (String?) and `watchUrl` (String?) fields
+- Changed Back Icon from big circular container (28x28 with circle decoration) to smaller arrow_back_ios_new icon
+- Added Views icon (visibility) and Country (public icon) below category tags in poster info section
+- Replaced "Open 1080p" button with "Watch" button in Download tab
+- Watch button navigates to VideoPlayerScreen using Navigator.push
+- Created VideoPlayerScreen with Chewie + video_player packages (supports MP4/MKV)
+- Added chewie ^1.8.1 and video_player ^2.9.2 to pubspec.yaml
+- Updated all Admin Panel download link dialogs (add_movie, edit_movie, add_series) with Watch Name and Watch URL fields
+- Updated downloadLinks toMap() in edit_movie_page and add_movie_page to include watchName/watchUrl
+- Pushed to GitHub (force pushed after cleaning secret from git history)
+
+Stage Summary:
+- All changes committed and pushed to origin/main
+- Video Player supports network streaming with Chewie controls
+- Admin Panel now supports separate Watch URLs alongside Download URLs
+- Views/Country data will show when Firestore docs have these fields
