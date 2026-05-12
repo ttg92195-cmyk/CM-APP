@@ -39,13 +39,16 @@ class VideoPlayerScreen extends StatefulWidget {
 
 class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     with WidgetsBindingObserver {
-  late final Player _player;
-  late final VideoController _controller;
+  late Player _player;
+  late VideoController _controller;
   bool _isInitialized = false;
   String? _errorMessage;
   bool _isBuffering = false;
   bool _showControls = true;
   bool _hasVideoOutput = false;
+
+  // CRITICAL: Flag to prevent post-disposal crashes
+  bool _isDisposed = false;
 
   // Hardware/Software decoding fallback
   bool _useSoftwareDecoding = false;
@@ -77,6 +80,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   // Feature 1: Zoom/Fit toggle
   BoxFit _videoFit = BoxFit.contain;
+  double _zoomScale = 1.0; // Used for Transform.scale approach
 
   // Feature 2: Double Tap to Seek animation
   bool _showSeekForward = false;
@@ -117,54 +121,80 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    switch (state) {
-      case AppLifecycleState.paused:
-        _wasPlayingBeforePause = _player.state.playing;
-        if (_player.state.playing) {
-          _player.pause();
-        }
-        _saveWatchProgress(); // Save on background
-        break;
-      case AppLifecycleState.resumed:
-        if (_wasPlayingBeforePause && mounted) {
-          _player.play();
-        }
-        _wasPlayingBeforePause = false;
-        SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-        break;
-      case AppLifecycleState.inactive:
-      case AppLifecycleState.detached:
-      case AppLifecycleState.hidden:
-        break;
+    // CRITICAL: Guard against crashes when player is disposed or widget unmounted
+    if (_isDisposed || !mounted) return;
+
+    try {
+      switch (state) {
+        case AppLifecycleState.paused:
+          _wasPlayingBeforePause = _player.state.playing;
+          if (_player.state.playing) {
+            _player.pause();
+          }
+          _saveWatchProgress(); // Save on background
+          break;
+        case AppLifecycleState.resumed:
+          // Delay slightly to allow surface to recreate after background
+          Future.delayed(const Duration(milliseconds: 300), () {
+            if (_isDisposed || !mounted) return;
+            try {
+              if (_wasPlayingBeforePause) {
+                _player.play();
+              }
+              SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+            } catch (e) {
+              debugPrint('Resume playback error: $e');
+            }
+          });
+          _wasPlayingBeforePause = false;
+          break;
+        case AppLifecycleState.inactive:
+        case AppLifecycleState.detached:
+        case AppLifecycleState.hidden:
+          break;
+      }
+    } catch (e) {
+      debugPrint('Lifecycle state change error: $e');
+      // Don't crash the app — just log and continue
     }
+  }
+
+  // Safe exit: properly clean up and pop
+  void _exitPlayer() {
+    if (_isDisposed) return;
+    Navigator.pop(context);
   }
 
   @override
   void dispose() {
+    // CRITICAL: Mark as disposed FIRST to prevent any async callbacks from crashing
+    _isDisposed = true;
     WidgetsBinding.instance.removeObserver(this);
     _volumeIndicatorTimer?.cancel();
     _brightnessIndicatorTimer?.cancel();
     _seekAnimationTimer?.cancel();
     _positionSaveTimer?.cancel();
     // FIX: Save position BEFORE disposing player using last known values
-    _saveWatchProgressSync();
-    _player.dispose();
+    try { _saveWatchProgressSync(); } catch (e) { debugPrint('Save progress error on dispose: $e'); }
+    try { _player.dispose(); } catch (e) { debugPrint('Player dispose error: $e'); }
     // Reset brightness to system default
     try { ScreenBrightness().resetScreenBrightness(); } catch (_) {}
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-    ]);
-    SystemChrome.setEnabledSystemUIMode(
-      SystemUiMode.manual,
-      overlays: SystemUiOverlay.values,
-    );
-    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.dark,
-      statusBarBrightness: Brightness.light,
-      systemNavigationBarColor: Colors.white,
-      systemNavigationBarIconBrightness: Brightness.dark,
-    ));
+    try {
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+      ]);
+      SystemChrome.setEnabledSystemUIMode(
+        SystemUiMode.manual,
+        overlays: SystemUiOverlay.values,
+      );
+      SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
+        systemNavigationBarColor: Colors.white,
+        systemNavigationBarIconBrightness: Brightness.dark,
+      ));
+    } catch (e) { debugPrint('SystemChrome reset error: $e'); }
     super.dispose();
   }
 
@@ -198,20 +228,26 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   // Async save — reads from player directly (for timer & background)
   Future<void> _saveWatchProgress() async {
-    if (_videoCompleted) {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove(_progressKey);
-      await prefs.remove(_durationKey);
-      return;
-    }
-    final position = _player.state.position;
-    final duration = _player.state.duration;
-    if (position.inSeconds > 0 && duration.inSeconds > 0) {
-      _lastKnownPosition = position;
-      _lastKnownDuration = duration;
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setInt(_progressKey, position.inMilliseconds);
-      await prefs.setInt(_durationKey, duration.inMilliseconds);
+    if (_isDisposed) return;
+    try {
+      if (_videoCompleted) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove(_progressKey);
+        await prefs.remove(_durationKey);
+        return;
+      }
+      final position = _player.state.position;
+      final duration = _player.state.duration;
+      if (position.inSeconds > 0 && duration.inSeconds > 0) {
+        _lastKnownPosition = position;
+        _lastKnownDuration = duration;
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setInt(_progressKey, position.inMilliseconds);
+        await prefs.setInt(_durationKey, duration.inMilliseconds);
+        debugPrint('Saved progress: ${position.inSeconds}s / ${duration.inSeconds}s key=$_progressKey');
+      }
+    } catch (e) {
+      debugPrint('Save watch progress error: $e');
     }
   }
 
@@ -431,12 +467,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   Future<void> _checkResumePosition() async {
-    // Always check — use URL hash as fallback if videoId is null
-    final savedPos = await _loadSavedPosition();
-    if (savedPos != null && mounted) {
-      // Pause while showing dialog so user can decide
-      _player.pause();
-      _showResumeDialog(savedPos);
+    if (_isDisposed || !mounted) return;
+    try {
+      // Always check — use URL hash as fallback if videoId is null
+      final savedPos = await _loadSavedPosition();
+      if (savedPos != null && mounted && !_isDisposed) {
+        // Pause while showing dialog so user can decide
+        _player.pause();
+        _showResumeDialog(savedPos);
+      }
+    } catch (e) {
+      debugPrint('Resume position check error: $e');
+      // Don't crash — just continue from start
     }
   }
 
@@ -580,13 +622,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     });
   }
 
-  // Feature 1: Zoom/Fit toggle
+  // Feature 1: Zoom/Fit toggle — uses Transform.scale for reliable zoom
   void _toggleVideoFit() {
     setState(() {
       if (_videoFit == BoxFit.contain) {
         _videoFit = BoxFit.cover;
+        _zoomScale = 1.3; // Scale up 30% to fill screen edges
       } else {
         _videoFit = BoxFit.contain;
+        _zoomScale = 1.0; // Normal size
       }
     });
   }
@@ -637,9 +681,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
+    return PopScope(
+      // Prevent accidental double-back exit: always intercept back button
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        // User pressed back → exit player properly (save progress, clean up)
+        _exitPlayer();
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Stack(
         children: [
           // ====== LAYER 1: Video (IgnorePointer) ======
           Positioned.fill(
@@ -828,6 +880,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             ),
         ],
       ),
+    ),
     );
   }
 
@@ -839,27 +892,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     if (!_isInitialized) return _buildLoadingScreen();
     if (_errorMessage != null) return _buildErrorScreen();
 
-    // FIX: When Zoom (cover) mode, remove AspectRatio constraint
-    // so BoxFit.cover can actually zoom the video to fill the screen.
-    // With AspectRatio, the container matches the video's exact ratio,
-    // so BoxFit.cover has the same visual result as BoxFit.contain.
-    if (_videoFit == BoxFit.cover) {
-      // Zoom mode: fill entire screen, cropping edges
-      return Video(
-        controller: _controller,
-        controls: NoVideoControls,
-        fit: BoxFit.cover,
-      );
-    }
+    // Get video aspect ratio
+    final videoWidth = _player.state.width;
+    final videoHeight = _player.state.height;
+    final videoAspectRatio = (videoWidth != null && videoHeight != null && videoHeight > 0)
+        ? videoWidth / videoHeight
+        : 16.0 / 9.0;
 
-    // Normal mode: maintain aspect ratio with letterboxing
-    return Center(
+    // Build the base Video widget
+    final videoWidget = Center(
       child: AspectRatio(
-        aspectRatio: _player.state.width != null &&
-                _player.state.height != null &&
-                _player.state.height! > 0
-            ? _player.state.width! / _player.state.height!
-            : 16 / 9,
+        aspectRatio: videoAspectRatio,
         child: Video(
           controller: _controller,
           controls: NoVideoControls,
@@ -867,6 +910,23 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         ),
       ),
     );
+
+    // FIX: Zoom/Fit toggle using ClipRect + Transform.scale
+    // This approach is reliable because it works regardless of how
+    // media_kit's Video widget handles the `fit` parameter internally.
+    // Transform.scale physically scales the rendered texture,
+    // and ClipRect crops the overflow to fill the screen.
+    if (_videoFit == BoxFit.cover && _zoomScale > 1.0) {
+      return ClipRect(
+        child: Transform.scale(
+          scale: _zoomScale,
+          child: videoWidget,
+        ),
+      );
+    }
+
+    // Normal mode: maintain aspect ratio with letterboxing
+    return videoWidget;
   }
 
   // ==============================================================
@@ -1019,7 +1079,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 ),
                 const SizedBox(width: 12),
                 OutlinedButton.icon(
-                  onPressed: () => Navigator.pop(context),
+                  onPressed: _exitPlayer,
                   icon: const Icon(Icons.close),
                   label: const Text('Close'),
                   style: OutlinedButton.styleFrom(
@@ -1049,10 +1109,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         child: Row(
           children: [
-            // Back button
+            // Back button — use _exitPlayer for safe cleanup
             IconButton(
               icon: const Icon(Icons.arrow_back, color: Colors.white, size: 24),
-              onPressed: () => Navigator.pop(context),
+              onPressed: _exitPlayer,
               style: IconButton.styleFrom(
                 backgroundColor: Colors.black45,
                 padding: const EdgeInsets.all(8),

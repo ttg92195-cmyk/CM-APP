@@ -94,19 +94,27 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      // App came back to foreground — check session timeout
-      final appConfig = Provider.of<AppConfig>(context, listen: false);
-      if (appConfig.isLoggedIn && appConfig.checkSessionTimeout()) {
-        // Session timed out while app was in background
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Session expired due to inactivity. Please login again.'),
-            backgroundColor: Colors.orange,
-            duration: Duration(seconds: 4),
-          ),
-        );
-      } else {
-        appConfig.recordActivity();
+      try {
+        // App came back to foreground — check session timeout
+        final appConfig = Provider.of<AppConfig>(context, listen: false);
+        if (appConfig.isLoggedIn && appConfig.checkSessionTimeout()) {
+          // Session timed out while app was in background
+          // Only show SnackBar if still mounted (prevents crash)
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Session expired due to inactivity. Please login again.'),
+                backgroundColor: Colors.orange,
+                duration: Duration(seconds: 4),
+              ),
+            );
+          }
+        } else {
+          appConfig.recordActivity();
+        }
+      } catch (e) {
+        debugPrint('App resume lifecycle error: $e');
+        // Don't crash — just continue normally
       }
     }
   }
