@@ -14,6 +14,7 @@ import 'package:cm_movies/app/core/services/download_manager_service.dart';
 import 'package:cm_movies/app/ui/screens/category_page.dart';
 import 'package:cm_movies/app/ui/components/age_rating_gate.dart';
 import 'package:cm_movies/app/ui/screens/download_page.dart';
+import 'package:cm_movies/app/ui/screens/video_player_screen.dart';
 
 class MovieDetailScreen extends StatefulWidget {
   final String slug;
@@ -324,6 +325,24 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
         ),
       );
     }
+  }
+
+  String _formatViews(int views) {
+    if (views >= 1000000) {
+      return '${(views / 1000000).toStringAsFixed(1)}M';
+    } else if (views >= 1000) {
+      return '${(views / 1000).toStringAsFixed(1)}K';
+    }
+    return views.toString();
+  }
+
+  void _openVideoPlayer(String url, String title) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => VideoPlayerScreen(videoUrl: url, title: title),
+      ),
+    );
   }
 
   Future<void> _launchUrl(String url) async {
@@ -1089,16 +1108,14 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                                   ),
                                 ),
                                 const SizedBox(width: 8),
-                                // Watch / Open link
+                                // Watch button
                                 Expanded(
                                   child: OutlinedButton.icon(
-                                    onPressed: (link.watchUrl != null && link.watchUrl!.isNotEmpty)
-                                        ? () => _launchUrl(link.watchUrl!)
-                                        : (link.url.isNotEmpty ? () => _launchUrl(link.url) : null),
+                                    onPressed: link.watchUrl != null && link.watchUrl!.isNotEmpty
+                                        ? () => _openVideoPlayer(link.watchUrl!, link.watchName ?? qualityLabel)
+                                        : null,
                                     icon: const Icon(Icons.play_circle_outline, size: 16),
-                                    label: Text(link.watchName != null && link.watchName!.isNotEmpty
-                                        ? link.watchName!
-                                        : 'Watch'),
+                                    label: const Text('Watch'),
                                     style: OutlinedButton.styleFrom(
                                       foregroundColor: accentColor,
                                       disabledForegroundColor:
@@ -1107,7 +1124,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                                       shape: RoundedRectangleBorder(
                                           borderRadius: BorderRadius.circular(8)),
                                       side: BorderSide(
-                                          color: (link.watchUrl != null && link.watchUrl!.isNotEmpty) || link.url.isNotEmpty
+                                          color: link.watchUrl != null && link.watchUrl!.isNotEmpty
                                               ? accentColor
                                               : (isDark ? Colors.grey.shade700 : Colors.grey.shade400)),
                                       textStyle: const TextStyle(
@@ -1142,12 +1159,6 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
       return const Color(0xFFFFAB00); // Yellow/amber for 720p
     }
     return const Color(0xFF4CAF50); // Green for others
-  }
-
-  String _formatViews(int views) {
-    if (views >= 1000000) return '${(views / 1000000).toStringAsFixed(1)}M';
-    if (views >= 1000) return '${(views / 1000).toStringAsFixed(1)}K';
-    return '$views';
   }
 
   String _getQualityDescription(String quality) {

@@ -9,10 +9,14 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          submodules: false
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -35,6 +39,16 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle-wrapper.properties') }}
           restore-keys: |
             gradle-${{ runner.os }}-
+
+      - name: Cache Flutter pub
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            .dart_tool/package_config.json
+          key: pub-${{ runner.os }}-${{ hashFiles('pubspec.yaml') }}
+          restore-keys: |
+            pub-${{ runner.os }}-
 
       # Setup signing key — use release keystore from secrets if available,
       # otherwise generate a temporary debug keystore so CI builds succeed

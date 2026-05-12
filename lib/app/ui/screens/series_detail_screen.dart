@@ -12,6 +12,7 @@ import 'package:cm_movies/app/core/services/recent_service.dart';
 import 'package:cm_movies/app/core/services/download_manager_service.dart';
 import 'package:cm_movies/app/ui/screens/category_page.dart';
 import 'package:cm_movies/app/ui/screens/download_page.dart';
+import 'package:cm_movies/app/ui/screens/video_player_screen.dart';
 import 'package:cm_movies/app/ui/components/age_rating_gate.dart';
 
 class SeriesDetailScreen extends StatefulWidget {
@@ -301,6 +302,15 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
         ),
       );
     }
+  }
+
+  void _openVideoPlayer(String url, String title) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => VideoPlayerScreen(videoUrl: url, title: title),
+      ),
+    );
   }
 
   Future<void> _launchUrl(String url) async {
@@ -1049,14 +1059,14 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                                               ),
                                             ),
                                             const SizedBox(width: 8),
-                                            // External download
+                                            // Watch button
                                             Expanded(
                                               child: OutlinedButton.icon(
-                                                onPressed: link.url.isNotEmpty
-                                                    ? () => _launchUrl(link.url)
+                                                onPressed: link.watchUrl != null && link.watchUrl!.isNotEmpty
+                                                    ? () => _openVideoPlayer(link.watchUrl!, link.watchName ?? qualityLabel)
                                                     : null,
-                                                icon: const Icon(Icons.open_in_new, size: 16),
-                                                label: Text('Open $qualityLabel'),
+                                                icon: const Icon(Icons.play_circle_outline, size: 16),
+                                                label: const Text('Watch'),
                                                 style: OutlinedButton.styleFrom(
                                                   foregroundColor: accentColor,
                                                   disabledForegroundColor: isDark
@@ -1065,7 +1075,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                                                   shape: RoundedRectangleBorder(
                                                       borderRadius: BorderRadius.circular(8)),
                                                   side: BorderSide(
-                                                      color: link.url.isNotEmpty
+                                                      color: link.watchUrl != null && link.watchUrl!.isNotEmpty
                                                           ? accentColor
                                                           : (isDark ? Colors.grey.shade700 : Colors.grey.shade400)),
                                                   textStyle: const TextStyle(
@@ -1245,14 +1255,14 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                               ),
                             ),
                             const SizedBox(width: 8),
-                            // External download
+                            // Watch button
                             Expanded(
                               child: OutlinedButton.icon(
-                                onPressed: link.url.isNotEmpty
-                                    ? () => _launchUrl(link.url)
+                                onPressed: link.watchUrl != null && link.watchUrl!.isNotEmpty
+                                    ? () => _openVideoPlayer(link.watchUrl!, link.watchName ?? qualityLabel)
                                     : null,
-                                icon: const Icon(Icons.open_in_new, size: 16),
-                                label: Text('Open $qualityLabel'),
+                                icon: const Icon(Icons.play_circle_outline, size: 16),
+                                label: const Text('Watch'),
                                 style: OutlinedButton.styleFrom(
                                   foregroundColor: accentColor,
                                   disabledForegroundColor: isDark
@@ -1260,7 +1270,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                                   padding: const EdgeInsets.symmetric(vertical: 10),
                                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                                   side: BorderSide(
-                                      color: link.url.isNotEmpty
+                                      color: link.watchUrl != null && link.watchUrl!.isNotEmpty
                                           ? accentColor
                                           : (isDark ? Colors.grey.shade700 : Colors.grey.shade400)),
                                   textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
