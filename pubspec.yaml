@@ -31,7 +31,8 @@ dependencies:
   flutter_dotenv: ^5.1.0
   flutter_secure_storage: ^9.2.2
   # Screen brightness control for video player
-  screen_brightness: ^2.0.1
+  # Must use ^0.2.x — media_kit_video 1.2.5 depends on screen_brightness ^0.2.2
+  screen_brightness: ^0.2.2
   # Firebase
   firebase_core: ^3.6.0
   firebase_auth: ^5.3.1
