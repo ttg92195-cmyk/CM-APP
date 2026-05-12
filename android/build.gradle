@@ -11,15 +11,6 @@ subprojects {
 }
 subprojects {
     project.evaluationDependsOn(':app')
-
-    // Ensure all subprojects have compileSdk specified (fixes package_info_plus build error)
-    afterEvaluate { evaluatedProject ->
-        if (evaluatedProject.hasProperty('android')) {
-            evaluatedProject.android {
-                compileSdk 34
-            }
-        }
-    }
 }
 
 tasks.register("clean", Delete) {
