@@ -10,12 +10,13 @@ import 'package:device_info_plus/device_info_plus.dart';
 /// Professional Video Player using media_kit (libmpv/VLC engine)
 /// Supports: MP4, MKV, HEVC (H.265), 4K, AC3/DTS audio, embedded subtitles
 ///
-/// Key features for 4K HEVC on all Android versions:
-/// - Hardware decoding first (MediaCodec GPU), software fallback if HW fails
-/// - Auto-retry with software decoding when "Could not open codec" error occurs
-/// - Video output downscaling to match device screen (reduces GPU load on low-end devices)
-/// - Optimized buffering for 4K high-bitrate network streams
-/// - Performance mpv properties for smoother playback on older devices
+/// Key features:
+/// - Manual toggle controls (tap to show/hide, NO auto-hide)
+/// - Audio Boost up to 300% (vertical drag on right side of screen)
+/// - Hardware decoding first, software fallback if HW fails
+/// - Auto-retry with software decoding when "Could not open codec"
+/// - Video output downscaling for low-end devices
+/// - App lifecycle handling (pause/resume on background/foreground)
 class VideoPlayerScreen extends StatefulWidget {
   final String videoUrl;
   final String title;
@@ -30,14 +31,17 @@ class VideoPlayerScreen extends StatefulWidget {
   State<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
 }
 
-class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
+class _VideoPlayerScreenState extends State<VideoPlayerScreen>
+    with WidgetsBindingObserver {
   late final Player _player;
   late final VideoController _controller;
   bool _isInitialized = false;
   String? _errorMessage;
   bool _isBuffering = false;
-  bool _showControls = false; // Start hidden - tap to show
-  Timer? _hideControlsTimer;
+
+  // Controls: Manual toggle (tap to show/hide) - NO auto-hide
+  bool _showControls = true; // Start visible - user taps to toggle
+
   bool _hasVideoOutput = false;
 
   // Hardware/Software decoding fallback
@@ -49,11 +53,25 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   bool _isLowEndDevice = false;
   int _screenWidth = 1080;
   int _screenHeight = 1920;
-  int _androidVersion = 30; // Default to Android 11
+  int _androidVersion = 30;
+
+  // Audio Boost: media_kit (libmpv) supports volume 0-300+
+  // Normal = 100, Boost = 100-300 (may cause distortion above 100)
+  double _currentVolume = 100.0;
+  static const double _maxVolume = 300.0;
+  static const double _normalVolume = 100.0;
+  bool _isVolumeBoosted = false;
+  bool _showVolumeIndicator = false;
+  Timer? _volumeIndicatorTimer;
+
+  // App lifecycle: track if video was playing before going to background
+  bool _wasPlayingBeforePause = false;
 
   @override
   void initState() {
     super.initState();
+    // Register for app lifecycle changes (background/foreground)
+    WidgetsBinding.instance.addObserver(this);
     // Allow landscape rotation for immersive video experience
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
@@ -65,11 +83,63 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     _detectDeviceAndInitialize();
   }
 
+  /// Handle app lifecycle state changes
+  /// When app goes to background: pause video
+  /// When app comes to foreground: resume video (if it was playing before)
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    debugPrint('App lifecycle: $state');
+    switch (state) {
+      case AppLifecycleState.paused:
+        // App went to background - remember if video was playing, then pause
+        _wasPlayingBeforePause = _player.state.playing;
+        if (_player.state.playing) {
+          _player.pause();
+          debugPrint('Video paused (app backgrounded)');
+        }
+        break;
+      case AppLifecycleState.resumed:
+        // App came to foreground - resume if it was playing before
+        if (_wasPlayingBeforePause && mounted) {
+          _player.play();
+          debugPrint('Video resumed (app foregrounded)');
+        }
+        _wasPlayingBeforePause = false;
+        // Re-apply immersive mode (Android may reset it)
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+        break;
+      case AppLifecycleState.inactive:
+        // App is inactive (e.g., phone call, notification overlay)
+        // Don't pause here - only pause on 'paused' state
+        break;
+      case AppLifecycleState.detached:
+        // App is detached - no action needed
+        break;
+      case AppLifecycleState.hidden:
+        // App is hidden - no action needed
+        break;
+    }
+  }
+
+  @override
+  void dispose() {
+    // Remove lifecycle observer
+    WidgetsBinding.instance.removeObserver(this);
+    _volumeIndicatorTimer?.cancel();
+    _player.dispose();
+    // Reset orientation to portrait when leaving
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    super.dispose();
+  }
+
   /// Detect device capabilities and initialize player with optimal settings
   Future<void> _detectDeviceAndInitialize() async {
     try {
       // Get screen resolution for adaptive video output sizing
-      // Use PlatformDispatcher (works on all Flutter versions)
       final views = ui.PlatformDispatcher.instance.views;
       if (views.isNotEmpty) {
         final view = views.first;
@@ -120,22 +190,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       debugPrint('Retry count: $_retryCount');
 
       // Calculate optimal video output size for the device
-      // On low-end devices with 720p screens, output at max 1280x720 to reduce GPU load
-      // On mid-range devices with 1080p screens, output at max 1920x1080
-      // On high-end devices, let mpv decide (no width/height constraint)
       int? outputWidth;
       int? outputHeight;
 
       if (_isLowEndDevice) {
-        // For 720p screens: limit output to 1280x720 (saves GPU on 4K content)
         outputWidth = 1280;
         outputHeight = 720;
       } else if (_screenWidth <= 1080) {
-        // For 1080p screens: limit output to 1920x1080
         outputWidth = 1920;
         outputHeight = 1080;
       }
-      // For higher-res screens, no limit needed - mpv handles it
 
       // Choose decoding strategy
       final bool useHWAccel = !_useSoftwareDecoding;
@@ -146,65 +210,28 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       debugPrint('Output size: ${outputWidth ?? 'auto'}x${outputHeight ?? 'auto'}');
 
       // Create player with optimized buffer settings for 4K streaming
-      // bufferSize maps to mpv's demuxer-max-bytes and demuxer-max-back-bytes
       _player = Player(
         configuration: PlayerConfiguration(
-          // 64MB buffer for 4K high-bitrate streams - prevents stuttering
-          // (increased from 32MB default for better 4K experience)
           bufferSize: 64 * 1024 * 1024,
           title: 'CM Movies Player',
-          // GPU video output driver - enables hardware rendering
           vo: voValue,
-          // Show errors in log for debugging
           logLevel: MPVLogLevel.error,
         ),
       );
 
       // Create video controller with hardware-accelerated rendering
-      // Key settings for 4K HEVC/MKV playback:
-      // - vo: 'gpu' → Force GPU video output
-      // - hwdec: 'auto' → Auto-select best hardware decoder (MediaCodec on Android)
-      //   Falls back to software decoding if hardware decoder fails
-      // - androidAttachSurfaceAfterVideoParameters: true → Wait for video info before rendering
-      //   This fixes "Could not open codec" on some devices by allowing the surface
-      //   to be configured with correct parameters before attaching
-      // - width/height → Limit video output size for low-end devices
-      //   Reduces GPU rendering load when playing 4K on 720p/1080p screens
       _controller = VideoController(
         _player,
         configuration: VideoControllerConfiguration(
-          // Force GPU video output driver
           vo: voValue,
-          // Hardware decoding mode:
-          // 'auto' = try MediaCodec first, fall back to FFmpeg software decoder
-          // 'no' = force FFmpeg software decoder only (fallback mode)
           hwdec: hwdecValue,
-          // Enable/disable hardware acceleration
           enableHardwareAcceleration: useHWAccel,
-          // On Android, wait for video parameters before attaching Surface.
-          // This is crucial for 4K HEVC - the surface needs to know the video
-          // dimensions before it can properly configure the hardware decoder
           androidAttachSurfaceAfterVideoParameters: true,
-          // Limit video output size for low-end devices
-          // This tells mpv to downscale the output to match the device screen,
-          // reducing GPU rendering load when playing 4K on 720p/1080p screens
           width: outputWidth,
           height: outputHeight,
         ),
       );
 
-      // NOTE: media_kit 1.1.11 does not expose Player.setProperty() for arbitrary
-      // mpv properties. Performance optimizations like vd-lavc-skiploopfilter,
-      // vd-lavc-skipframe, framedrop, demuxer-secs, etc. cannot be set at runtime.
-      //
-      // However, the most critical settings are configured through:
-      // - PlayerConfiguration.bufferSize → maps to demuxer-max-bytes + demuxer-max-back-bytes
-      // - VideoControllerConfiguration.hwdec → hardware decoding mode
-      // - VideoControllerConfiguration.width/height → video output downscaling
-      //
-      // The hwdec='auto' mode in libmpv already handles:
-      // - Auto frame dropping when decoder is too slow
-      // - Software fallback when hardware decoder fails
       debugPrint('Player configured with bufferSize=64MB, hwdec=$hwdecValue, output=${outputWidth ?? "auto"}x${outputHeight ?? "auto"}');
 
       // Listen to player state for buffering indicator
@@ -252,8 +279,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         }
       });
 
-      // Open the video URL - do NOT use Uri.encodeFull(), it breaks query params
-      // media_kit's libmpv handles URL encoding internally
+      // Listen for volume changes from external sources
+      _player.stream.volume.listen((volume) {
+        if (mounted) {
+          setState(() {
+            _currentVolume = volume;
+            _isVolumeBoosted = volume > _normalVolume;
+          });
+        }
+      });
+
+      // Open the video URL - do NOT use Uri.encodeFull()
       final url = widget.videoUrl;
       debugPrint('Opening media: $url');
 
@@ -267,9 +303,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       if (mounted) {
         setState(() {
           _isInitialized = true;
+          _showControls = true; // Show controls when video starts
         });
-        // Show controls briefly when video starts, then auto-hide
-        _showControlsWithAutoHide();
       }
     } catch (e) {
       debugPrint('Player initialization error: $e');
@@ -283,12 +318,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   }
 
   /// Handle player errors with intelligent hardware/software fallback
-  ///
-  /// Flow:
-  /// 1. First attempt: hwdec='auto' (tries GPU MediaCodec, falls back to software)
-  /// 2. If "Could not open codec" or similar: retry with hwdec='no' (pure software)
-  /// 3. Software decoding uses performance optimizations (frame skip, loop filter skip)
-  /// 4. If software also fails: show error with helpful message
   void _handlePlayerError(String error) {
     final isCodecError = error.contains('codec') ||
         error.contains('Could not open') ||
@@ -301,22 +330,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         error.contains('failed to initialize');
 
     if (isCodecError && _retryCount < _maxRetries && !_useSoftwareDecoding) {
-      // Hardware decoding failed - retry with software decoding
       _retryCount++;
       debugPrint('=== Retrying with SOFTWARE decoding (attempt $_retryCount) ===');
-
-      // Dispose current player
       _player.dispose();
-      _hideControlsTimer?.cancel();
-
-      // Switch to software decoding
       _useSoftwareDecoding = true;
       _hasVideoOutput = false;
-
-      // Re-initialize with software decoding
       _initializePlayer();
     } else if (mounted) {
-      // All retries exhausted or non-codec error
       setState(() {
         _isInitialized = true;
         _errorMessage = error;
@@ -324,243 +344,75 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     }
   }
 
-  @override
-  void dispose() {
-    _hideControlsTimer?.cancel();
-    _player.dispose();
-    // Reset orientation to portrait when leaving
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-      DeviceOrientation.portraitDown,
-    ]);
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    super.dispose();
+  // ============================================================
+  // Controls: Manual Toggle (NO auto-hide)
+  // Tap screen → show/hide controls
+  // ============================================================
+
+  /// Toggle controls visibility - manual only, NO auto-hide
+  void _toggleControls() {
+    setState(() {
+      _showControls = !_showControls;
+    });
   }
 
-  /// Show controls and start auto-hide timer (3 seconds)
-  void _showControlsWithAutoHide() {
-    _hideControlsTimer?.cancel();
+  // ============================================================
+  // Audio Boost 300% - Vertical Drag on Right Side of Screen
+  // ============================================================
+
+  /// Handle vertical drag on right side of screen for volume control
+  /// Drag up = increase volume, Drag down = decrease volume
+  /// Supports volume 0-300 (100 = normal, 100-300 = boost)
+  void _handleVolumeDrag(DragUpdateDetails details) {
+    final screenHeight = MediaQuery.of(context).size.height;
+    // Negative delta = drag up = increase volume
+    // Calculate volume change based on drag distance
+    final volumeChange = (-details.delta.dy / screenHeight) * _maxVolume;
+    double newVolume = (_currentVolume + volumeChange).clamp(0.0, _maxVolume);
+
+    // Round to whole numbers for cleaner display
+    newVolume = newVolume.roundToDouble();
+
+    _player.setVolume(newVolume);
     setState(() {
-      _showControls = true;
+      _currentVolume = newVolume;
+      _isVolumeBoosted = newVolume > _normalVolume;
+      _showVolumeIndicator = true;
     });
-    _hideControlsTimer = Timer(const Duration(seconds: 3), () {
+
+    // Auto-hide volume indicator after 1.5 seconds
+    _volumeIndicatorTimer?.cancel();
+    _volumeIndicatorTimer = Timer(const Duration(milliseconds: 1500), () {
       if (mounted) {
         setState(() {
-          _showControls = false;
+          _showVolumeIndicator = false;
         });
       }
     });
   }
 
-  /// Toggle controls visibility with auto-hide
-  void _toggleControls() {
-    if (_showControls) {
-      // Controls are visible - hide immediately
-      _hideControlsTimer?.cancel();
-      setState(() {
-        _showControls = false;
-      });
-    } else {
-      // Controls are hidden - show and auto-hide after 3 seconds
-      _showControlsWithAutoHide();
-    }
+  /// Handle volume slider change (from controls overlay)
+  void _handleVolumeSliderChange(double value) {
+    _player.setVolume(value);
+    setState(() {
+      _currentVolume = value;
+      _isVolumeBoosted = value > _normalVolume;
+    });
   }
 
-  /// Reset auto-hide timer (e.g., on seek or button press)
-  void _resetAutoHideTimer() {
-    if (_showControls) {
-      _hideControlsTimer?.cancel();
-      _hideControlsTimer = Timer(const Duration(seconds: 3), () {
-        if (mounted) {
-          setState(() {
-            _showControls = false;
-          });
-        }
-      });
-    }
+  /// Get volume icon based on current volume level
+  IconData _getVolumeIcon(double volume) {
+    if (volume == 0) return Icons.volume_off;
+    if (volume <= 50) return Icons.volume_mute;
+    if (volume <= 100) return Icons.volume_down;
+    return Icons.volume_up; // Boost mode
   }
 
-  /// Show audio track selection dialog for MKV files with multiple audio tracks
-  void _showAudioTrackDialog() {
-    _resetAutoHideTimer();
-    final audioTracks = _player.state.tracks.audio;
-    if (audioTracks.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No audio tracks available'),
-          backgroundColor: Colors.orange,
-          duration: Duration(seconds: 2),
-        ),
-      );
-      return;
-    }
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF1E1E1E),
-          title: const Text(
-            'Audio Track',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: audioTracks.map((track) {
-              final isSelected = _player.state.track.audio == track;
-              return ListTile(
-                leading: Icon(
-                  isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-                  color: isSelected ? const Color(0xFFE50914) : Colors.white54,
-                ),
-                title: Text(
-                  track.title?.isNotEmpty == true
-                      ? track.title!
-                      : 'Audio ${track.id}',
-                  style: TextStyle(
-                    color: isSelected ? Colors.white : Colors.white70,
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                  ),
-                ),
-                subtitle: track.language != null
-                    ? Text(
-                        track.language!,
-                        style: const TextStyle(color: Colors.white38, fontSize: 12),
-                      )
-                    : null,
-                onTap: () {
-                  _player.setAudioTrack(track);
-                  Navigator.pop(context);
-                },
-              );
-            }).toList(),
-          ),
-        );
-      },
-    );
-  }
-
-  /// Show subtitle track selection dialog for MKV files with embedded subtitles
-  void _showSubtitleTrackDialog() {
-    _resetAutoHideTimer();
-    final subtitleTracks = _player.state.tracks.subtitle;
-    if (subtitleTracks.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No subtitle tracks available'),
-          backgroundColor: Colors.orange,
-          duration: Duration(seconds: 2),
-        ),
-      );
-      return;
-    }
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF1E1E1E),
-          title: const Text(
-            'Subtitles',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Option to disable subtitles
-              ListTile(
-                leading: Icon(
-                  _player.state.track.subtitle == AudioTrack.no()
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_unchecked,
-                  color: const Color(0xFFE50914),
-                ),
-                title: const Text(
-                  'Off',
-                  style: TextStyle(color: Colors.white),
-                ),
-                onTap: () {
-                  _player.setSubtitleTrack(SubtitleTrack.no());
-                  Navigator.pop(context);
-                },
-              ),
-              const Divider(color: Colors.white12),
-              ...subtitleTracks.map((track) {
-                final isSelected = _player.state.track.subtitle == track;
-                return ListTile(
-                  leading: Icon(
-                    isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-                    color: isSelected ? const Color(0xFFE50914) : Colors.white54,
-                  ),
-                  title: Text(
-                    track.title?.isNotEmpty == true
-                        ? track.title!
-                        : 'Subtitle ${track.id}',
-                    style: TextStyle(
-                      color: isSelected ? Colors.white : Colors.white70,
-                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                    ),
-                  ),
-                  subtitle: track.language != null
-                      ? Text(
-                          track.language!,
-                          style: const TextStyle(color: Colors.white38, fontSize: 12),
-                        )
-                      : null,
-                  onTap: () {
-                    _player.setSubtitleTrack(track);
-                    Navigator.pop(context);
-                  },
-                );
-              }),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  /// Show playback speed selection dialog
-  void _showSpeedDialog() {
-    _resetAutoHideTimer();
-    const speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
-    final currentSpeed = _player.state.rate;
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF1E1E1E),
-          title: const Text(
-            'Playback Speed',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: speeds.map((speed) {
-              final isSelected = (currentSpeed - speed).abs() < 0.01;
-              return ListTile(
-                leading: Icon(
-                  isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-                  color: isSelected ? const Color(0xFFE50914) : Colors.white54,
-                ),
-                title: Text(
-                  speed == 1.0 ? 'Normal' : '${speed}x',
-                  style: TextStyle(
-                    color: isSelected ? Colors.white : Colors.white70,
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                  ),
-                ),
-                onTap: () {
-                  _player.setRate(speed);
-                  Navigator.pop(context);
-                },
-              );
-            }).toList(),
-          ),
-        );
-      },
-    );
+  /// Get volume color (white for normal, red for boost)
+  Color _getVolumeColor(double volume) {
+    if (volume == 0) return Colors.white38;
+    if (volume <= _normalVolume) return Colors.white;
+    return const Color(0xFFFF4444); // Red for boost mode
   }
 
   /// Format duration for display
@@ -578,41 +430,63 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // Video display layer - must fill entire screen
+          // Layer 1: Video display - fills entire screen
           Positioned.fill(
             child: _buildVideoLayer(),
           ),
 
-          // Gesture layer (tap to toggle controls)
-          Positioned.fill(
+          // Layer 2: Volume control - vertical drag on RIGHT 25% of screen
+          Positioned(
+            left: screenWidth * 0.75,
+            top: 0,
+            width: screenWidth * 0.25,
+            height: MediaQuery.of(context).size.height,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onVerticalDragUpdate: _handleVolumeDrag,
+              child: Container(color: Colors.transparent),
+            ),
+          ),
+
+          // Layer 3: Main gesture layer (tap to toggle controls, double tap to seek)
+          // Covers LEFT 75% of screen (right 25% is for volume drag)
+          Positioned(
+            left: 0,
+            top: 0,
+            width: screenWidth * 0.75,
+            height: MediaQuery.of(context).size.height,
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: _toggleControls,
               // Double tap to seek ±10 seconds
               onDoubleTapDown: (details) {
-                final width = MediaQuery.of(context).size.width;
-                if (details.globalPosition.dx < width / 2) {
+                final halfWidth = (screenWidth * 0.75) / 2;
+                if (details.globalPosition.dx < halfWidth) {
                   _player.seek(_player.state.position - const Duration(seconds: 10));
                 } else {
                   _player.seek(_player.state.position + const Duration(seconds: 10));
                 }
-                _resetAutoHideTimer();
               },
               child: Container(color: Colors.transparent),
             ),
           ),
 
-          // Controls overlay layer (auto-hides after 3 seconds)
+          // Layer 4: Controls overlay (manual toggle - NO auto-hide)
           if (_showControls) _buildControlsOverlay(),
 
-          // Buffering indicator (always visible when buffering)
+          // Layer 5: Volume indicator (shows during drag, auto-hides)
+          if (_showVolumeIndicator) _buildVolumeIndicator(),
+
+          // Layer 6: Buffering indicator (always visible when buffering)
           if (_isBuffering) _buildBufferingIndicator(),
 
-          // Decoding mode indicator (small badge in corner)
+          // Layer 7: Decoding mode indicator (small badge in corner)
           if (_useSoftwareDecoding && _hasVideoOutput)
             Positioned(
               top: 48,
@@ -643,8 +517,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       return _buildErrorScreen();
     }
 
-    // Use Video widget - let it fill the entire screen
-    // media_kit handles aspect ratio and scaling internally
     return Video(
       controller: _controller,
       controls: NoVideoControls,
@@ -685,7 +557,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   }
 
   Widget _buildErrorScreen() {
-    // Detect if this is a codec error (4K HEVC not supported by device)
     final isCodecError = _errorMessage != null && (
       _errorMessage!.contains('codec') ||
       _errorMessage!.contains('Could not open') ||
@@ -742,7 +613,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                   onPressed: () {
                     _player.dispose();
                     _retryCount = 0;
-                    _useSoftwareDecoding = true; // Try software on manual retry
+                    _useSoftwareDecoding = true;
                     setState(() {
                       _isInitialized = false;
                       _errorMessage = null;
@@ -790,11 +661,106 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         children: [
           const CircularProgressIndicator(color: Color(0xFFE50914)),
           const SizedBox(height: 12),
-          Text(
-            _isBuffering ? 'Buffering...' : '',
-            style: const TextStyle(color: Colors.white70, fontSize: 14),
+          const Text(
+            'Buffering...',
+            style: TextStyle(color: Colors.white70, fontSize: 14),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Volume indicator - shows current volume level with boost indicator
+  /// Appears during vertical drag, auto-hides after 1.5 seconds
+  Widget _buildVolumeIndicator() {
+    final volumePercent = (_currentVolume / _maxVolume * 100).round();
+    final isBoosted = _currentVolume > _normalVolume;
+    final normalPercent = (_normalVolume / _maxVolume * 100); // 33% of slider
+
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.black87,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Volume icon
+            Icon(
+              _getVolumeIcon(_currentVolume),
+              color: _getVolumeColor(_currentVolume),
+              size: 32,
+            ),
+            const SizedBox(height: 8),
+            // Volume percentage
+            Text(
+              '$volumePercent%',
+              style: TextStyle(
+                color: _getVolumeColor(_currentVolume),
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 6),
+            // Volume bar
+            Container(
+              width: 160,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(2),
+              ),
+              child: Stack(
+                children: [
+                  // Normal range (0-100): white/red fill
+                  FractionallySizedBox(
+                    widthFactor: (_currentVolume / _maxVolume).clamp(0.0, 1.0),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: isBoosted ? const Color(0xFFFF4444) : Colors.white,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  // Normal/Boost divider line at 100 (33% position)
+                  Positioned(
+                    left: normalPercent / 100 * 160 - 1,
+                    top: -2,
+                    child: Container(
+                      width: 2,
+                      height: 8,
+                      color: Colors.white70,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 4),
+            // Boost label
+            if (isBoosted)
+              const Text(
+                'BOOST',
+                style: TextStyle(
+                  color: Color(0xFFFF4444),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.5,
+                ),
+              )
+            else if (_currentVolume == 0)
+              const Text(
+                'MUTED',
+                style: TextStyle(
+                  color: Colors.white38,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 1.5,
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -815,7 +781,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
           const Spacer(),
 
-          // Bottom bar: Seek + Controls
+          // Bottom bar: Seek + Controls (with Volume Boost Slider)
           _buildBottomBar(),
         ],
       ),
@@ -851,7 +817,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            // Audio track button (for MKV dual audio)
+            // Audio track button
             IconButton(
               icon: const Icon(Icons.audiotrack, color: Colors.white, size: 22),
               onPressed: _showAudioTrackDialog,
@@ -862,7 +828,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
               tooltip: 'Audio Track',
             ),
             const SizedBox(width: 4),
-            // Subtitle track button (for MKV embedded subtitles)
+            // Subtitle track button
             IconButton(
               icon: const Icon(Icons.subtitles, color: Colors.white, size: 22),
               onPressed: _showSubtitleTrackDialog,
@@ -942,7 +908,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                       milliseconds: (duration.inMilliseconds * value).round(),
                     );
                     _player.seek(seekPosition);
-                    _resetAutoHideTimer();
                   },
                 ),
               ),
@@ -980,7 +945,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
             icon: const Icon(Icons.replay_10, color: Colors.white, size: 28),
             onPressed: () {
               _player.seek(_player.state.position - const Duration(seconds: 10));
-              _resetAutoHideTimer();
             },
           ),
           const SizedBox(width: 16),
@@ -1001,7 +965,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                   } else {
                     _player.play();
                   }
-                  _resetAutoHideTimer();
                 },
               );
             },
@@ -1012,28 +975,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
             icon: const Icon(Icons.forward_10, color: Colors.white, size: 28),
             onPressed: () {
               _player.seek(_player.state.position + const Duration(seconds: 10));
-              _resetAutoHideTimer();
             },
           ),
           const Spacer(),
-          // Volume
-          StreamBuilder<double>(
-            stream: _player.stream.volume,
-            builder: (context, snapshot) {
-              final volume = snapshot.data ?? 100.0;
-              return IconButton(
-                icon: Icon(
-                  volume == 0 ? Icons.volume_off : volume < 50 ? Icons.volume_down : Icons.volume_up,
-                  color: Colors.white,
-                  size: 24,
-                ),
-                onPressed: () {
-                  _player.setVolume(volume == 0 ? 100 : 0);
-                  _resetAutoHideTimer();
-                },
-              );
-            },
-          ),
+          // Volume slider with Boost support (0-300)
+          _buildVolumeSlider(),
           const SizedBox(width: 8),
           // Fullscreen toggle
           IconButton(
@@ -1052,11 +998,263 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                   DeviceOrientation.portraitUp,
                 ]);
               }
-              _resetAutoHideTimer();
             },
           ),
         ],
       ),
+    );
+  }
+
+  /// Volume slider with Boost mode support (0-300)
+  /// White color for 0-100 (normal), Red color for 100-300 (boost)
+  Widget _buildVolumeSlider() {
+    final isBoosted = _currentVolume > _normalVolume;
+    // Map 0-300 to 0.0-1.0 for slider
+    final sliderValue = (_currentVolume / _maxVolume).clamp(0.0, 1.0);
+    // Position of normal volume (100/300 = 0.333)
+    const normalMarker = _normalVolume / _maxVolume;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Volume icon button (tap to mute/unmute)
+        GestureDetector(
+          onTap: () {
+            if (_currentVolume == 0) {
+              _player.setVolume(_normalVolume);
+              setState(() {
+                _currentVolume = _normalVolume;
+                _isVolumeBoosted = false;
+              });
+            } else {
+              _player.setVolume(0);
+              setState(() {
+                _currentVolume = 0;
+                _isVolumeBoosted = false;
+              });
+            }
+          },
+          child: Icon(
+            _getVolumeIcon(_currentVolume),
+            color: _getVolumeColor(_currentVolume),
+            size: 22,
+          ),
+        ),
+        const SizedBox(width: 4),
+        // Volume slider (0-300)
+        SizedBox(
+          width: 100,
+          child: SliderTheme(
+            data: SliderThemeData(
+              trackHeight: 3,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
+              // Normal range: white, Boost range: red
+              activeTrackColor: isBoosted ? const Color(0xFFFF4444) : Colors.white,
+              inactiveTrackColor: Colors.white24,
+              thumbColor: isBoosted ? const Color(0xFFFF4444) : Colors.white,
+              overlayColor: isBoosted
+                  ? const Color(0xFFFF4444).withOpacity(0.2)
+                  : Colors.white.withOpacity(0.2),
+            ),
+            child: Slider(
+              value: sliderValue,
+              onChanged: (value) {
+                final newVolume = (value * _maxVolume).roundToDouble();
+                _handleVolumeSliderChange(newVolume);
+              },
+            ),
+          ),
+        ),
+        // Volume percentage label
+        Text(
+          '${(_currentVolume).round()}%',
+          style: TextStyle(
+            color: _getVolumeColor(_currentVolume),
+            fontSize: 11,
+            fontWeight: _isVolumeBoosted ? FontWeight.w700 : FontWeight.normal,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Show audio track selection dialog for MKV files with multiple audio tracks
+  void _showAudioTrackDialog() {
+    final audioTracks = _player.state.tracks.audio;
+    if (audioTracks.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No audio tracks available'),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1E1E1E),
+          title: const Text(
+            'Audio Track',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: audioTracks.map((track) {
+              final isSelected = _player.state.track.audio == track;
+              return ListTile(
+                leading: Icon(
+                  isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                  color: isSelected ? const Color(0xFFE50914) : Colors.white54,
+                ),
+                title: Text(
+                  track.title?.isNotEmpty == true
+                      ? track.title!
+                      : 'Audio ${track.id}',
+                  style: TextStyle(
+                    color: isSelected ? Colors.white : Colors.white70,
+                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                  ),
+                ),
+                subtitle: track.language != null
+                    ? Text(
+                        track.language!,
+                        style: const TextStyle(color: Colors.white38, fontSize: 12),
+                      )
+                    : null,
+                onTap: () {
+                  _player.setAudioTrack(track);
+                  Navigator.pop(context);
+                },
+              );
+            }).toList(),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Show subtitle track selection dialog for MKV files with embedded subtitles
+  void _showSubtitleTrackDialog() {
+    final subtitleTracks = _player.state.tracks.subtitle;
+    if (subtitleTracks.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No subtitle tracks available'),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1E1E1E),
+          title: const Text(
+            'Subtitles',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: Icon(
+                  _player.state.track.subtitle == AudioTrack.no()
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  color: const Color(0xFFE50914),
+                ),
+                title: const Text(
+                  'Off',
+                  style: TextStyle(color: Colors.white),
+                ),
+                onTap: () {
+                  _player.setSubtitleTrack(SubtitleTrack.no());
+                  Navigator.pop(context);
+                },
+              ),
+              const Divider(color: Colors.white12),
+              ...subtitleTracks.map((track) {
+                final isSelected = _player.state.track.subtitle == track;
+                return ListTile(
+                  leading: Icon(
+                    isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                    color: isSelected ? const Color(0xFFE50914) : Colors.white54,
+                  ),
+                  title: Text(
+                    track.title?.isNotEmpty == true
+                        ? track.title!
+                        : 'Subtitle ${track.id}',
+                    style: TextStyle(
+                      color: isSelected ? Colors.white : Colors.white70,
+                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                    ),
+                  ),
+                  subtitle: track.language != null
+                      ? Text(
+                          track.language!,
+                          style: const TextStyle(color: Colors.white38, fontSize: 12),
+                        )
+                      : null,
+                  onTap: () {
+                    _player.setSubtitleTrack(track);
+                    Navigator.pop(context);
+                  },
+                );
+              }),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// Show playback speed selection dialog
+  void _showSpeedDialog() {
+    const speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+    final currentSpeed = _player.state.rate;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1E1E1E),
+          title: const Text(
+            'Playback Speed',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: speeds.map((speed) {
+              final isSelected = (currentSpeed - speed).abs() < 0.01;
+              return ListTile(
+                leading: Icon(
+                  isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                  color: isSelected ? const Color(0xFFE50914) : Colors.white54,
+                ),
+                title: Text(
+                  speed == 1.0 ? 'Normal' : '${speed}x',
+                  style: TextStyle(
+                    color: isSelected ? Colors.white : Colors.white70,
+                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                  ),
+                ),
+                onTap: () {
+                  _player.setRate(speed);
+                  Navigator.pop(context);
+                },
+              );
+            }).toList(),
+          ),
+        );
+      },
     );
   }
 }
