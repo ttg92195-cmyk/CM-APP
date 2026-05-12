@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
@@ -68,8 +69,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   Future<void> _detectDeviceAndInitialize() async {
     try {
       // Get screen resolution for adaptive video output sizing
-      final view = WidgetsBinding.instance.renderView;
-      if (view != null) {
+      // Use PlatformDispatcher (works on all Flutter versions)
+      final views = ui.PlatformDispatcher.instance.views;
+      if (views.isNotEmpty) {
+        final view = views.first;
         _screenWidth = view.physicalSize.width.toInt();
         _screenHeight = view.physicalSize.height.toInt();
         debugPrint('Screen resolution: ${_screenWidth}x$_screenHeight');
@@ -190,34 +193,19 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         ),
       );
 
-      // Set performance-optimizing mpv properties via setProperty()
-      // These must be called AFTER player creation (requires initialized native backend)
-      try {
-        if (_useSoftwareDecoding) {
-          // Software decoding performance optimizations for low-end devices:
-          // Skip loop filter (reduces CPU load by ~30-40%, slight quality loss)
-          await _player.setProperty('vd-lavc-skiploopfilter', 'nonref');
-          // Skip non-reference frames when CPU can't keep up (smoother playback)
-          await _player.setProperty('vd-lavc-skipframe', 'noref');
-          // Allow dropping frames to maintain A/V sync on slow devices
-          await _player.setProperty('framedrop', 'vo');
-          debugPrint('Software decoding performance properties set');
-        }
-
-        // Network/stream buffering optimizations for 4K:
-        // Buffer 30 seconds of content ahead (prevents stuttering on slow networks)
-        await _player.setProperty('demuxer-secs', '30');
-        // Allow seeking in network streams
-        await _player.setProperty('force-seekable', 'yes');
-        // User agent for streaming servers
-        await _player.setProperty('user-agent',
-            'CM-Movies/1.0 (Android; SDK $_androidVersion)');
-
-        debugPrint('Network buffering properties set');
-      } catch (e) {
-        // setProperty errors are non-critical - playback can continue
-        debugPrint('setProperty error (non-critical): $e');
-      }
+      // NOTE: media_kit 1.1.11 does not expose Player.setProperty() for arbitrary
+      // mpv properties. Performance optimizations like vd-lavc-skiploopfilter,
+      // vd-lavc-skipframe, framedrop, demuxer-secs, etc. cannot be set at runtime.
+      //
+      // However, the most critical settings are configured through:
+      // - PlayerConfiguration.bufferSize → maps to demuxer-max-bytes + demuxer-max-back-bytes
+      // - VideoControllerConfiguration.hwdec → hardware decoding mode
+      // - VideoControllerConfiguration.width/height → video output downscaling
+      //
+      // The hwdec='auto' mode in libmpv already handles:
+      // - Auto frame dropping when decoder is too slow
+      // - Software fallback when hardware decoder fails
+      debugPrint('Player configured with bufferSize=64MB, hwdec=$hwdecValue, output=${outputWidth ?? "auto"}x${outputHeight ?? "auto"}');
 
       // Listen to player state for buffering indicator
       _player.stream.buffering.listen((buffering) {
