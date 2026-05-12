@@ -85,8 +85,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   // Feature 4: Resume Playback
   Timer? _positionSaveTimer;
-  Duration _savedPosition = Duration.zero;
-  Duration _savedDuration = Duration.zero;
+  Duration _lastKnownPosition = Duration.zero; // Track from stream for reliable save
+  Duration _lastKnownDuration = Duration.zero;
   bool _hasResumed = false;
   bool _videoCompleted = false;
 
@@ -146,10 +146,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     _brightnessIndicatorTimer?.cancel();
     _seekAnimationTimer?.cancel();
     _positionSaveTimer?.cancel();
-    _saveWatchProgress(); // Save on dispose
+    // FIX: Save position BEFORE disposing player using last known values
+    _saveWatchProgressSync();
     _player.dispose();
     // Reset brightness to system default
-    ScreenBrightness().resetScreenBrightness();
+    try { ScreenBrightness().resetScreenBrightness(); } catch (_) {}
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
     ]);
@@ -174,9 +175,30 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   String get _progressKey => 'watch_pos_${widget.videoId ?? widget.videoUrl.hashCode}';
   String get _durationKey => 'watch_dur_${widget.videoId ?? widget.videoUrl.hashCode}';
 
-  Future<void> _saveWatchProgress() async {
+  // Sync save — uses _lastKnownPosition (captured from stream)
+  // Safe to call from dispose() because it doesn't read from player
+  void _saveWatchProgressSync() {
+    final posMs = _lastKnownPosition.inMilliseconds;
+    final durMs = _lastKnownDuration.inMilliseconds;
     if (_videoCompleted) {
       // Video finished — clear saved position
+      SharedPreferences.getInstance().then((prefs) {
+        prefs.remove(_progressKey);
+        prefs.remove(_durationKey);
+      });
+      return;
+    }
+    if (posMs > 5000 && durMs > 0) {
+      SharedPreferences.getInstance().then((prefs) {
+        prefs.setInt(_progressKey, posMs);
+        prefs.setInt(_durationKey, durMs);
+      });
+    }
+  }
+
+  // Async save — reads from player directly (for timer & background)
+  Future<void> _saveWatchProgress() async {
+    if (_videoCompleted) {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_progressKey);
       await prefs.remove(_durationKey);
@@ -185,6 +207,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     final position = _player.state.position;
     final duration = _player.state.duration;
     if (position.inSeconds > 0 && duration.inSeconds > 0) {
+      _lastKnownPosition = position;
+      _lastKnownDuration = duration;
       final prefs = await SharedPreferences.getInstance();
       await prefs.setInt(_progressKey, position.inMilliseconds);
       await prefs.setInt(_durationKey, duration.inMilliseconds);
@@ -192,16 +216,20 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   Future<Duration?> _loadSavedPosition() async {
-    final prefs = await SharedPreferences.getInstance();
-    final posMs = prefs.getInt(_progressKey);
-    final durMs = prefs.getInt(_durationKey);
-    if (posMs != null && durMs != null && posMs > 5000) {
-      // Only resume if watched more than 5s and less than 95%
-      final progress = posMs / durMs;
-      if (progress < 0.95) {
-        _savedDuration = Duration(milliseconds: durMs);
-        return Duration(milliseconds: posMs);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final posMs = prefs.getInt(_progressKey);
+      final durMs = prefs.getInt(_durationKey);
+      debugPrint('Resume check: posMs=$posMs, durMs=$durMs, key=$_progressKey');
+      if (posMs != null && durMs != null && posMs > 5000) {
+        // Only resume if watched more than 5s and less than 95%
+        final progress = posMs / durMs;
+        if (progress < 0.95) {
+          return Duration(milliseconds: posMs);
+        }
       }
+    } catch (e) {
+      debugPrint('Resume load error: $e');
     }
     return null;
   }
@@ -368,6 +396,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         }
       });
 
+      // Track position from stream for reliable resume playback saving
+      _player.stream.position.listen((position) {
+        _lastKnownPosition = position;
+      });
+      _player.stream.duration.listen((duration) {
+        _lastKnownDuration = duration;
+      });
+
       await _player.open(Media(widget.videoUrl));
       await _player.play();
 
@@ -376,10 +412,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           _isInitialized = true;
           _showControls = true;
         });
-        // Feature 4: Check for saved position and show resume dialog
-        _checkResumePosition();
         // Start periodic position saving
         _startPositionSaveTimer();
+        // Feature 4: Check for saved position AFTER a short delay
+        // (give the video surface time to render before showing dialog)
+        Future.delayed(const Duration(milliseconds: 800), () {
+          if (mounted) _checkResumePosition();
+        });
       }
     } catch (e) {
       if (mounted) {
@@ -392,9 +431,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   Future<void> _checkResumePosition() async {
-    if (widget.videoId == null && widget.videoUrl.isEmpty) return;
+    // Always check — use URL hash as fallback if videoId is null
     final savedPos = await _loadSavedPosition();
     if (savedPos != null && mounted) {
+      // Pause while showing dialog so user can decide
+      _player.pause();
       _showResumeDialog(savedPos);
     }
   }
@@ -797,6 +838,21 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   Widget _buildVideoLayer() {
     if (!_isInitialized) return _buildLoadingScreen();
     if (_errorMessage != null) return _buildErrorScreen();
+
+    // FIX: When Zoom (cover) mode, remove AspectRatio constraint
+    // so BoxFit.cover can actually zoom the video to fill the screen.
+    // With AspectRatio, the container matches the video's exact ratio,
+    // so BoxFit.cover has the same visual result as BoxFit.contain.
+    if (_videoFit == BoxFit.cover) {
+      // Zoom mode: fill entire screen, cropping edges
+      return Video(
+        controller: _controller,
+        controls: NoVideoControls,
+        fit: BoxFit.cover,
+      );
+    }
+
+    // Normal mode: maintain aspect ratio with letterboxing
     return Center(
       child: AspectRatio(
         aspectRatio: _player.state.width != null &&
@@ -807,7 +863,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         child: Video(
           controller: _controller,
           controls: NoVideoControls,
-          fit: _videoFit,
+          fit: BoxFit.contain,
         ),
       ),
     );
