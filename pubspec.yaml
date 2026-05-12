@@ -15,9 +15,12 @@ dependencies:
   url_launcher: ^6.2.2
   dio: ^5.4.0
   # Video Player - media_kit (libmpv/VLC engine) for MKV/4K/HEVC support
-  media_kit: ^1.1.11
-  media_kit_video: ^1.2.5
-  media_kit_libs_video: ^1.0.5
+  # Pin exact versions for Flutter 3.24.5 compatibility:
+  # - media_kit_video 1.3.x requires Flutter 3.29+ (SurfaceProducer.Callback changed)
+  # - media_kit_video 1.2.5 is the last version compatible with Flutter 3.24.x
+  media_kit: 1.1.11
+  media_kit_video: 1.2.5
+  media_kit_libs_video: 1.0.5
   path_provider: ^2.1.2
   permission_handler: ^11.3.1
   device_info_plus: ^10.1.0
@@ -34,6 +37,10 @@ dependencies:
 dependency_overrides:
   package_info_plus: 8.1.2
   wakelock_plus: 1.2.8
+  # Pin media_kit versions for Flutter 3.24.5 compatibility
+  media_kit: 1.1.11
+  media_kit_video: 1.2.5
+  media_kit_libs_video: 1.0.5
 
 flutter:
   uses-material-design: true
