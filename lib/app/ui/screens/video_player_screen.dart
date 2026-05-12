@@ -130,9 +130,21 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     // Reset orientation to portrait when leaving
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
-      DeviceOrientation.portraitDown,
     ]);
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    // IMPORTANT: Restore System UI properly to fix black status bar issue
+    // Step 1: Exit immersive mode and show system UI
+    SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.manual,
+      overlays: SystemUiOverlay.values, // Show both status bar and nav bar
+    );
+    // Step 2: Restore status bar color to match app theme (not black)
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark, // Dark icons for light background
+      statusBarBrightness: Brightness.light, // For iOS
+      systemNavigationBarColor: Colors.white,
+      systemNavigationBarIconBrightness: Brightness.dark,
+    ));
     super.dispose();
   }
 
@@ -431,62 +443,43 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
+    final screenHeight = MediaQuery.of(context).size.height;
 
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // Layer 1: Video display - fills entire screen
+          // ====== LAYER 1: Video (bottom) ======
+          // media_kit Video widget fills entire screen
           Positioned.fill(
             child: _buildVideoLayer(),
           ),
 
-          // Layer 2: Volume control - vertical drag on RIGHT 25% of screen
-          Positioned(
-            left: screenWidth * 0.75,
-            top: 0,
-            width: screenWidth * 0.25,
-            height: MediaQuery.of(context).size.height,
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onVerticalDragUpdate: _handleVolumeDrag,
-              child: Container(color: Colors.transparent),
+          // ====== LAYER 2: Controls overlay (middle) ======
+          // Shows/hides based on _showControls
+          // Uses IgnorePointer so taps pass through to Layer 3 gesture detector
+          if (_showControls)
+            Positioned.fill(
+              child: IgnorePointer(
+                // When controls are visible, taps on EMPTY areas pass through
+                // But interactive elements (buttons, sliders) still respond
+                ignoring: false,
+                child: _buildControlsOverlay(),
+              ),
             ),
-          ),
 
-          // Layer 3: Main gesture layer (tap to toggle controls, double tap to seek)
-          // Covers LEFT 75% of screen (right 25% is for volume drag)
-          Positioned(
-            left: 0,
-            top: 0,
-            width: screenWidth * 0.75,
-            height: MediaQuery.of(context).size.height,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: _toggleControls,
-              // Double tap to seek ±10 seconds
-              onDoubleTapDown: (details) {
-                final halfWidth = (screenWidth * 0.75) / 2;
-                if (details.globalPosition.dx < halfWidth) {
-                  _player.seek(_player.state.position - const Duration(seconds: 10));
-                } else {
-                  _player.seek(_player.state.position + const Duration(seconds: 10));
-                }
-              },
-              child: Container(color: Colors.transparent),
+          // ====== LAYER 3: Buffering indicator ======
+          if (_isBuffering)
+            const Positioned.fill(
+              child: Center(
+                child: CircularProgressIndicator(color: Color(0xFFE50914)),
+              ),
             ),
-          ),
 
-          // Layer 4: Controls overlay (manual toggle - NO auto-hide)
-          if (_showControls) _buildControlsOverlay(),
-
-          // Layer 5: Volume indicator (shows during drag, auto-hides)
+          // ====== LAYER 4: Volume indicator (auto-hides) ======
           if (_showVolumeIndicator) _buildVolumeIndicator(),
 
-          // Layer 6: Buffering indicator (always visible when buffering)
-          if (_isBuffering) _buildBufferingIndicator(),
-
-          // Layer 7: Decoding mode indicator (small badge in corner)
+          // ====== LAYER 5: SW badge ======
           if (_useSoftwareDecoding && _hasVideoOutput)
             Positioned(
               top: 48,
@@ -503,6 +496,56 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 ),
               ),
             ),
+
+          // ====== LAYER 6: GESTURE DETECTOR (TOPMOST - above everything!) ======
+          // This is the CRITICAL layer that makes toggle work.
+          // It must be ABOVE the Video widget and ABOVE the Controls overlay
+          // so that it receives ALL tap events first.
+          //
+          // How it works with Controls:
+          // - When controls are VISIBLE: This gesture detector sits on TOP.
+          //   Taps on buttons/sliders go to controls (they're hit first).
+          //   Taps on EMPTY areas go to this gesture detector → toggle OFF.
+          // - When controls are HIDDEN: This gesture detector catches ALL taps → toggle ON.
+          //
+          // Volume drag: RIGHT 30% of screen
+          // Tap toggle + Double-tap seek: LEFT 70% of screen
+          Positioned.fill(
+            child: Row(
+              children: [
+                // LEFT 70%: Tap to toggle controls, Double-tap to seek
+                Expanded(
+                  flex: 7,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    // Single tap: toggle controls
+                    onTap: _toggleControls,
+                    // Double tap: seek ±10 seconds
+                    onDoubleTapDown: (details) {
+                      final halfWidth = screenWidth * 0.35; // Half of 70%
+                      if (details.globalPosition.dx < halfWidth) {
+                        _player.seek(_player.state.position - const Duration(seconds: 10));
+                      } else {
+                        _player.seek(_player.state.position + const Duration(seconds: 10));
+                      }
+                    },
+                    child: Container(color: Colors.transparent),
+                  ),
+                ),
+                // RIGHT 30%: Vertical drag for volume control
+                Expanded(
+                  flex: 3,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onVerticalDragUpdate: _handleVolumeDrag,
+                    // Also allow tap on right side to toggle controls
+                    onTap: _toggleControls,
+                    child: Container(color: Colors.transparent),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -650,22 +693,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildBufferingIndicator() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const CircularProgressIndicator(color: Color(0xFFE50914)),
-          const SizedBox(height: 12),
-          const Text(
-            'Buffering...',
-            style: TextStyle(color: Colors.white70, fontSize: 14),
-          ),
-        ],
       ),
     );
   }
