@@ -250,8 +250,9 @@ class TmdbService {
         : null;
 
     // Extract duration from runtime (available in movie details API)
+    // Store as integer (minutes) — UI will format as "95 min"
     final runtime = tmdbMovie['runtime'] as int?;
-    final duration = runtime != null && runtime > 0 ? '$runtime min' : null;
+    final duration = (runtime != null && runtime > 0) ? runtime : null;
 
     return {
       'title': tmdbMovie['title'] ?? tmdbMovie['name'] ?? '',
@@ -334,10 +335,13 @@ class TmdbService {
     }
 
     // Extract duration from episode_run_time (available in TV details API)
+    // Store as integer (minutes) — UI will format as "45 min"
     final episodeRunTime = tmdbTV['episode_run_time'] as List<dynamic>?;
-    final duration = (episodeRunTime != null && episodeRunTime.isNotEmpty)
-        ? '${episodeRunTime.first} min'
-        : null;
+    int? duration;
+    if (episodeRunTime != null && episodeRunTime.isNotEmpty) {
+      final first = episodeRunTime.first;
+      duration = first is int ? first : int.tryParse(first.toString());
+    }
 
     return {
       'title': tmdbTV['name'] ?? tmdbTV['title'] ?? '',

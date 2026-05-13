@@ -393,6 +393,9 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
         _selectedIds.clear();
       });
 
+      // Refresh imported status so badges update immediately
+      _loadImportedTmdbIds();
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -488,17 +491,37 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
 
           final firestoreData = TmdbService.mapMovieToFirestore(fullDetails, _genreIdToName);
 
-          // Skip description update if toggle is ON
-          if (_skipDescriptionUpdate) {
-            firestoreData.remove('overview');
+          // Build SAFE update map — only TMDB fields, preserve user data
+          final safeUpdate = <String, dynamic>{};
+          for (final key in ['title', 'year', 'poster', 'backdrop', 'rating',
+              'duration', 'isAdult', 'categories', 'directors', 'casts',
+              'tmdbId', 'country']) {
+            if (firestoreData.containsKey(key)) {
+              safeUpdate[key] = firestoreData[key];
+            }
           }
 
-          // Keep existing downloadLinks and seasons
-          firestoreData.remove('downloadLinks');
-          firestoreData.remove('seasons');
-          firestoreData.remove('tags');
+          // Conditionally include overview
+          if (!_skipDescriptionUpdate && firestoreData.containsKey('overview')) {
+            safeUpdate['overview'] = firestoreData['overview'];
+          }
 
-          await _contentService.updateMovie(doc.id, firestoreData);
+          // CRITICAL: Validate document still has the same tmdbId before updating
+          // This prevents data corruption from stale references
+          final currentDoc = await FirebaseFirestore.instance
+              .collection('movies')
+              .doc(doc.id)
+              .get();
+          if (currentDoc.exists) {
+            final currentTmdbId = (currentDoc.data() as Map<String, dynamic>)['tmdbId'];
+            if (currentTmdbId != tmdbId) {
+              debugPrint('SKIP: Doc ${doc.id} tmdbId mismatch (expected=$tmdbId, actual=$currentTmdbId)');
+              setState(() => _syncFailureCount++);
+              continue;
+            }
+          }
+
+          await _contentService.updateMovie(doc.id, safeUpdate);
 
           setState(() => _syncSuccessCount++);
         } catch (e) {
@@ -612,16 +635,36 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
 
           final firestoreData = TmdbService.mapTVToFirestore(fullDetails, _genreIdToName);
 
-          // Skip description update if toggle is ON
-          if (_skipDescriptionUpdate) {
-            firestoreData.remove('overview');
+          // Build SAFE update map — only TMDB fields, preserve user data
+          final safeUpdate = <String, dynamic>{};
+          for (final key in ['title', 'year', 'poster', 'backdrop', 'rating',
+              'duration', 'isAdult', 'categories', 'directors', 'casts',
+              'tmdbId', 'country', 'seasons']) {
+            if (firestoreData.containsKey(key)) {
+              safeUpdate[key] = firestoreData[key];
+            }
           }
 
-          // Keep existing downloadLinks and tags
-          firestoreData.remove('downloadLinks');
-          firestoreData.remove('tags');
+          // Conditionally include overview
+          if (!_skipDescriptionUpdate && firestoreData.containsKey('overview')) {
+            safeUpdate['overview'] = firestoreData['overview'];
+          }
 
-          await _contentService.updateMovie(doc.id, firestoreData);
+          // CRITICAL: Validate document still has the same tmdbId before updating
+          final currentDoc = await FirebaseFirestore.instance
+              .collection('movies')
+              .doc(doc.id)
+              .get();
+          if (currentDoc.exists) {
+            final currentTmdbId = (currentDoc.data() as Map<String, dynamic>)['tmdbId'];
+            if (currentTmdbId != tmdbId) {
+              debugPrint('SKIP: Doc ${doc.id} tmdbId mismatch (expected=$tmdbId, actual=$currentTmdbId)');
+              setState(() => _syncFailureCount++);
+              continue;
+            }
+          }
+
+          await _contentService.updateMovie(doc.id, safeUpdate);
 
           setState(() => _syncSuccessCount++);
         } catch (e) {

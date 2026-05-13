@@ -16,6 +16,21 @@ class FirestoreContentService {
 
   // ==================== READ OPERATIONS ====================
 
+  /// Find a movie document by tmdbId — returns the first match or null
+  Future<DocumentSnapshot?> findByTmdbId(dynamic tmdbId) async {
+    if (tmdbId == null) return null;
+    try {
+      final snapshot = await _moviesRef
+          .where('tmdbId', isEqualTo: tmdbId)
+          .limit(1)
+          .get();
+      return snapshot.docs.isNotEmpty ? snapshot.docs.first : null;
+    } catch (e) {
+      debugPrint('findByTmdbId failed: $e');
+      return null;
+    }
+  }
+
   /// Get movies with cursor-based pagination
   Future<Map<String, dynamic>> getMovies({
     int limit = 20,
@@ -901,6 +916,8 @@ class FirestoreContentService {
   }
 
   /// Add a new movie (admin only)
+  /// Checks for duplicate tmdbId FIRST, then falls back to slug check.
+  /// If a document with the same tmdbId exists, it updates instead of creating a duplicate.
   Future<String> addMovie(Map<String, dynamic> data) async {
     await _requireAdmin();
     // Auto-generate slug if not provided
@@ -908,7 +925,48 @@ class FirestoreContentService {
       data['slug'] = _generateSlug(data['title'] as String);
     }
 
-    // Check for duplicate slug - if exists, update instead of creating new
+    // === PRIORITY 1: Check for duplicate tmdbId ===
+    final tmdbId = data['tmdbId'];
+    if (tmdbId != null) {
+      final existingByTmdbId = await findByTmdbId(tmdbId);
+      if (existingByTmdbId != null) {
+        final existingData = existingByTmdbId.data() as Map<String, dynamic>;
+        debugPrint('tmdbId $tmdbId already exists (doc: ${existingByTmdbId.id}), updating instead of creating duplicate');
+        // Build safe update map — only update TMDB fields, preserve user-edited fields
+        final safeData = _buildSafeUpdateMap(data, existingData);
+        safeData['updatedAt'] = FieldValue.serverTimestamp();
+        safeData.remove('createdAt');
+        // Remove fields that should never be overwritten
+        safeData.remove('slug'); // Keep existing slug
+        safeData.remove('downloadLinks'); // Keep user's download links
+        safeData.remove('seasons'); // Keep user's seasons/episodes
+        safeData.remove('tags'); // Keep user's tags
+        safeData.remove('isTrending'); // Keep user's trending status
+
+        // Update category counts
+        final oldCategories = List<String>.from(existingData['categories'] ?? []);
+        final oldTags = List<String>.from(existingData['tags'] ?? []);
+        final newCategories = List<String>.from(safeData['categories'] ?? oldCategories);
+        final newTags = List<String>.from(safeData['tags'] ?? oldTags);
+        for (final cat in oldCategories) {
+          if (!newCategories.contains(cat)) await _decrementCount(_genresRef, cat);
+        }
+        for (final cat in newCategories) {
+          if (!oldCategories.contains(cat)) await _incrementCount(_genresRef, cat);
+        }
+        for (final tag in oldTags) {
+          if (!newTags.contains(tag)) await _decrementCount(_tagsRef, tag);
+        }
+        for (final tag in newTags) {
+          if (!oldTags.contains(tag)) await _incrementCount(_tagsRef, tag);
+        }
+
+        await existingByTmdbId.reference.update(safeData);
+        return existingByTmdbId.id;
+      }
+    }
+
+    // === PRIORITY 2: Check for duplicate slug ===
     final slug = data['slug'] as String;
     final existingSnapshot = await _moviesRef
         .where('slug', isEqualTo: slug)
@@ -920,47 +978,38 @@ class FirestoreContentService {
       final existingDoc = existingSnapshot.docs.first;
       final existingData = existingDoc.data() as Map<String, dynamic>;
       debugPrint('Slug "$slug" already exists (doc: ${existingDoc.id}), updating instead of creating duplicate');
-      data['updatedAt'] = FieldValue.serverTimestamp();
-      // Don't overwrite createdAt if document exists
-      data.remove('createdAt');
+      final safeData = _buildSafeUpdateMap(data, existingData);
+      safeData['updatedAt'] = FieldValue.serverTimestamp();
+      safeData.remove('createdAt');
+      safeData.remove('slug');
+      safeData.remove('downloadLinks');
+      safeData.remove('seasons');
+      safeData.remove('tags');
+      safeData.remove('isTrending');
 
-      // Calculate category/tag count changes (same logic as updateMovie)
+      // Update category counts
       final oldCategories = List<String>.from(existingData['categories'] ?? []);
       final oldTags = List<String>.from(existingData['tags'] ?? []);
-      final newCategories = List<String>.from(data['categories'] ?? oldCategories);
-      final newTags = List<String>.from(data['tags'] ?? oldTags);
-
-      // Decrement old categories that are removed
+      final newCategories = List<String>.from(safeData['categories'] ?? oldCategories);
+      final newTags = List<String>.from(safeData['tags'] ?? oldTags);
       for (final cat in oldCategories) {
-        if (!newCategories.contains(cat)) {
-          await _decrementCount(_genresRef, cat);
-        }
+        if (!newCategories.contains(cat)) await _decrementCount(_genresRef, cat);
       }
-      // Increment new categories that are added
       for (final cat in newCategories) {
-        if (!oldCategories.contains(cat)) {
-          await _incrementCount(_genresRef, cat);
-        }
+        if (!oldCategories.contains(cat)) await _incrementCount(_genresRef, cat);
       }
-
-      // Decrement old tags that are removed
       for (final tag in oldTags) {
-        if (!newTags.contains(tag)) {
-          await _decrementCount(_tagsRef, tag);
-        }
+        if (!newTags.contains(tag)) await _decrementCount(_tagsRef, tag);
       }
-      // Increment new tags that are added
       for (final tag in newTags) {
-        if (!oldTags.contains(tag)) {
-          await _incrementCount(_tagsRef, tag);
-        }
+        if (!oldTags.contains(tag)) await _incrementCount(_tagsRef, tag);
       }
 
-      await existingDoc.reference.update(data);
-
+      await existingDoc.reference.update(safeData);
       return existingDoc.id;
     }
 
+    // === No duplicate: Create new document ===
     data['createdAt'] = FieldValue.serverTimestamp();
     data['updatedAt'] = FieldValue.serverTimestamp();
 
@@ -981,6 +1030,27 @@ class FirestoreContentService {
     }
 
     return docRef.id;
+  }
+
+  /// Build a safe update map from TMDB data that only contains
+  /// fields that should be updated from TMDB, preserving user-edited fields.
+  static const _tmdbUpdateFields = [
+    'title', 'year', 'poster', 'backdrop', 'overview', 'rating',
+    'duration', 'type', 'isAdult', 'categories', 'directors',
+    'casts', 'tmdbId', 'country',
+  ];
+
+  Map<String, dynamic> _buildSafeUpdateMap(
+    Map<String, dynamic> newData,
+    Map<String, dynamic> existingData,
+  ) {
+    final result = <String, dynamic>{};
+    for (final field in _tmdbUpdateFields) {
+      if (newData.containsKey(field)) {
+        result[field] = newData[field];
+      }
+    }
+    return result;
   }
 
   /// Update a movie (admin only)
