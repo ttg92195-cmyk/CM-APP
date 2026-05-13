@@ -20,7 +20,7 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
   String _type = 'movie'; // 'movie' or 'series'
   int? _selectedGenreId;
   String? _selectedYear;
-  String _selectedLanguage = 'en-US';
+  String _selectedLanguage = ''; // Original language filter (empty = all)
   String _selectedSortBy = 'popularity.desc';
   int _postLimit = 20;
   final TextEditingController _searchController = TextEditingController();
@@ -75,9 +75,11 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
     '1995', '1990', '1985', '1980', '1975', '1970',
   ];
 
-  // Language options
+  // Language options — used as `with_original_language` filter for discover API
+  // Display language (API `language` param) is always 'en-US' so titles appear in English
   static const List<Map<String, String>> _languageOptions = [
-    {'code': 'en-US', 'name': 'English'},
+    {'code': '', 'name': 'All Languages'},
+    {'code': 'en', 'name': 'English'},
     {'code': 'ja', 'name': 'Japanese'},
     {'code': 'ko', 'name': 'Korean'},
     {'code': 'th', 'name': 'Thai'},
@@ -175,6 +177,9 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
       final query = _searchController.text.trim();
       Map<String, dynamic> response;
 
+      // Extract original language filter for discover, always use en-US for display
+      final originalLang = _selectedLanguage.isNotEmpty ? _selectedLanguage : null;
+
       if (query.isNotEmpty) {
         _isSearching = true;
         response = _type == 'movie'
@@ -190,14 +195,16 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
             ? await _tmdbService.discoverMovies(
                 genre: _selectedGenreId,
                 year: _selectedYear,
-                language: _selectedLanguage,
+                language: 'en-US', // Always English for display
+                originalLanguage: originalLang, // Filter by original language
                 sortBy: sortKey,
                 page: 1,
               )
             : await _tmdbService.discoverTV(
                 genre: _selectedGenreId,
                 year: _selectedYear,
-                language: _selectedLanguage,
+                language: 'en-US', // Always English for display
+                originalLanguage: originalLang, // Filter by original language
                 sortBy: sortKey,
                 page: 1,
               );
@@ -235,6 +242,9 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
         final query = _searchController.text.trim();
         Map<String, dynamic> response;
 
+        // Extract original language filter for discover, always use en-US for display
+        final originalLang = _selectedLanguage.isNotEmpty ? _selectedLanguage : null;
+
         if (_isSearching) {
           response = _type == 'movie'
               ? await _tmdbService.searchMovies(query, page: page)
@@ -248,14 +258,16 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
               ? await _tmdbService.discoverMovies(
                   genre: _selectedGenreId,
                   year: _selectedYear,
-                  language: _selectedLanguage,
+                  language: 'en-US', // Always English for display
+                  originalLanguage: originalLang, // Filter by original language
                   sortBy: sortKey,
                   page: page,
                 )
               : await _tmdbService.discoverTV(
                   genre: _selectedGenreId,
                   year: _selectedYear,
-                  language: _selectedLanguage,
+                  language: 'en-US', // Always English for display
+                  originalLanguage: originalLang, // Filter by original language
                   sortBy: sortKey,
                   page: page,
                 );
@@ -1087,10 +1099,10 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
     return GridView.builder(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        childAspectRatio: 0.52,
-        crossAxisSpacing: 8,
-        mainAxisSpacing: 8,
+        crossAxisCount: 3,
+        childAspectRatio: 0.48,
+        crossAxisSpacing: 6,
+        mainAxisSpacing: 6,
       ),
       itemCount: _results.length,
       itemBuilder: (context, index) {
@@ -1109,7 +1121,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
     final year = releaseDate.length >= 4 ? releaseDate.substring(0, 4) : '';
     final isSelected = tmdbId != null && _selectedIds.contains(tmdbId);
     final isImported = tmdbId != null && _importedTmdbIds.contains(tmdbId);
-    final overview = item['overview']?.toString() ?? '';
 
     return GestureDetector(
       onTap: () {
@@ -1255,11 +1266,11 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
                 ],
               ),
             ),
-            // Info section
+            // Info section - compact for 3-column grid
             Expanded(
               flex: 2,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
+                padding: const EdgeInsets.fromLTRB(6, 4, 6, 3),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1269,32 +1280,18 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontWeight: FontWeight.w600,
-                        fontSize: 12,
+                        fontSize: 11,
                         height: 1.2,
                       ),
                     ),
-                    const SizedBox(height: 2),
                     if (year.isNotEmpty)
-                      Text(
-                        year,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: isDark ? Colors.white54 : Colors.black54,
-                        ),
-                      ),
-                    if (overview.isNotEmpty)
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Text(
-                            overview,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: isDark ? Colors.white38 : Colors.black38,
-                              height: 1.2,
-                            ),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 1),
+                        child: Text(
+                          year,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: isDark ? Colors.white54 : Colors.black54,
                           ),
                         ),
                       ),
