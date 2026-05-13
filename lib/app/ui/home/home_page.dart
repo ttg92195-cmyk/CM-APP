@@ -15,6 +15,7 @@ import 'package:cm_movies/app/ui/screens/profile_page.dart';
 import 'package:cm_movies/app/ui/screens/search_screen.dart';
 import 'package:cm_movies/app/ui/screens/admin_panel_page.dart';
 import 'package:cm_movies/app/core/services/download_manager_service.dart';
+import 'package:cm_movies/app/ui/screens/tmdb_generator_page.dart';
 
 // Bottom nav tab indices (4 tabs)
 const int kHomeTab = 0;
@@ -344,10 +345,10 @@ class _HomePageState extends State<HomePage> {
                       isDark: isDark,
                       onTap: () {
                         Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('TMDB Generator - Coming Soon!'),
-                            backgroundColor: Color(0xFFE50914),
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const TmdbGeneratorPage(),
                           ),
                         );
                       },

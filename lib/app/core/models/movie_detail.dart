@@ -23,6 +23,7 @@ class MovieDetail {
   final List<MovieDownloadLink> downloadLinks;
   // Series-specific: seasons with episodes
   final List<Season> seasons;
+  final int? tmdbId;
   final DateTime? createdAt;
 
   MovieDetail({
@@ -47,6 +48,7 @@ class MovieDetail {
     this.tags = const [],
     this.downloadLinks = const [],
     this.seasons = const [],
+    this.tmdbId,
     this.createdAt,
   });
 
@@ -99,6 +101,7 @@ class MovieDetail {
               ),
             )
           : [],
+      tmdbId: map['tmdbId'] as int?,
       createdAt: _parseDateTimeDetail(map['createdAt']),
     );
   }
@@ -125,6 +128,7 @@ class MovieDetail {
       'tags': tags,
       'downloadLinks': downloadLinks.map((x) => x.toMap()).toList(),
       'seasons': seasons.map((x) => x.toMap()).toList(),
+      'tmdbId': tmdbId,
     };
   }
 
