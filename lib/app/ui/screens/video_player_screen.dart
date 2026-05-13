@@ -548,9 +548,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       );
 
       // ==============================================================
-      // Performance tuning via mpv properties (using setProperty)
+      // Performance tuning via mpv properties (using NativePlayer.setProperty)
       // These are set AFTER player initialization and take effect
       // immediately. They are NOT part of PlayerConfiguration.
+      // We access NativePlayer via Player.platform dynamic cast.
       // ==============================================================
       await _applyPerformanceTuning();
 
@@ -663,36 +664,55 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   // Performance Tuning via mpv setProperty
   // ==============================================================
 
+  /// Helper: set mpv property via NativePlayer.setProperty()
+  /// Player.setProperty() is NOT exposed in media_kit 1.1.11's public API,
+  /// but NativePlayer (accessed via Player.platform) has it.
+  /// We use dynamic cast to avoid importing internal source files.
+  Future<void> _setMpvProperty(String property, String value) async {
+    try {
+      final platform = _player.platform;
+      if (platform != null) {
+        await (platform as dynamic).setProperty(property, value);
+      }
+    } catch (e) {
+      debugPrint('mpv setProperty error ($property=$value): $e');
+    }
+  }
+
   /// Applies mpv performance tuning based on device tier.
-  /// Uses Player.setProperty() to set mpv properties at runtime.
-  /// These are NOT part of PlayerConfiguration — they are mpv-level
-  /// optimizations that dramatically improve smoothness on low-end devices.
+  /// Uses NativePlayer.setProperty() via Player.platform to set mpv
+  /// properties at runtime. These are NOT part of PlayerConfiguration —
+  /// they are mpv-level optimizations that dramatically improve smoothness
+  /// on low-end devices.
   Future<void> _applyPerformanceTuning() async {
     try {
+      // Wait for player to be fully initialized before setting properties
+      await Future.delayed(const Duration(milliseconds: 200));
+
       // === ALL DEVICES: Baseline optimizations ===
 
       // Enable frame dropping when display can't keep up
       // This is the SINGLE MOST IMPORTANT setting for smooth playback
       // on low-end devices. Without it, mpv tries to render every frame
       // and falls behind, causing audio desync and stuttering.
-      await _player.setProperty('framedrop', 'vo');
+      await _setMpvProperty('framedrop', 'vo');
 
       // Allow decoder to skip frames too (not just display)
-      await _player.setProperty('vd-lavc-framedrop', 'all');
+      await _setMpvProperty('vd-lavc-framedrop', 'all');
 
       // Disable VSync — reduces stutter at the cost of possible tearing
       // On mobile, tearing is barely noticeable and smoothness matters more
-      await _player.setProperty('opengl-swapinterval', '0');
+      await _setMpvProperty('opengl-swapinterval', '0');
 
       // Use Pixel Buffer Objects for faster GPU texture uploads
-      await _player.setProperty('opengl-pbo', 'yes');
+      await _setMpvProperty('opengl-pbo', 'yes');
 
       // Relaxed video sync — allows slight audio/video desync
       // instead of stuttering or pausing to resync
-      await _player.setProperty('video-sync', 'audio-desync');
+      await _setMpvProperty('video-sync', 'audio-desync');
 
       // Disable frame interpolation (saves CPU)
-      await _player.setProperty('interpolation', 'no');
+      await _setMpvProperty('interpolation', 'no');
 
       // === LOW-END SPECIFIC: Aggressive optimizations ===
       if (_perfTier <= 1) {
@@ -702,40 +722,40 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         final backBytes = _perfTier == 0
             ? (4 * 1024 * 1024).toString()   // 4MB for ultra-low
             : (8 * 1024 * 1024).toString();   // 8MB for low
-        await _player.setProperty('demuxer-max-back-bytes', backBytes);
+        await _setMpvProperty('demuxer-max-back-bytes', backBytes);
 
         // Faster seeking — don't require exact keyframe alignment
-        await _player.setProperty('hr-seek', 'no');
+        await _setMpvProperty('hr-seek', 'no');
 
         // Reduce audio buffer size to save memory
-        await _player.setProperty('audio-buffer', '0.1');
+        await _setMpvProperty('audio-buffer', '0.1');
 
         // Disable ICC profile auto-detection (saves CPU on color management)
-        await _player.setProperty('icc-profile-auto', 'no');
+        await _setMpvProperty('icc-profile-auto', 'no');
 
         // Disable tone mapping (HDR→SDR conversion) — saves GPU
-        await _player.setProperty('tone-mapping', 'clip');
+        await _setMpvProperty('tone-mapping', 'clip');
       }
 
       // === ULTRA-LOW SPECIFIC: Maximum optimization ===
       if (_perfTier == 0) {
         // Aggressive decoder thread limiting
         // On 2GB devices, too many decoder threads cause contention
-        await _player.setProperty('vd-lavc-threads', '2');
+        await _setMpvProperty('vd-lavc-threads', '2');
 
         // Lower GPU rendering quality — faster shader processing
-        await _player.setProperty('scale', 'bilinear');
-        await _player.setProperty('dscale', 'bilinear');
-        await _player.setProperty('cscale', 'bilinear');
+        await _setMpvProperty('scale', 'bilinear');
+        await _setMpvProperty('dscale', 'bilinear');
+        await _setMpvProperty('cscale', 'bilinear');
 
         // Disable debanding — saves GPU processing
-        await _player.setProperty('deband', 'no');
+        await _setMpvProperty('deband', 'no');
 
         // Maximum frame dropping — prefer smooth audio over video
-        await _player.setProperty('framedrop', 'decoder+vo');
+        await _setMpvProperty('framedrop', 'decoder+vo');
 
         // Lower cache for streaming — reduces memory pressure
-        await _player.setProperty('cache-on-disk', 'no');
+        await _setMpvProperty('cache-on-disk', 'no');
       }
 
       debugPrint('Performance tuning applied: tier=$_perfTier');
