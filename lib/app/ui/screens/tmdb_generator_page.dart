@@ -139,10 +139,10 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
   Future<void> _loadImportedTmdbIds() async {
     try {
       // Fetch all movies and filter client-side for tmdbId
-      // This avoids needing a composite Firestore index
+      // Note: .select() is not available in cloud_firestore Flutter SDK,
+      // so we fetch full documents and extract tmdbId client-side
       final snapshot = await FirebaseFirestore.instance
           .collection('movies')
-          .select(['tmdbId'])
           .limit(5000)
           .get();
 
@@ -159,27 +159,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
       }
     } catch (e) {
       debugPrint('Error loading imported tmdbIds: $e');
-      // Fallback: try without select()
-      try {
-        final snapshot = await FirebaseFirestore.instance
-            .collection('movies')
-            .limit(2000)
-            .get();
-
-        if (mounted) {
-          setState(() {
-            _importedTmdbIds.clear();
-            for (final doc in snapshot.docs) {
-              final tmdbId = doc.data()['tmdbId'] as int?;
-              if (tmdbId != null && tmdbId > 0) {
-                _importedTmdbIds.add(tmdbId);
-              }
-            }
-          });
-        }
-      } catch (e2) {
-        debugPrint('Fallback load imported tmdbIds also failed: $e2');
-      }
     }
   }
 
