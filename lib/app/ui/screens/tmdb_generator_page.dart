@@ -140,9 +140,8 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
 
   Future<void> _loadImportedTmdbIds() async {
     try {
-      // Fetch all movies and filter client-side for tmdbId
-      // Note: .select() is not available in cloud_firestore Flutter SDK,
-      // so we fetch full documents and extract tmdbId client-side
+      // BUG FIX: Fetch all movies and extract tmdbId client-side.
+      // We fetch in batches if needed, and handle both int and String tmdbId types.
       final snapshot = await FirebaseFirestore.instance
           .collection('movies')
           .limit(5000)
@@ -152,12 +151,18 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
         setState(() {
           _importedTmdbIds.clear();
           for (final doc in snapshot.docs) {
-            final tmdbId = doc.data()['tmdbId'] as int?;
+            final rawTmdbId = doc.data()['tmdbId'];
+            if (rawTmdbId == null) continue;
+            // Handle both int and String types for tmdbId
+            final tmdbId = rawTmdbId is int
+                ? rawTmdbId
+                : int.tryParse(rawTmdbId.toString());
             if (tmdbId != null && tmdbId > 0) {
               _importedTmdbIds.add(tmdbId);
             }
           }
         });
+        debugPrint('Imported tmdbIds loaded: ${_importedTmdbIds.length} items');
       }
     } catch (e) {
       debugPrint('Error loading imported tmdbIds: $e');
@@ -299,13 +304,31 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
     final selected = _selectedIds.toList();
     if (selected.isEmpty) return;
 
+    // BUG FIX: Filter out already-imported items to prevent duplicates
+    final notYetImported = selected.where((id) => !_importedTmdbIds.contains(id)).toList();
+    final alreadyImportedCount = selected.length - notYetImported.length;
+
+    if (notYetImported.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('All $alreadyImportedCount ${_type == 'movie' ? 'movie' : 'series'}${alreadyImportedCount > 1 ? 's' : ''} already imported!'),
+            backgroundColor: Colors.blue,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Import Confirmation'),
         content: Text(
-          'Import ${selected.length} ${_type == 'movie' ? 'movie' : 'series'}${selected.length > 1 ? 's' : ''} from TMDB to Firestore?\n\n'
-          'This will fetch full details for each item and save them to your database.',
+          'Import ${notYetImported.length} ${_type == 'movie' ? 'movie' : 'series'}${notYetImported.length > 1 ? 's' : ''} from TMDB to Firestore?'
+          '${alreadyImportedCount > 0 ? '\n\n($alreadyImportedCount already imported — skipped)' : ''}'
+          '\n\nThis will fetch full details for each item and save them to your database.',
         ),
         actions: [
           TextButton(
@@ -326,25 +349,38 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
     setState(() {
       _isImporting = true;
       _importProgress = 0;
-      _importTotal = selected.length;
+      _importTotal = notYetImported.length;
       _importSuccessCount = 0;
       _importFailureCount = 0;
       _importCurrentTitle = '';
     });
 
-    for (int i = 0; i < selected.length; i++) {
-      final tmdbId = selected[i];
+    for (int i = 0; i < notYetImported.length; i++) {
+      final tmdbId = notYetImported[i];
       final resultItem = _results.firstWhere(
         (r) => r['id'] == tmdbId,
         orElse: () => <String, dynamic>{},
       );
+      final itemTitle = resultItem['title']?.toString() ?? resultItem['name']?.toString() ?? 'Unknown';
 
       setState(() {
         _importProgress = i + 1;
-        _importCurrentTitle = resultItem['title']?.toString() ?? resultItem['name']?.toString() ?? 'Unknown';
+        _importCurrentTitle = itemTitle;
       });
 
       try {
+        // Double-check: verify not already imported in Firestore
+        final existingDoc = await _contentService.findByTmdbId(tmdbId);
+        if (existingDoc != null) {
+          debugPrint('SKIP IMPORT: tmdbId $tmdbId ($itemTitle) already exists in Firestore (doc: ${existingDoc.id})');
+          if (mounted) {
+            setState(() {
+              _importedTmdbIds.add(tmdbId);
+            });
+          }
+          continue;
+        }
+
         // Fetch full details with credits
         Map<String, dynamic> fullDetails;
         Map<String, dynamic> firestoreData;
@@ -367,6 +403,8 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
           }
           firestoreData = TmdbService.mapTVToFirestore(fullDetails, _genreIdToName);
         }
+
+        debugPrint('IMPORT: tmdbId=$tmdbId title=${firestoreData['title']} duration=${firestoreData['duration']}');
 
         // Save to Firestore using FirestoreContentService
         await _contentService.addMovie(firestoreData);
@@ -399,7 +437,8 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Import complete! Success: $_importSuccessCount, Failed: $_importFailureCount',
+            'Import complete! Success: $_importSuccessCount, Failed: $_importFailureCount'
+            '${alreadyImportedCount > 0 ? ', Skipped: $alreadyImportedCount' : ''}',
           ),
           backgroundColor: _importFailureCount > 0 ? Colors.orange : Colors.green,
           duration: const Duration(seconds: 4),
@@ -464,24 +503,39 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
         _syncCurrentTitle = '';
       });
 
+      // BUG FIX: Collect (docId, tmdbId, title) pairs FIRST to prevent
+      // any stale reference issues during async iteration.
+      final syncItems = <Map<String, dynamic>>[];
       for (int i = 0; i < docs.length; i++) {
         final doc = docs[i];
         final data = doc.data();
         final tmdbId = data['tmdbId'] as int?;
         final title = data['title']?.toString() ?? 'Unknown';
+        if (tmdbId != null && tmdbId > 0) {
+          syncItems.add({
+            'docId': doc.id,
+            'tmdbId': tmdbId,
+            'title': title,
+          });
+        }
+      }
+
+      for (int i = 0; i < syncItems.length; i++) {
+        final docId = syncItems[i]['docId'] as String;
+        final tmdbId = syncItems[i]['tmdbId'] as int;
+        final title = syncItems[i]['title'] as String;
 
         setState(() {
           _syncProgress = i + 1;
           _syncCurrentTitle = title;
         });
 
-        if (tmdbId == null) {
-          setState(() => _syncFailureCount++);
-          continue;
-        }
-
         try {
+          debugPrint('SYNC MOVIE [$i/${syncItems.length}]: docId=$docId tmdbId=$tmdbId title=$title');
+
           final fullDetails = await _tmdbService.getMovieDetails(tmdbId);
+          final fetchedTitle = fullDetails['title']?.toString() ?? 'Unknown';
+          debugPrint('SYNC MOVIE: TMDB returned title="$fetchedTitle" for tmdbId=$tmdbId');
 
           if (!fullDetails.containsKey('genre_ids') && fullDetails.containsKey('genres')) {
             fullDetails['genre_ids'] = (fullDetails['genres'] as List)
@@ -506,32 +560,58 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
             safeUpdate['overview'] = firestoreData['overview'];
           }
 
+          debugPrint('SYNC MOVIE: safeUpdate title=${safeUpdate['title']} tmdbId=${safeUpdate['tmdbId']} duration=${safeUpdate['duration']}');
+
           // CRITICAL: Validate document still has the same tmdbId before updating
           // This prevents data corruption from stale references
           final currentDoc = await FirebaseFirestore.instance
               .collection('movies')
-              .doc(doc.id)
+              .doc(docId)
               .get();
           if (currentDoc.exists) {
-            final currentTmdbId = (currentDoc.data() as Map<String, dynamic>)['tmdbId'];
+            final currentData = currentDoc.data() as Map<String, dynamic>;
+            final currentTmdbId = currentData['tmdbId'];
+            final currentTitle = currentData['title'];
             if (currentTmdbId != tmdbId) {
-              debugPrint('SKIP: Doc ${doc.id} tmdbId mismatch (expected=$tmdbId, actual=$currentTmdbId)');
+              debugPrint('SKIP: Doc $docId tmdbId mismatch (expected=$tmdbId, actual=$currentTmdbId title=$currentTitle)');
               setState(() => _syncFailureCount++);
               continue;
             }
+            // Use Firestore Transaction for atomic read-then-write
+            await FirebaseFirestore.instance.runTransaction((transaction) async {
+              final freshDoc = await transaction.get(
+                FirebaseFirestore.instance.collection('movies').doc(docId),
+              );
+              if (!freshDoc.exists) return;
+              final freshTmdbId = (freshDoc.data() as Map<String, dynamic>)['tmdbId'];
+              if (freshTmdbId != tmdbId) {
+                debugPrint('TX SKIP: Doc $docId tmdbId changed during sync (expected=$tmdbId, actual=$freshTmdbId)');
+                return;
+              }
+              safeUpdate['updatedAt'] = FieldValue.serverTimestamp();
+              transaction.update(
+                FirebaseFirestore.instance.collection('movies').doc(docId),
+                safeUpdate,
+              );
+            });
+          } else {
+            debugPrint('SKIP: Doc $docId no longer exists');
+            setState(() => _syncFailureCount++);
+            continue;
           }
 
-          await _contentService.updateMovie(doc.id, safeUpdate);
-
+          debugPrint('SYNC MOVIE SUCCESS: docId=$docId tmdbId=$tmdbId title=${safeUpdate['title']}');
           setState(() => _syncSuccessCount++);
         } catch (e) {
-          debugPrint('Error syncing movie $tmdbId: $e');
+          debugPrint('Error syncing movie $tmdbId (docId=$docId): $e');
           setState(() => _syncFailureCount++);
         }
       }
 
       if (mounted) {
         setState(() => _isSyncing = false);
+        // Refresh imported status after sync
+        _loadImportedTmdbIds();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -608,24 +688,39 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
         _syncCurrentTitle = '';
       });
 
+      // BUG FIX: Collect (docId, tmdbId, title) pairs FIRST to prevent
+      // any stale reference issues during async iteration.
+      final syncItems = <Map<String, dynamic>>[];
       for (int i = 0; i < docs.length; i++) {
         final doc = docs[i];
         final data = doc.data();
         final tmdbId = data['tmdbId'] as int?;
         final title = data['title']?.toString() ?? 'Unknown';
+        if (tmdbId != null && tmdbId > 0) {
+          syncItems.add({
+            'docId': doc.id,
+            'tmdbId': tmdbId,
+            'title': title,
+          });
+        }
+      }
+
+      for (int i = 0; i < syncItems.length; i++) {
+        final docId = syncItems[i]['docId'] as String;
+        final tmdbId = syncItems[i]['tmdbId'] as int;
+        final title = syncItems[i]['title'] as String;
 
         setState(() {
           _syncProgress = i + 1;
           _syncCurrentTitle = title;
         });
 
-        if (tmdbId == null) {
-          setState(() => _syncFailureCount++);
-          continue;
-        }
-
         try {
+          debugPrint('SYNC SERIES [$i/${syncItems.length}]: docId=$docId tmdbId=$tmdbId title=$title');
+
           final fullDetails = await _tmdbService.getTVDetails(tmdbId);
+          final fetchedTitle = fullDetails['name']?.toString() ?? 'Unknown';
+          debugPrint('SYNC SERIES: TMDB returned title="$fetchedTitle" for tmdbId=$tmdbId');
 
           if (!fullDetails.containsKey('genre_ids') && fullDetails.containsKey('genres')) {
             fullDetails['genre_ids'] = (fullDetails['genres'] as List)
@@ -650,31 +745,57 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
             safeUpdate['overview'] = firestoreData['overview'];
           }
 
+          debugPrint('SYNC SERIES: safeUpdate title=${safeUpdate['title']} tmdbId=${safeUpdate['tmdbId']} duration=${safeUpdate['duration']}');
+
           // CRITICAL: Validate document still has the same tmdbId before updating
           final currentDoc = await FirebaseFirestore.instance
               .collection('movies')
-              .doc(doc.id)
+              .doc(docId)
               .get();
           if (currentDoc.exists) {
-            final currentTmdbId = (currentDoc.data() as Map<String, dynamic>)['tmdbId'];
+            final currentData = currentDoc.data() as Map<String, dynamic>;
+            final currentTmdbId = currentData['tmdbId'];
+            final currentTitle = currentData['title'];
             if (currentTmdbId != tmdbId) {
-              debugPrint('SKIP: Doc ${doc.id} tmdbId mismatch (expected=$tmdbId, actual=$currentTmdbId)');
+              debugPrint('SKIP: Doc $docId tmdbId mismatch (expected=$tmdbId, actual=$currentTmdbId title=$currentTitle)');
               setState(() => _syncFailureCount++);
               continue;
             }
+            // Use Firestore Transaction for atomic read-then-write
+            await FirebaseFirestore.instance.runTransaction((transaction) async {
+              final freshDoc = await transaction.get(
+                FirebaseFirestore.instance.collection('movies').doc(docId),
+              );
+              if (!freshDoc.exists) return;
+              final freshTmdbId = (freshDoc.data() as Map<String, dynamic>)['tmdbId'];
+              if (freshTmdbId != tmdbId) {
+                debugPrint('TX SKIP: Doc $docId tmdbId changed during sync (expected=$tmdbId, actual=$freshTmdbId)');
+                return;
+              }
+              safeUpdate['updatedAt'] = FieldValue.serverTimestamp();
+              transaction.update(
+                FirebaseFirestore.instance.collection('movies').doc(docId),
+                safeUpdate,
+              );
+            });
+          } else {
+            debugPrint('SKIP: Doc $docId no longer exists');
+            setState(() => _syncFailureCount++);
+            continue;
           }
 
-          await _contentService.updateMovie(doc.id, safeUpdate);
-
+          debugPrint('SYNC SERIES SUCCESS: docId=$docId tmdbId=$tmdbId title=${safeUpdate['title']}');
           setState(() => _syncSuccessCount++);
         } catch (e) {
-          debugPrint('Error syncing series $tmdbId: $e');
+          debugPrint('Error syncing series $tmdbId (docId=$docId): $e');
           setState(() => _syncFailureCount++);
         }
       }
 
       if (mounted) {
         setState(() => _isSyncing = false);
+        // Refresh imported status after sync
+        _loadImportedTmdbIds();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(

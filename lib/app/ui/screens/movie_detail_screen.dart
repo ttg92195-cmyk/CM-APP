@@ -602,7 +602,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                                     Icon(Icons.access_time,
                                         size: 13, color: metaTextColor),
                                     const SizedBox(width: 4),
-                                    Text('${detail.duration} min',
+                                    Text('${detail.duration!.replaceAll(' min', '')} min',
                                         style: TextStyle(
                                             color: metaTextColor,
                                             fontSize: 12)),
