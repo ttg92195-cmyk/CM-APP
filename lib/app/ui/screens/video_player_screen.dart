@@ -103,6 +103,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   bool _showSeekBackward = false;
   Timer? _seekAnimationTimer;
 
+  // Seekbar: track dragging state to prevent seek-every-frame
+  bool _isSeeking = false;
+  double _seekValue = 0.0;
+
   // Feature 4: Resume Playback
   Timer? _positionSaveTimer;
   Duration _lastKnownPosition = Duration.zero; // Track from stream for reliable save
@@ -516,15 +520,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       }
 
       // Adaptive buffer size based on RAM
-      // Low RAM devices can't afford 64MB buffer — reduce to prevent OOM
-      // These are the initial buffer sizes; ECO mode can reduce further at runtime
+      // IMPORTANT: Buffer must be large enough to prevent constant rebuffering!
+      // 4K HEVC at 20Mbps = 2.5MB/sec. 8MB buffer = only 3 seconds → stop-and-go.
+      // We reduce OUTPUT quality (480p/720p) instead of buffer size to save RAM.
+      // The buffer holds compressed data which is small compared to decoded frames.
       final int bufferSizeBytes;
       switch (_perfTier) {
-        case 0: // Ultra-low: 8MB buffer (reduced from 16MB for less memory pressure)
-          bufferSizeBytes = 8 * 1024 * 1024;
+        case 0: // Ultra-low: 32MB buffer (~12 seconds of 4K content)
+          bufferSizeBytes = 32 * 1024 * 1024;
           break;
-        case 1: // Low: 16MB buffer (reduced from 32MB)
-          bufferSizeBytes = 16 * 1024 * 1024;
+        case 1: // Low: 48MB buffer (~18 seconds of 4K content)
+          bufferSizeBytes = 48 * 1024 * 1024;
           break;
         default: // Normal: 64MB buffer
           bufferSizeBytes = 64 * 1024 * 1024;
@@ -759,10 +765,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         // Skip IDCT step for non-reference frames
         await _setMpvProperty('vd-lavc-skipidct', 'default');
 
-        // Reduce demuxer back-buffer to save memory
+        // Demuxer back-buffer for reverse seeking — keep reasonable size
+        // Too small = seeking backwards re-downloads everything
         final backBytes = _perfTier == 0
-            ? (2 * 1024 * 1024).toString()   // 2MB for ultra-low
-            : (4 * 1024 * 1024).toString();   // 4MB for low/ECO
+            ? (8 * 1024 * 1024).toString()    // 8MB for ultra-low
+            : (16 * 1024 * 1024).toString();   // 16MB for low/ECO
         await _setMpvProperty('demuxer-max-back-bytes', backBytes);
 
         // Faster seeking — don't require exact keyframe alignment
@@ -791,10 +798,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         // Don't cache on disk — reduces memory pressure
         await _setMpvProperty('cache-on-disk', 'no');
 
-        // Reduce demuxer max bytes for streaming — saves RAM
+        // Demuxer max forward bytes — this controls how much data mpv reads ahead
+        // CRITICAL: Must be large enough to prevent constant rebuffering (stop-and-go)
+        // 4K HEVC at 20Mbps = 2.5MB/sec. 8MB = only 3 seconds → STUTTERING.
+        // Keep this reasonable: reduce output quality instead, not buffer size.
         final maxBytes = _perfTier == 0
-            ? (8 * 1024 * 1024).toString()    // 8MB for ultra-low
-            : (16 * 1024 * 1024).toString();   // 16MB for low/ECO
+            ? (32 * 1024 * 1024).toString()    // 32MB for ultra-low (~12 sec 4K)
+            : (48 * 1024 * 1024).toString();    // 48MB for low/ECO (~18 sec 4K)
         await _setMpvProperty('demuxer-max-bytes', maxBytes);
       }
 
@@ -1601,9 +1611,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         builder: (context, snapshot) {
           final position = snapshot.data ?? Duration.zero;
           final duration = _player.state.duration;
-          final progress = duration.inMilliseconds > 0
+          final streamProgress = duration.inMilliseconds > 0
               ? position.inMilliseconds / duration.inMilliseconds
               : 0.0;
+          // Use seek value while dragging, stream value otherwise
+          final progress = _isSeeking ? _seekValue : streamProgress;
 
           return Column(
             children: [
@@ -1621,7 +1633,20 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 ),
                 child: Slider(
                   value: progress.clamp(0.0, 1.0),
+                  // User started dragging slider
+                  onChangeStart: (value) {
+                    _isSeeking = true;
+                    _seekValue = value;
+                  },
+                  // Update visual position while dragging (don't seek yet)
                   onChanged: (value) {
+                    setState(() {
+                      _seekValue = value;
+                    });
+                  },
+                  // User released — actually seek to position
+                  onChangeEnd: (value) {
+                    _isSeeking = false;
                     final seekPosition = Duration(
                       milliseconds:
                           (duration.inMilliseconds * value).round(),
@@ -1635,9 +1660,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(_formatDuration(position),
-                        style: const TextStyle(
-                            color: Colors.white70, fontSize: 12)),
+                    Text(
+                      _formatDuration(_isSeeking
+                          ? Duration(milliseconds: (duration.inMilliseconds * _seekValue).round())
+                          : position),
+                      style: const TextStyle(
+                          color: Colors.white70, fontSize: 12)),
                     Text(_formatDuration(duration),
                         style: const TextStyle(
                             color: Colors.white54, fontSize: 12)),
