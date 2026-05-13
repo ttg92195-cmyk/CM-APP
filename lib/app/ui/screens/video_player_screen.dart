@@ -14,9 +14,13 @@ import 'package:screen_brightness/screen_brightness.dart';
 ///
 /// Features:
 /// - Adaptive Performance: 3-tier auto-tuning based on device RAM
-///   - Tier 0 (≤2GB): 480p output, aggressive frame drop, ECO mode
-///   - Tier 1 (≤3GB): 720p output, frame drop, ECO mode
-///   - Tier 2 (>3GB): 1080p output, standard quality
+///   - Tier 0 (≤2GB): 480p output, aggressive frame drop, ECO mode auto
+///   - Tier 1 (≤3GB): 720p output, frame drop, ECO mode auto
+///   - Tier 2 (>3GB): 1080p output, standard quality, ECO mode optional
+/// - ECO Mode toggle (top bar 🌿 icon): aggressive optimization for 4K
+///   - Skip HEVC loop filter (massive CPU save)
+///   - Skip non-reference frames at decoder level
+///   - Reduced buffers, bilinear scaling, no debanding
 /// - Double Tap to Seek 10s (YouTube-style animation)
 /// - Brightness Control (left 50% vertical drag)
 /// - Audio Boost up to 300% (right 30% vertical drag)
@@ -64,6 +68,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   // Performance tier: 0=ultra-low (≤2GB), 1=low (≤3GB), 2=normal (>3GB)
   int _perfTier = 2;
   bool _isLowEndDevice = false;
+
+  // Performance Mode: ECO = aggressive optimization, Normal = standard
+  // Default based on device tier; user can toggle manually
+  bool _ecoMode = false;
   int _screenWidth = 1080;
   int _screenHeight = 1920;
   int _androidVersion = 30;
@@ -462,7 +470,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         }
 
         _isLowEndDevice = _perfTier <= 1;
-        debugPrint('Performance tier: $_perfTier (RAM=${_totalMemoryMB}MB, SDK=$_androidVersion, screen=${_screenWidth}x$_screenHeight)');
+        // Auto-enable ECO mode on low-end devices
+        _ecoMode = _perfTier <= 1;
+        debugPrint('Performance tier: $_perfTier (RAM=${_totalMemoryMB}MB, SDK=$_androidVersion, screen=${_screenWidth}x$_screenHeight, eco=$_ecoMode)');
       }
     } catch (e) {
       debugPrint('Device detection error: $e');
@@ -507,13 +517,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
       // Adaptive buffer size based on RAM
       // Low RAM devices can't afford 64MB buffer — reduce to prevent OOM
+      // These are the initial buffer sizes; ECO mode can reduce further at runtime
       final int bufferSizeBytes;
       switch (_perfTier) {
-        case 0: // Ultra-low: 16MB buffer
-          bufferSizeBytes = 16 * 1024 * 1024;
+        case 0: // Ultra-low: 8MB buffer (reduced from 16MB for less memory pressure)
+          bufferSizeBytes = 8 * 1024 * 1024;
           break;
-        case 1: // Low: 32MB buffer
-          bufferSizeBytes = 32 * 1024 * 1024;
+        case 1: // Low: 16MB buffer (reduced from 32MB)
+          bufferSizeBytes = 16 * 1024 * 1024;
           break;
         default: // Normal: 64MB buffer
           bufferSizeBytes = 64 * 1024 * 1024;
@@ -546,14 +557,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           height: outputHeight,
         ),
       );
-
-      // ==============================================================
-      // Performance tuning via mpv properties (using NativePlayer.setProperty)
-      // These are set AFTER player initialization and take effect
-      // immediately. They are NOT part of PlayerConfiguration.
-      // We access NativePlayer via Player.platform dynamic cast.
-      // ==============================================================
-      await _applyPerformanceTuning();
 
       // FIX: Store stream subscriptions so they can be cancelled in dispose().
       // Without explicit cancellation, stream events can fire after the widget
@@ -621,6 +624,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       await _player.open(Media(widget.videoUrl));
       await _player.play();
 
+      // CRITICAL: Apply performance tuning AFTER open/play.
+      // NativePlayer.setProperty() awaits waitForVideoControllerInitializationIfAttached,
+      // which only completes after video parameters are available (i.e., after open()).
+      // Calling it BEFORE open() causes it to HANG indefinitely, freezing the app.
+      // We run it non-blocking (fire-and-forget) with a timeout so it never blocks UI.
+      _applyPerformanceTuningNonBlocking();
+
       if (mounted) {
         setState(() {
           _isInitialized = true;
@@ -664,30 +674,50 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   // Performance Tuning via mpv setProperty
   // ==============================================================
 
-  /// Helper: set mpv property via NativePlayer.setProperty()
+  /// Helper: set mpv property via NativePlayer.setProperty() with timeout.
   /// Player.setProperty() is NOT exposed in media_kit 1.1.11's public API,
   /// but NativePlayer (accessed via Player.platform) has it.
   /// We use dynamic cast to avoid importing internal source files.
+  /// Each call has a 3-second timeout to prevent hanging.
   Future<void> _setMpvProperty(String property, String value) async {
     try {
       final platform = _player.platform;
-      if (platform != null) {
-        await (platform as dynamic).setProperty(property, value);
-      }
+      if (platform == null) return;
+      await (platform as dynamic)
+          .setProperty(property, value)
+          .timeout(const Duration(seconds: 3));
+      debugPrint('mpv: $property=$value ✓');
+    } on TimeoutException {
+      debugPrint('mpv: $property=$value TIMEOUT');
     } catch (e) {
-      debugPrint('mpv setProperty error ($property=$value): $e');
+      debugPrint('mpv: $property=$value ERROR: $e');
     }
   }
 
-  /// Applies mpv performance tuning based on device tier.
+  /// Non-blocking performance tuning — fire-and-forget.
+  /// MUST be called AFTER _player.open() because NativePlayer.setProperty()
+  /// awaits waitForVideoControllerInitializationIfAttached, which only
+  /// completes after video parameters are available from an opened video.
+  /// If called before open(), it HANGS and freezes the entire app.
+  void _applyPerformanceTuningNonBlocking() {
+    // Run in background — never block the UI thread
+    Future.microtask(() => _applyPerformanceTuning());
+  }
+
+  /// Applies mpv performance tuning based on device tier and ECO mode.
   /// Uses NativePlayer.setProperty() via Player.platform to set mpv
   /// properties at runtime. These are NOT part of PlayerConfiguration —
   /// they are mpv-level optimizations that dramatically improve smoothness
   /// on low-end devices.
   Future<void> _applyPerformanceTuning() async {
     try {
-      // Wait for player to be fully initialized before setting properties
-      await Future.delayed(const Duration(milliseconds: 200));
+      if (_isDisposed) return;
+
+      // Small delay to ensure video parameters are available
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (_isDisposed) return;
+
+      final bool isEco = _ecoMode || _perfTier <= 1;
 
       // === ALL DEVICES: Baseline optimizations ===
 
@@ -695,7 +725,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       // This is the SINGLE MOST IMPORTANT setting for smooth playback
       // on low-end devices. Without it, mpv tries to render every frame
       // and falls behind, causing audio desync and stuttering.
-      await _setMpvProperty('framedrop', 'vo');
+      await _setMpvProperty('framedrop', isEco ? 'decoder+vo' : 'vo');
 
       // Allow decoder to skip frames too (not just display)
       await _setMpvProperty('vd-lavc-framedrop', 'all');
@@ -714,14 +744,25 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       // Disable frame interpolation (saves CPU)
       await _setMpvProperty('interpolation', 'no');
 
-      // === LOW-END SPECIFIC: Aggressive optimizations ===
-      if (_perfTier <= 1) {
+      // === ECO MODE / LOW-END: Aggressive optimizations ===
+      if (isEco) {
+        // *** MOST IMPORTANT for 4K on low-end ***
+        // Skip HEVC/H.264 deblocking loop filter — massive CPU saving.
+        // Quality loss is minimal (slight blocking artifacts on edges)
+        // but CPU usage drops dramatically for HEVC content.
+        await _setMpvProperty('vd-lavc-skiploopfilter', 'all');
+
+        // Skip non-reference frames at decoder level
+        // Frees up CPU to keep up with real-time playback
+        await _setMpvProperty('vd-lavc-skipframe', 'default');
+
+        // Skip IDCT step for non-reference frames
+        await _setMpvProperty('vd-lavc-skipidct', 'default');
+
         // Reduce demuxer back-buffer to save memory
-        // Default is same as demuxer-max-bytes, but we only need
-        // a small back-buffer for seeking backwards
         final backBytes = _perfTier == 0
-            ? (4 * 1024 * 1024).toString()   // 4MB for ultra-low
-            : (8 * 1024 * 1024).toString();   // 8MB for low
+            ? (2 * 1024 * 1024).toString()   // 2MB for ultra-low
+            : (4 * 1024 * 1024).toString();   // 4MB for low/ECO
         await _setMpvProperty('demuxer-max-back-bytes', backBytes);
 
         // Faster seeking — don't require exact keyframe alignment
@@ -735,13 +776,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
         // Disable tone mapping (HDR→SDR conversion) — saves GPU
         await _setMpvProperty('tone-mapping', 'clip');
-      }
 
-      // === ULTRA-LOW SPECIFIC: Maximum optimization ===
-      if (_perfTier == 0) {
-        // Aggressive decoder thread limiting
-        // On 2GB devices, too many decoder threads cause contention
-        await _setMpvProperty('vd-lavc-threads', '2');
+        // Limit decoder threads to reduce contention on low-core devices
+        await _setMpvProperty('vd-lavc-threads', _perfTier == 0 ? '2' : '4');
 
         // Lower GPU rendering quality — faster shader processing
         await _setMpvProperty('scale', 'bilinear');
@@ -751,18 +788,30 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         // Disable debanding — saves GPU processing
         await _setMpvProperty('deband', 'no');
 
-        // Maximum frame dropping — prefer smooth audio over video
-        await _setMpvProperty('framedrop', 'decoder+vo');
-
-        // Lower cache for streaming — reduces memory pressure
+        // Don't cache on disk — reduces memory pressure
         await _setMpvProperty('cache-on-disk', 'no');
+
+        // Reduce demuxer max bytes for streaming — saves RAM
+        final maxBytes = _perfTier == 0
+            ? (8 * 1024 * 1024).toString()    // 8MB for ultra-low
+            : (16 * 1024 * 1024).toString();   // 16MB for low/ECO
+        await _setMpvProperty('demuxer-max-bytes', maxBytes);
       }
 
-      debugPrint('Performance tuning applied: tier=$_perfTier');
+      debugPrint('Performance tuning applied: tier=$_perfTier, eco=$isEco');
     } catch (e) {
       debugPrint('Performance tuning error (non-critical): $e');
       // Non-critical — player still works, just less optimized
     }
+  }
+
+  /// Toggle ECO mode and re-apply performance tuning
+  void _toggleEcoMode() {
+    setState(() {
+      _ecoMode = !_ecoMode;
+    });
+    // Re-apply tuning with new eco mode setting
+    _applyPerformanceTuningNonBlocking();
   }
 
   void _handlePlayerError(String error) {
@@ -1152,7 +1201,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
-                    _perfTier == 0 ? 'SW · ECO' : 'SW',
+                    _ecoMode ? 'SW · ECO' : 'SW',
                     style: const TextStyle(
                         color: Colors.orange,
                         fontSize: 10,
@@ -1161,8 +1210,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 ),
               ),
             ),
-          // Show ECO mode badge on low-end devices (even with HW decoding)
-          if (!_useSoftwareDecoding && _hasVideoOutput && _perfTier <= 1)
+          // Show ECO mode badge when ECO is active (auto on low-end or manually toggled)
+          if (!_useSoftwareDecoding && _hasVideoOutput && _ecoMode)
             Positioned(
               top: 48,
               right: 8,
@@ -1174,9 +1223,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                     color: Colors.black54,
                     borderRadius: BorderRadius.circular(4),
                   ),
-                  child: Text(
-                    _perfTier == 0 ? 'ECO' : 'ECO',
-                    style: const TextStyle(
+                  child: const Text(
+                    'ECO',
+                    style: TextStyle(
                         color: Colors.green,
                         fontSize: 10,
                         fontWeight: FontWeight.w600),
@@ -1451,6 +1500,22 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   backgroundColor: Colors.black45,
                   padding: const EdgeInsets.all(8)),
               tooltip: _videoFit == BoxFit.contain ? 'Zoom In' : 'Zoom Out',
+            ),
+            const SizedBox(width: 4),
+            // ECO Mode toggle — reduces quality for smoother 4K on low-end
+            IconButton(
+              icon: Icon(
+                _ecoMode ? Icons.eco : Icons.eco_outlined,
+                color: _ecoMode ? const Color(0xFF4CAF50) : Colors.white54,
+                size: 22,
+              ),
+              onPressed: _toggleEcoMode,
+              style: IconButton.styleFrom(
+                  backgroundColor: _ecoMode
+                      ? const Color(0xFF1B5E20).withValues(alpha: 0.7)
+                      : Colors.black45,
+                  padding: const EdgeInsets.all(8)),
+              tooltip: _ecoMode ? 'ECO Mode ON' : 'ECO Mode OFF',
             ),
             const SizedBox(width: 4),
             // Audio track
