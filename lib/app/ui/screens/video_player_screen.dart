@@ -18,19 +18,34 @@ import 'package:screen_brightness/screen_brightness.dart';
 ///   Video: H.263, H.264 AVC, H.265 HEVC, MPEG-4, VP8, VP9, AV1
 ///   Audio: Vorbis, Opus, FLAC, ALAC, MP1, MP2, MP3, AAC, AC-3, E-AC-3, DTS, DTS-HD
 ///
-/// Performance Strategy — Smart 3-tier auto-tuning:
-///   1. NORMAL (high-end / ECO off): Full quality for ALL resolutions (480p-4K)
-///   2. ECO (low-end auto / manual toggle): Smooth playback, preserves 1080p quality
-///   3. ECO+4K (low-end + 2K/4K video): Slight quality trade-off for smooth 4K
+/// Performance Strategy — Quality-First Approach (like MX Player / VLC):
 ///
-/// Key principle: NEVER downscale output resolution. Use mpv-level optimizations
-/// (frame dropping, skip filters, buffer tuning) instead. This ensures:
-///   - 480p video looks like 480p (not worse)
-///   - 1080p video looks like 1080p (not downscaled to 480p)
-///   - 4K video plays smoothly on low-end (with ECO optimizations)
+/// Core principle: Play every video at its NATIVE quality.
+///   - 480p looks like 480p, 720p like 720p, 1080p like 1080p
+///   - 4K plays at full resolution — NO downscaling, NO bilinear forcing
+///
+/// How we achieve smooth playback WITHOUT degrading quality:
+///   1. Hardware decoding first (MediaCodec on Android) — always preferred
+///   2. Auto SW fallback if HW fails for specific codecs
+///   3. Smart frame dropping only when display actually falls behind
+///   4. Reasonable buffer sizes (not too small = stutter, not too big = OOM)
+///   5. Fast GPU texture upload (PBO)
+///   6. Minimal mpv overrides — let mpv's excellent defaults do their job
+///
+/// ECO Mode (⚡ icon) — optional manual toggle:
+///   - Only activates frame-drop optimizations and skip-loop-filter
+///   - NEVER forces bilinear scaling or reduces output resolution
+///   - Useful for very old devices (≤2GB RAM) with 4K content
+///   - Default: OFF on 4GB+ devices, can be toggled manually
+///
+/// Supported Formats (via libmpv/FFmpeg):
+///   Streaming: DASH, HLS, SmoothStreaming, RTMP, RTSP
+///   Containers: MP4, MOV, FLV, MKV, WebM, Ogg, MPEG, AVI, TS, M2TS
+///   Video: H.263, H.264 AVC, H.265 HEVC, MPEG-4, VP8, VP9, AV1
+///   Audio: Vorbis, Opus, FLAC, ALAC, MP1, MP2, MP3, AAC, AC-3, E-AC-3, DTS, DTS-HD
 ///
 /// Features:
-/// - ECO Mode toggle (🌿 icon): smart optimization for low-end devices
+/// - ECO Mode toggle (⚡ icon): optional optimization for very low-end devices
 /// - Double Tap to Seek 10s (YouTube-style animation)
 /// - Brightness Control (left 50% vertical drag)
 /// - Audio Boost up to 300% (right 30% vertical drag)
@@ -74,12 +89,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   static const int _maxRetries = 2;
 
   // Device info for adaptive configuration
-  // Performance tier: 0=ultra-low (≤2GB), 1=low (≤3GB), 2=normal (>3GB)
-  int _perfTier = 2;
+  // Performance tier: 0=ultra-low (≤2GB), 1=low (2-3GB), 2=mid (3-4GB), 3=high (>4GB)
+  int _perfTier = 3;
   bool _isLowEndDevice = false;
 
-  // Performance Mode: ECO = aggressive optimization, Normal = standard
-  // Default based on device tier; user can toggle manually
+  // ECO Mode: manual toggle only, NOT auto-enabled.
+  // Quality-first: we don't force ECO on any device.
+  // User can enable it manually if they experience stuttering.
   bool _ecoMode = false;
   int _screenWidth = 1080;
   int _screenHeight = 1920;
@@ -470,21 +486,25 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           }
         }
 
-        // Performance tier based on RAM + screen resolution + Android version
-        // Tier 0: Ultra-low (≤2GB RAM or very old device)
-        // Tier 1: Low (≤3GB RAM or low resolution)
-        // Tier 2: Normal (>3GB RAM)
+        // Performance tier based on RAM + Android version
+        // Tier 0: Ultra-low (≤2GB RAM or very old Android ≤8.1)
+        // Tier 1: Low (2-3GB RAM or old Android 9)
+        // Tier 2: Mid (3-4GB RAM) — Oppo A16, Redmi 9 etc.
+        // Tier 3: High (>4GB RAM) — modern mid-range and above
         if (_totalMemoryMB <= 2048 || _androidVersion <= 27) {
           _perfTier = 0;
-        } else if (_totalMemoryMB <= 3072 || _androidVersion <= 29 || _screenWidth < 1080) {
+        } else if (_totalMemoryMB <= 3072 || _androidVersion <= 28) {
           _perfTier = 1;
-        } else {
+        } else if (_totalMemoryMB <= 4096) {
           _perfTier = 2;
+        } else {
+          _perfTier = 3;
         }
 
         _isLowEndDevice = _perfTier <= 1;
-        // Auto-enable ECO mode on low-end devices
-        _ecoMode = _perfTier <= 1;
+        // DO NOT auto-enable ECO mode — quality first!
+        // User can toggle manually if needed.
+        _ecoMode = false;
         debugPrint('Performance tier: $_perfTier (RAM=${_totalMemoryMB}MB, SDK=$_androidVersion, screen=${_screenWidth}x$_screenHeight, eco=$_ecoMode)');
       }
     } catch (e) {
@@ -514,28 +534,36 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       // This preserves full visual quality for ALL resolutions (480p-4K).
       // ==============================================================
 
-      // Adaptive buffer size based on RAM
-      // IMPORTANT: Buffer must be large enough to prevent constant rebuffering!
-      // 4K HEVC at 20Mbps = 2.5MB/sec. Too small buffer = stop-and-go stuttering.
-      // The buffer holds compressed data which is small compared to decoded frames.
+      // Buffer size: must be large enough to prevent rebuffering,
+      // but NOT so large that it exhausts RAM on low-end devices.
+      // 4K HEVC at 20Mbps ≈ 2.5MB/sec. A 16MB buffer ≈ 6 seconds of 4K.
+      // Key insight: large buffers don't help if the network can't fill them fast enough.
+      // They just waste RAM → OOM → pixelation/artifacts on low-end devices.
       final int bufferSizeBytes;
       switch (_perfTier) {
-        case 0: // Ultra-low: 32MB buffer (~12 seconds of 4K content)
+        case 0: // Ultra-low (≤2GB): 16MB — enough for 6 sec of 4K, saves RAM
+          bufferSizeBytes = 16 * 1024 * 1024;
+          break;
+        case 1: // Low (2-3GB): 24MB
+          bufferSizeBytes = 24 * 1024 * 1024;
+          break;
+        case 2: // Mid (3-4GB): 32MB
           bufferSizeBytes = 32 * 1024 * 1024;
           break;
-        case 1: // Low: 48MB buffer (~18 seconds of 4K content)
-          bufferSizeBytes = 48 * 1024 * 1024;
-          break;
-        default: // Normal: 64MB buffer
-          bufferSizeBytes = 64 * 1024 * 1024;
+        default: // High (>4GB): 50MB
+          bufferSizeBytes = 50 * 1024 * 1024;
           break;
       }
 
+      // Hardware decoding: ALWAYS prefer hardware (MediaCodec) on Android.
+      // 'auto' = try HW first, auto-fallback to SW if codec unsupported.
+      // 'auto-safe' = same but also handles surface/format issues.
+      // On Android 10+ (SDK 29+), HW decoding is very stable — use 'auto'.
+      // On older devices, 'auto-safe' is more reliable.
       final bool useHWAccel = !_useSoftwareDecoding;
-      // Use 'auto-safe' on low-end for more reliable HW decoding fallback
       final String hwdecValue = _useSoftwareDecoding
           ? 'no'
-          : (_perfTier <= 1 ? 'auto-safe' : 'auto');
+          : (_androidVersion >= 29 ? 'auto' : 'auto-safe');
 
       _player = Player(
         configuration: PlayerConfiguration(
@@ -710,128 +738,107 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     Future.microtask(() => _applyPerformanceTuning());
   }
 
-  /// Applies mpv performance tuning based on device tier, ECO mode,
-  /// and video resolution. Uses a smart 3-tier approach:
+  /// Applies MINIMAL mpv performance tuning — quality-first approach.
   ///
-  /// 1. NORMAL mode (ECO OFF, high-end devices):
-  ///    - Minimal optimizations: frame drop on display lag, VSync off
-  ///    - Full quality for ALL resolutions (480p-4K)
+  /// Philosophy: mpv's defaults are already excellent. We only override
+  /// the few properties that actually help on mobile without hurting quality.
   ///
-  /// 2. ECO mode (auto for low-end, manual toggle):
-  ///    - Smooth optimizations: frame drop, skip HEVC loop filter
-  ///    - Preserves visual quality for 480p-1080p
-  ///    - Makes 4K playable on low-end with slight quality trade-off
+  /// What we DO (all devices):
+  ///   - VSync off (reduces micro-stutter, tearing invisible on mobile)
+  ///   - PBO for faster GPU texture uploads
+  ///   - Display-level frame drop when GPU falls behind
+  ///   - Audio-desync tolerance (better than stuttering)
   ///
-  /// 3. ECO + 4K mode (auto when low-end + high-res video):
-  ///    - All ECO optimizations plus aggressive decoder shortcuts
-  ///    - This is the ONLY mode that degrades quality (slightly)
-  ///    - Necessary trade-off: without it, 4K stutters on 2GB devices
+  /// What we DO NOT do (to preserve quality):
+  ///   - NO bilinear scaling (mpv's default bicubic/spline64 is much better)
+  ///   - NO output resolution downscaling
+  ///   - NO skip non-reference frames (causes pixelation)
+  ///   - NO disable debanding (causes visible banding)
+  ///   - NO forced skiploopfilter=all (causes blocking artifacts)
+  ///
+  /// ECO mode (manual toggle only):
+  ///   - Skip HEVC loop filter for non-reference frames only (skiploopfilter=nonref)
+  ///     — saves ~20% CPU, minimal visual impact
+  ///   - Display+decoder frame drop when behind
+  ///   - Slightly reduced demuxer buffer to save RAM
   Future<void> _applyPerformanceTuning() async {
     try {
       if (_isDisposed) return;
 
-      // Wait for video parameters to be available
-      await Future.delayed(const Duration(milliseconds: 500));
+      // Brief wait for video parameters — shorter than before for faster startup
+      await Future.delayed(const Duration(milliseconds: 200));
       if (_isDisposed) return;
 
-      // Smart mode detection:
-      // - High-end device + ECO off → Normal (full quality)
-      // - Low-end device OR ECO on → ECO (good quality + smooth)
-      // - Low-end + 4K/2K video → ECO+4K (slight quality trade-off for smooth)
-      final bool isEco = _ecoMode || _perfTier <= 1;
+      final bool isEco = _ecoMode;
       final bool is4K = _isHighResVideo;
-      final bool isEco4K = isEco && is4K;
 
-      debugPrint('Tuning: tier=$_perfTier, eco=$_ecoMode, isEco=$isEco, is4K=$is4K, eco4K=$isEco4K, videoWidth=${_player.state.width}');
+      debugPrint('Tuning: tier=$_perfTier, eco=$_ecoMode, is4K=$is4K, videoWidth=${_player.state.width}');
 
       // =============================================================
-      // ALL DEVICES: Baseline optimizations (no quality loss)
+      // ALL DEVICES: Essential optimizations (zero quality loss)
+      // These are the ONLY overrides we apply by default.
+      // mpv's defaults are already great — don't override more than needed.
       // =============================================================
 
-      // Frame dropping when display can't keep up — essential for smoothness
-      // 'vo' = only drop at display level (least aggressive, best quality)
-      // 'decoder+vo' = also skip at decoder (more aggressive, for ECO)
-      await _setMpvProperty('framedrop', isEco ? 'decoder+vo' : 'vo');
+      // Display-level frame drop: when the GPU can't keep up,
+      // drop late frames at the display stage. This is the least
+      // aggressive frame drop — invisible to the user, saves CPU.
+      await _setMpvProperty('framedrop', 'vo');
 
-      // Allow decoder to drop frames too in ECO mode
-      await _setMpvProperty('vd-lavc-framedrop', isEco ? 'all' : 'nonref');
-
-      // Disable VSync — reduces micro-stutter, possible tearing (invisible on mobile)
+      // VSync off — eliminates vsync-induced micro-stutter.
+      // Tearing is invisible on mobile displays.
       await _setMpvProperty('opengl-swapinterval', '0');
 
-      // Pixel Buffer Objects — faster GPU texture uploads (no quality impact)
+      // Pixel Buffer Objects — faster GPU texture uploads.
+      // Zero quality impact, just faster rendering.
       await _setMpvProperty('opengl-pbo', 'yes');
 
-      // Relaxed video sync — slight A/V desync is better than stutter
+      // Tolerate slight A/V desync rather than stuttering.
+      // audio-desync = resample audio to match video timing.
       await _setMpvProperty('video-sync', 'audio-desync');
 
-      // Disable frame interpolation — saves CPU, no quality loss
-      await _setMpvProperty('interpolation', 'no');
-
       // =============================================================
-      // ECO MODE: Smooth optimizations (minimal quality impact)
-      // Applied when: low-end device OR user toggled ECO
-      // These preserve quality for 480p-1080p, help with 4K
+      // ECO MODE ONLY (manual toggle):
+      // Applied ONLY when user explicitly enables ECO mode.
+      // These optimizations have MINIMAL visual impact:
+      //   - skiploopfilter=nonref (not 'all'!) — only skip non-reference
+      //     deblocking, saves ~20% HEVC CPU with barely visible effect
+      //   - decoder frame drop when behind (in addition to display drop)
+      //   - reduced buffer to save RAM on very low-end devices
       // =============================================================
       if (isEco) {
-        // Skip HEVC/H.264 deblocking loop filter
-        // This is the most effective CPU-saving optimization for HEVC.
-        // Quality impact: slight blocking artifacts on edges (barely visible)
-        // CPU saving: ~30-40% for HEVC decode
-        await _setMpvProperty('vd-lavc-skiploopfilter', is4K ? 'all' : 'nonref');
+        // Frame drop at both display AND decoder level when behind
+        // Only drops frames when actually lagging — doesn't skip proactively
+        await _setMpvProperty('framedrop', 'decoder+vo');
+
+        // Decoder-level frame drop: 'nonref' = only drop non-reference frames
+        // This is safe — non-reference frames aren't needed for future decoding
+        await _setMpvProperty('vd-lavc-framedrop', 'nonref');
+
+        // Skip HEVC loop filter for NON-REFERENCE frames only.
+        // NOT 'all' — 'all' causes visible blocking artifacts (pixelation).
+        // 'nonref' saves ~20% HEVC CPU with barely visible quality impact.
+        // For 4K specifically, we use 'bidir' which skips B-frame deblocking —
+        // good balance between CPU savings and quality.
+        await _setMpvProperty('vd-lavc-skiploopfilter', is4K ? 'bidir' : 'nonref');
 
         // Faster seeking — don't require exact keyframe alignment
         await _setMpvProperty('hr-seek', 'no');
 
-        // Disable ICC profile auto-detection — saves CPU
-        await _setMpvProperty('icc-profile-auto', 'no');
-
-        // Simplified tone mapping — saves GPU on HDR content
-        await _setMpvProperty('tone-mapping', 'clip');
-
-        // Bilinear scaling — faster than bicubic, quality OK on small screens
-        await _setMpvProperty('scale', 'bilinear');
-        await _setMpvProperty('dscale', 'bilinear');
-        await _setMpvProperty('cscale', 'bilinear');
-
-        // Disable debanding — saves GPU, quality loss minimal
-        await _setMpvProperty('deband', 'no');
-
-        // Demuxer back-buffer for reverse seeking
-        final backBytes = _perfTier == 0
-            ? (8 * 1024 * 1024).toString()    // 8MB for ultra-low
-            : (16 * 1024 * 1024).toString();   // 16MB for low
+        // Reasonable demuxer buffer — smaller to save RAM on low-end
+        // Still large enough for smooth playback
+        final backBytes = _perfTier <= 1
+            ? (4 * 1024 * 1024).toString()     // 4MB back-buffer
+            : (8 * 1024 * 1024).toString();     // 8MB back-buffer
         await _setMpvProperty('demuxer-max-back-bytes', backBytes);
 
-        // Demuxer forward buffer — must be large enough to prevent rebuffering
-        final maxBytes = _perfTier == 0
-            ? (32 * 1024 * 1024).toString()    // 32MB for ultra-low
-            : (48 * 1024 * 1024).toString();    // 48MB for low
+        final maxBytes = _perfTier <= 1
+            ? (16 * 1024 * 1024).toString()     // 16MB forward buffer
+            : (24 * 1024 * 1024).toString();     // 24MB forward buffer
         await _setMpvProperty('demuxer-max-bytes', maxBytes);
       }
 
-      // =============================================================
-      // ECO + 4K/2K MODE: Aggressive optimizations
-      // Applied ONLY when: low-end device + high-res video (2K/4K)
-      // These trade some quality for smoothness — ONLY for 4K on low-end
-      // 1080p and below will NOT have these applied
-      // =============================================================
-      if (isEco4K) {
-        // Skip non-reference frames at decoder level
-        // Only for 4K — 1080p doesn't need this level of optimization
-        await _setMpvProperty('vd-lavc-skipframe', 'nonref');
-
-        // Limit decoder threads on very low-end devices
-        await _setMpvProperty('vd-lavc-threads', _perfTier == 0 ? '2' : '4');
-
-        // Reduce audio buffer to save memory for video decode
-        await _setMpvProperty('audio-buffer', '0.1');
-
-        // Don't cache on disk — save I/O for video decode
-        await _setMpvProperty('cache-on-disk', 'no');
-      }
-
-      debugPrint('Performance tuning applied: tier=$_perfTier, eco=$isEco, 4k=$is4K, eco4k=$isEco4K');
+      debugPrint('Performance tuning applied: tier=$_perfTier, eco=$isEco, 4k=$is4K');
     } catch (e) {
       debugPrint('Performance tuning error (non-critical): $e');
     }
@@ -1234,7 +1241,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                   ),
                   child: Text(
                     _ecoMode
-                        ? (_isHighResVideo ? 'SW · ECO 4K' : 'SW · ECO')
+                        ? 'SW · ECO'
                         : 'SW',
                     style: const TextStyle(
                         color: Colors.orange,
@@ -1244,7 +1251,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                 ),
               ),
             ),
-          // Show ECO mode badge when ECO is active (auto on low-end or manually toggled)
+          // Show ECO mode badge when user has manually toggled ECO on
           if (!_useSoftwareDecoding && _hasVideoOutput && _ecoMode)
             Positioned(
               top: 48,
@@ -1257,10 +1264,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                     color: Colors.black54,
                     borderRadius: BorderRadius.circular(4),
                   ),
-                  child: Text(
-                    _isHighResVideo ? 'ECO 4K' : 'ECO',
+                  child: const Text(
+                    'ECO',
                     style: TextStyle(
-                        color: _isHighResVideo ? Colors.amber : Colors.green,
+                        color: Colors.amber,
                         fontSize: 10,
                         fontWeight: FontWeight.w600),
                   ),
@@ -1536,20 +1543,21 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               tooltip: _videoFit == BoxFit.contain ? 'Zoom In' : 'Zoom Out',
             ),
             const SizedBox(width: 4),
-            // ECO Mode toggle — reduces quality for smoother 4K on low-end
+            // ECO Mode toggle — frame-drop optimization for smoother playback
+            // Quality is preserved; only frame dropping and loop filter skipping are affected
             IconButton(
               icon: Icon(
-                _ecoMode ? Icons.eco : Icons.eco_outlined,
-                color: _ecoMode ? const Color(0xFF4CAF50) : Colors.white54,
+                _ecoMode ? Icons.speed : Icons.speed_outlined,
+                color: _ecoMode ? Colors.amber : Colors.white54,
                 size: 22,
               ),
               onPressed: _toggleEcoMode,
               style: IconButton.styleFrom(
                   backgroundColor: _ecoMode
-                      ? const Color(0xFF1B5E20).withOpacity(0.7)
+                      ? Colors.amber.withOpacity(0.2)
                       : Colors.black45,
                   padding: const EdgeInsets.all(8)),
-              tooltip: _ecoMode ? 'ECO Mode ON' : 'ECO Mode OFF',
+              tooltip: _ecoMode ? 'ECO ON (smoother)' : 'ECO OFF (best quality)',
             ),
             const SizedBox(width: 4),
             // Audio track
