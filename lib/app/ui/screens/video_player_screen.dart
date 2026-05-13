@@ -1512,7 +1512,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               onPressed: _toggleEcoMode,
               style: IconButton.styleFrom(
                   backgroundColor: _ecoMode
-                      ? const Color(0xFF1B5E20).withValues(alpha: 0.7)
+                      ? const Color(0xFF1B5E20).withOpacity(0.7)
                       : Colors.black45,
                   padding: const EdgeInsets.all(8)),
               tooltip: _ecoMode ? 'ECO Mode ON' : 'ECO Mode OFF',
