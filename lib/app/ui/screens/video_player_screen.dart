@@ -1142,6 +1142,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             // Center: Play/Pause big button (interactive)
             Center(
               child: StreamBuilder<bool>(
+                // initialData prevents flash when controls are toggled
+                initialData: _player.state.playing,
                 stream: _player.stream.playing,
                 builder: (context, snapshot) {
                   final isPlaying = _player.state.playing;
@@ -1639,9 +1641,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: StreamBuilder<Duration>(
+        // CRITICAL FIX: initialData prevents 00:00 flash when controls are toggled.
+        // Without initialData, StreamBuilder starts with snapshot.data = null when
+        // re-created (controls hidden then shown), causing position = Duration.zero.
+        // Using _player.state.position as initialData gives the correct current position
+        // immediately on first frame, eliminating the 00:00 → correct position jump.
+        initialData: _player.state.position,
         stream: _player.stream.position,
         builder: (context, snapshot) {
-          final position = snapshot.data ?? Duration.zero;
+          // Use snapshot data, but also check _player.state as fallback
+          // This handles edge cases where stream might lag behind
+          final position = snapshot.data ?? _player.state.position;
           final duration = _player.state.duration;
           final streamProgress = duration.inMilliseconds > 0
               ? position.inMilliseconds / duration.inMilliseconds
@@ -1726,6 +1736,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           const SizedBox(width: 16),
           // Play/Pause (center)
           StreamBuilder<bool>(
+            // initialData prevents flash when controls are toggled
+            initialData: _player.state.playing,
             stream: _player.stream.playing,
             builder: (context, snapshot) {
               final isPlaying = _player.state.playing;
