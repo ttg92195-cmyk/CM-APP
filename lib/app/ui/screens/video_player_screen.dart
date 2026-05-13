@@ -13,6 +13,10 @@ import 'package:screen_brightness/screen_brightness.dart';
 /// Supports: MP4, MKV, HEVC (H.265), 4K, AC3/DTS audio, embedded subtitles
 ///
 /// Features:
+/// - Adaptive Performance: 3-tier auto-tuning based on device RAM
+///   - Tier 0 (≤2GB): 480p output, aggressive frame drop, ECO mode
+///   - Tier 1 (≤3GB): 720p output, frame drop, ECO mode
+///   - Tier 2 (>3GB): 1080p output, standard quality
 /// - Double Tap to Seek 10s (YouTube-style animation)
 /// - Brightness Control (left 50% vertical drag)
 /// - Audio Boost up to 300% (right 30% vertical drag)
@@ -20,6 +24,7 @@ import 'package:screen_brightness/screen_brightness.dart';
 /// - Zoom/Fit toggle (Contain ↔ Cover)
 /// - Resume Playback (save position, auto-resume dialog)
 /// - HW/SW decoding auto-fallback for 4K HEVC
+/// - mpv runtime performance tuning (frame drop, VSync, PBO, etc.)
 /// - App lifecycle handling (pause/resume on background/foreground)
 class VideoPlayerScreen extends StatefulWidget {
   final String videoUrl;
@@ -56,10 +61,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   static const int _maxRetries = 2;
 
   // Device info for adaptive configuration
+  // Performance tier: 0=ultra-low (≤2GB), 1=low (≤3GB), 2=normal (>3GB)
+  int _perfTier = 2;
   bool _isLowEndDevice = false;
   int _screenWidth = 1080;
   int _screenHeight = 1920;
   int _androidVersion = 30;
+  int _totalMemoryMB = 4096; // Total RAM in MB
 
   // Audio Boost: media_kit (libmpv) supports volume 0-300+
   double _currentVolume = 100.0;
@@ -413,9 +421,48 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         final deviceInfo = DeviceInfoPlugin();
         final androidInfo = await deviceInfo.androidInfo;
         _androidVersion = androidInfo.version.sdkInt;
-        _isLowEndDevice = _androidVersion <= 29 ||
-            _screenWidth < 1080 ||
-            _screenHeight < 1920;
+
+        // Detect total RAM — try Android ActivityManager via platform channel
+        // On most Android devices, we can read /proc/meminfo
+        try {
+          // Method 1: Read /proc/meminfo (works on most Android devices)
+          final meminfo = File('/proc/meminfo');
+          if (await meminfo.exists()) {
+            final content = await meminfo.readAsString();
+            final match = RegExp(r'MemTotal:\s+(\d+) kB').firstMatch(content);
+            if (match != null) {
+              _totalMemoryMB = (int.parse(match.group(1)!) / 1024).round();
+              debugPrint('Device RAM: ${_totalMemoryMB}MB');
+            }
+          }
+        } catch (_) {
+          // Fallback: estimate RAM from device characteristics
+          // Low Android version + low screen = likely ≤2GB
+          // Medium version = likely ≤3GB
+          // Recent device = likely >3GB
+          if (_androidVersion <= 27 || _screenWidth < 720) {
+            _totalMemoryMB = 2048;
+          } else if (_androidVersion <= 29) {
+            _totalMemoryMB = 3072;
+          } else {
+            _totalMemoryMB = 4096;
+          }
+        }
+
+        // Performance tier based on RAM + screen resolution + Android version
+        // Tier 0: Ultra-low (≤2GB RAM or very old device)
+        // Tier 1: Low (≤3GB RAM or low resolution)
+        // Tier 2: Normal (>3GB RAM)
+        if (_totalMemoryMB <= 2048 || _androidVersion <= 27) {
+          _perfTier = 0;
+        } else if (_totalMemoryMB <= 3072 || _androidVersion <= 29 || _screenWidth < 1080) {
+          _perfTier = 1;
+        } else {
+          _perfTier = 2;
+        }
+
+        _isLowEndDevice = _perfTier <= 1;
+        debugPrint('Performance tier: $_perfTier (RAM=${_totalMemoryMB}MB, SDK=$_androidVersion, screen=${_screenWidth}x$_screenHeight)');
       }
     } catch (e) {
       debugPrint('Device detection error: $e');
@@ -435,24 +482,55 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         return;
       }
 
+      // Adaptive output resolution based on performance tier
+      // Tier 0 (≤2GB): 480p — minimal GPU/memory load for 4K decode
+      // Tier 1 (≤3GB): 720p — balanced quality/performance  
+      // Tier 2 (>3GB): 1080p — full quality
       int? outputWidth;
       int? outputHeight;
-      if (_isLowEndDevice) {
-        outputWidth = 1280;
-        outputHeight = 720;
-      } else if (_screenWidth <= 1080) {
-        outputWidth = 1920;
-        outputHeight = 1080;
+      switch (_perfTier) {
+        case 0: // Ultra-low: 480p output
+          outputWidth = 854;
+          outputHeight = 480;
+          break;
+        case 1: // Low: 720p output
+          outputWidth = 1280;
+          outputHeight = 720;
+          break;
+        default: // Normal: 1080p (or native if screen is smaller)
+          if (_screenWidth <= 1080) {
+            outputWidth = 1920;
+            outputHeight = 1080;
+          }
+          break;
+      }
+
+      // Adaptive buffer size based on RAM
+      // Low RAM devices can't afford 64MB buffer — reduce to prevent OOM
+      final int bufferSizeBytes;
+      switch (_perfTier) {
+        case 0: // Ultra-low: 16MB buffer
+          bufferSizeBytes = 16 * 1024 * 1024;
+          break;
+        case 1: // Low: 32MB buffer
+          bufferSizeBytes = 32 * 1024 * 1024;
+          break;
+        default: // Normal: 64MB buffer
+          bufferSizeBytes = 64 * 1024 * 1024;
+          break;
       }
 
       final bool useHWAccel = !_useSoftwareDecoding;
-      final String hwdecValue = _useSoftwareDecoding ? 'no' : 'auto';
+      // Use 'auto-safe' on low-end for more reliable HW decoding fallback
+      final String hwdecValue = _useSoftwareDecoding
+          ? 'no'
+          : (_perfTier <= 1 ? 'auto-safe' : 'auto');
 
       _player = Player(
         configuration: PlayerConfiguration(
-          bufferSize: 64 * 1024 * 1024,
+          bufferSize: bufferSizeBytes,
           title: 'CM Movies Player',
-          vo: 'gpu',
+          vo: 'null', // Let VideoController handle vo
           logLevel: MPVLogLevel.error,
         ),
       );
@@ -468,6 +546,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           height: outputHeight,
         ),
       );
+
+      // ==============================================================
+      // Performance tuning via mpv properties (using setProperty)
+      // These are set AFTER player initialization and take effect
+      // immediately. They are NOT part of PlayerConfiguration.
+      // ==============================================================
+      await _applyPerformanceTuning();
 
       // FIX: Store stream subscriptions so they can be cancelled in dispose().
       // Without explicit cancellation, stream events can fire after the widget
@@ -571,6 +656,92 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     } catch (e) {
       debugPrint('Resume position check error: $e');
       // Don't crash — just continue from start
+    }
+  }
+
+  // ==============================================================
+  // Performance Tuning via mpv setProperty
+  // ==============================================================
+
+  /// Applies mpv performance tuning based on device tier.
+  /// Uses Player.setProperty() to set mpv properties at runtime.
+  /// These are NOT part of PlayerConfiguration — they are mpv-level
+  /// optimizations that dramatically improve smoothness on low-end devices.
+  Future<void> _applyPerformanceTuning() async {
+    try {
+      // === ALL DEVICES: Baseline optimizations ===
+
+      // Enable frame dropping when display can't keep up
+      // This is the SINGLE MOST IMPORTANT setting for smooth playback
+      // on low-end devices. Without it, mpv tries to render every frame
+      // and falls behind, causing audio desync and stuttering.
+      await _player.setProperty('framedrop', 'vo');
+
+      // Allow decoder to skip frames too (not just display)
+      await _player.setProperty('vd-lavc-framedrop', 'all');
+
+      // Disable VSync — reduces stutter at the cost of possible tearing
+      // On mobile, tearing is barely noticeable and smoothness matters more
+      await _player.setProperty('opengl-swapinterval', '0');
+
+      // Use Pixel Buffer Objects for faster GPU texture uploads
+      await _player.setProperty('opengl-pbo', 'yes');
+
+      // Relaxed video sync — allows slight audio/video desync
+      // instead of stuttering or pausing to resync
+      await _player.setProperty('video-sync', 'audio-desync');
+
+      // Disable frame interpolation (saves CPU)
+      await _player.setProperty('interpolation', 'no');
+
+      // === LOW-END SPECIFIC: Aggressive optimizations ===
+      if (_perfTier <= 1) {
+        // Reduce demuxer back-buffer to save memory
+        // Default is same as demuxer-max-bytes, but we only need
+        // a small back-buffer for seeking backwards
+        final backBytes = _perfTier == 0
+            ? (4 * 1024 * 1024).toString()   // 4MB for ultra-low
+            : (8 * 1024 * 1024).toString();   // 8MB for low
+        await _player.setProperty('demuxer-max-back-bytes', backBytes);
+
+        // Faster seeking — don't require exact keyframe alignment
+        await _player.setProperty('hr-seek', 'no');
+
+        // Reduce audio buffer size to save memory
+        await _player.setProperty('audio-buffer', '0.1');
+
+        // Disable ICC profile auto-detection (saves CPU on color management)
+        await _player.setProperty('icc-profile-auto', 'no');
+
+        // Disable tone mapping (HDR→SDR conversion) — saves GPU
+        await _player.setProperty('tone-mapping', 'clip');
+      }
+
+      // === ULTRA-LOW SPECIFIC: Maximum optimization ===
+      if (_perfTier == 0) {
+        // Aggressive decoder thread limiting
+        // On 2GB devices, too many decoder threads cause contention
+        await _player.setProperty('vd-lavc-threads', '2');
+
+        // Lower GPU rendering quality — faster shader processing
+        await _player.setProperty('scale', 'bilinear');
+        await _player.setProperty('dscale', 'bilinear');
+        await _player.setProperty('cscale', 'bilinear');
+
+        // Disable debanding — saves GPU processing
+        await _player.setProperty('deband', 'no');
+
+        // Maximum frame dropping — prefer smooth audio over video
+        await _player.setProperty('framedrop', 'decoder+vo');
+
+        // Lower cache for streaming — reduces memory pressure
+        await _player.setProperty('cache-on-disk', 'no');
+      }
+
+      debugPrint('Performance tuning applied: tier=$_perfTier');
+    } catch (e) {
+      debugPrint('Performance tuning error (non-critical): $e');
+      // Non-critical — player still works, just less optimized
     }
   }
 
@@ -947,7 +1118,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               ),
             ),
 
-          // ====== LAYER 7: SW badge ======
+          // ====== LAYER 7: SW badge + Performance tier indicator ======
           if (_useSoftwareDecoding && _hasVideoOutput)
             Positioned(
               top: 48,
@@ -960,10 +1131,33 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                     color: Colors.black54,
                     borderRadius: BorderRadius.circular(4),
                   ),
-                  child: const Text(
-                    'SW',
-                    style: TextStyle(
+                  child: Text(
+                    _perfTier == 0 ? 'SW · ECO' : 'SW',
+                    style: const TextStyle(
                         color: Colors.orange,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+            ),
+          // Show ECO mode badge on low-end devices (even with HW decoding)
+          if (!_useSoftwareDecoding && _hasVideoOutput && _perfTier <= 1)
+            Positioned(
+              top: 48,
+              right: 8,
+              child: IgnorePointer(
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    _perfTier == 0 ? 'ECO' : 'ECO',
+                    style: const TextStyle(
+                        color: Colors.green,
                         fontSize: 10,
                         fontWeight: FontWeight.w600),
                   ),
