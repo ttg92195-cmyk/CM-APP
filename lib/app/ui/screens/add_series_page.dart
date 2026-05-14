@@ -85,7 +85,8 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
         'overview': _overviewController.text.trim().isEmpty ? null : _overviewController.text.trim(),
         'rating': _ratingController.text.trim().isEmpty ? null : _ratingController.text.trim(),
         'resolution': _resolutionController.text.trim().isEmpty ? null : _resolutionController.text.trim(),
-        'duration': _durationController.text.trim().isEmpty ? null : _durationController.text.trim(),
+        'duration': null,
+        'format': null,
         'isAdult': _isAdult ? 1 : 0,
         'type': 'series',
         'isTrending': _isTrending,
@@ -168,24 +169,10 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
                     ),
                     const SizedBox(height: 16),
 
-                    // Duration + Resolution
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextFormField(
-                            controller: _durationController,
-                            decoration: const InputDecoration(labelText: 'Duration (min)', hintText: 'e.g. 45'),
-                            keyboardType: TextInputType.number,
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: TextFormField(
-                            controller: _resolutionController,
-                            decoration: const InputDecoration(labelText: 'Resolution', hintText: 'e.g. FHD, 4K'),
-                          ),
-                        ),
-                      ],
+                    // Resolution
+                    TextFormField(
+                      controller: _resolutionController,
+                      decoration: const InputDecoration(labelText: 'Resolution', hintText: 'e.g. FHD, 4K'),
                     ),
                     const SizedBox(height: 16),
 

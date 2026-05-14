@@ -61,6 +61,11 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
   int _syncSuccessCount = 0;
   int _syncFailureCount = 0;
   bool _skipDescriptionUpdate = false;
+  int _syncRemainingMovies = 0;
+  int _syncRemainingSeries = 0;
+
+  // Batch size for sync operations
+  static const int _syncBatchSize = 20;
 
   // Filter collapse
   bool _filtersExpanded = true;
@@ -105,6 +110,7 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
     super.initState();
     _loadGenres();
     _loadImportedTmdbIds();
+    _loadSyncRemainingCounts();
   }
 
   @override
@@ -169,6 +175,40 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
     }
   }
 
+  /// Count how many movies/series have no lastSyncDate field (never synced)
+  Future<void> _loadSyncRemainingCounts() async {
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('movies')
+          .limit(5000)
+          .get();
+
+      int movieCount = 0;
+      int seriesCount = 0;
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        final tmdbId = data['tmdbId'];
+        if (tmdbId == null) continue;
+        if (tmdbId is! int || tmdbId <= 0) continue;
+        if (data.containsKey('lastSyncDate')) continue; // already synced
+        final type = data['type']?.toString();
+        if (type == 'movie') {
+          movieCount++;
+        } else if (type == 'series') {
+          seriesCount++;
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _syncRemainingMovies = movieCount;
+          _syncRemainingSeries = seriesCount;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading sync remaining counts: $e');
+    }
+  }
+
   Future<void> _performSearch() async {
     setState(() {
       _isLoading = true;
@@ -215,7 +255,13 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
               );
       }
 
-      final results = List<Map<String, dynamic>>.from(response['results'] ?? []);
+      final rawResults = List<Map<String, dynamic>>.from(response['results'] ?? []);
+
+      // Filter out already-imported items so the grid only shows NEW posts
+      final results = rawResults.where((item) {
+        final id = item['id'];
+        return id == null || !_importedTmdbIds.contains(id);
+      }).toList();
 
       if (mounted) {
         setState(() {
@@ -226,7 +272,7 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
         });
       }
 
-      // Load more pages if postLimit > 20
+      // Load more pages if postLimit > 20 and filtered results are insufficient
       if (_postLimit > 20 && results.length < _postLimit) {
         await _loadMorePages();
       }
@@ -278,7 +324,12 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
                 );
         }
 
-        final moreResults = List<Map<String, dynamic>>.from(response['results'] ?? []);
+        final rawMoreResults = List<Map<String, dynamic>>.from(response['results'] ?? []);
+        // Filter out already-imported items so the grid only shows NEW posts
+        final moreResults = rawMoreResults.where((item) {
+          final id = item['id'];
+          return id == null || !_importedTmdbIds.contains(id);
+        }).toList();
         if (mounted) {
           setState(() {
             _results.addAll(moreResults);
@@ -452,9 +503,9 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Sync Movies'),
-        content: const Text(
-          'This will re-fetch all movies from TMDB that have a tmdbId and update their data in Firestore.\n\n'
-          'This may take a while depending on the number of movies.',
+        content: Text(
+          'This will sync up to $_syncBatchSize movies from TMDB that have a tmdbId and update their data in Firestore.\n\n'
+          'Movies that have never been synced or have an older sync date are prioritized.',
         ),
         actions: [
           TextButton(
@@ -474,7 +525,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
 
     try {
       // Fetch movies with type='movie' and filter for tmdbId client-side
-      // This avoids needing a composite Firestore index (type + tmdbId)
       final snapshot = await FirebaseFirestore.instance
           .collection('movies')
           .where('type', isEqualTo: 'movie')
@@ -485,7 +535,22 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
         final tmdbId = doc.data()['tmdbId'] as int?;
         return tmdbId != null && tmdbId > 0;
       }).toList();
-      if (docs.isEmpty) {
+
+      // Sort: no lastSyncDate first, then by lastSyncDate ascending (oldest first)
+      docs.sort((a, b) {
+        final aSync = a.data()['lastSyncDate'] as Timestamp?;
+        final bSync = b.data()['lastSyncDate'] as Timestamp?;
+        if (aSync == null && bSync == null) return 0;
+        if (aSync == null) return -1;
+        if (bSync == null) return 1;
+        return aSync.compareTo(bSync);
+      });
+
+      // Take only the batch size
+      final batchDocs = docs.take(_syncBatchSize).toList();
+      final totalRemaining = docs.length;
+
+      if (batchDocs.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('No movies with tmdbId found to sync.')),
@@ -497,17 +562,17 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
       setState(() {
         _isSyncing = true;
         _syncProgress = 0;
-        _syncTotal = docs.length;
+        _syncTotal = batchDocs.length;
         _syncSuccessCount = 0;
         _syncFailureCount = 0;
         _syncCurrentTitle = '';
+        _syncRemainingMovies = totalRemaining - batchDocs.length;
       });
 
-      // BUG FIX: Collect (docId, tmdbId, title) pairs FIRST to prevent
-      // any stale reference issues during async iteration.
+      // Collect (docId, tmdbId, title) pairs FIRST to prevent stale references
       final syncItems = <Map<String, dynamic>>[];
-      for (int i = 0; i < docs.length; i++) {
-        final doc = docs[i];
+      for (int i = 0; i < batchDocs.length; i++) {
+        final doc = batchDocs[i];
         final data = doc.data();
         final tmdbId = data['tmdbId'] as int?;
         final title = data['title']?.toString() ?? 'Unknown';
@@ -589,6 +654,7 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
                 return;
               }
               safeUpdate['updatedAt'] = FieldValue.serverTimestamp();
+              safeUpdate['lastSyncDate'] = FieldValue.serverTimestamp();
               transaction.update(
                 FirebaseFirestore.instance.collection('movies').doc(docId),
                 safeUpdate,
@@ -610,12 +676,13 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
 
       if (mounted) {
         setState(() => _isSyncing = false);
-        // Refresh imported status after sync
+        // Refresh imported status and remaining counts after sync
         _loadImportedTmdbIds();
+        _loadSyncRemainingCounts();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Movie sync complete! Success: $_syncSuccessCount, Failed: $_syncFailureCount',
+              'Movie sync batch complete! Success: $_syncSuccessCount, Failed: $_syncFailureCount\n$_syncRemainingMovies remaining to sync',
             ),
             backgroundColor: _syncFailureCount > 0 ? Colors.orange : Colors.green,
             duration: const Duration(seconds: 4),
@@ -637,9 +704,9 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Sync Series'),
-        content: const Text(
-          'This will re-fetch all series from TMDB that have a tmdbId and update their data in Firestore.\n\n'
-          'This may take a while depending on the number of series.',
+        content: Text(
+          'This will sync up to $_syncBatchSize series from TMDB that have a tmdbId and update their data in Firestore.\n\n'
+          'Series that have never been synced or have an older sync date are prioritized.',
         ),
         actions: [
           TextButton(
@@ -659,7 +726,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
 
     try {
       // Fetch series with type='series' and filter for tmdbId client-side
-      // This avoids needing a composite Firestore index (type + tmdbId)
       final snapshot = await FirebaseFirestore.instance
           .collection('movies')
           .where('type', isEqualTo: 'series')
@@ -670,7 +736,22 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
         final tmdbId = doc.data()['tmdbId'] as int?;
         return tmdbId != null && tmdbId > 0;
       }).toList();
-      if (docs.isEmpty) {
+
+      // Sort: no lastSyncDate first, then by lastSyncDate ascending (oldest first)
+      docs.sort((a, b) {
+        final aSync = a.data()['lastSyncDate'] as Timestamp?;
+        final bSync = b.data()['lastSyncDate'] as Timestamp?;
+        if (aSync == null && bSync == null) return 0;
+        if (aSync == null) return -1;
+        if (bSync == null) return 1;
+        return aSync.compareTo(bSync);
+      });
+
+      // Take only the batch size
+      final batchDocs = docs.take(_syncBatchSize).toList();
+      final totalRemaining = docs.length;
+
+      if (batchDocs.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('No series with tmdbId found to sync.')),
@@ -682,17 +763,17 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
       setState(() {
         _isSyncing = true;
         _syncProgress = 0;
-        _syncTotal = docs.length;
+        _syncTotal = batchDocs.length;
         _syncSuccessCount = 0;
         _syncFailureCount = 0;
         _syncCurrentTitle = '';
+        _syncRemainingSeries = totalRemaining - batchDocs.length;
       });
 
-      // BUG FIX: Collect (docId, tmdbId, title) pairs FIRST to prevent
-      // any stale reference issues during async iteration.
+      // Collect (docId, tmdbId, title) pairs FIRST to prevent stale references
       final syncItems = <Map<String, dynamic>>[];
-      for (int i = 0; i < docs.length; i++) {
-        final doc = docs[i];
+      for (int i = 0; i < batchDocs.length; i++) {
+        final doc = batchDocs[i];
         final data = doc.data();
         final tmdbId = data['tmdbId'] as int?;
         final title = data['title']?.toString() ?? 'Unknown';
@@ -773,6 +854,7 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
                 return;
               }
               safeUpdate['updatedAt'] = FieldValue.serverTimestamp();
+              safeUpdate['lastSyncDate'] = FieldValue.serverTimestamp();
               transaction.update(
                 FirebaseFirestore.instance.collection('movies').doc(docId),
                 safeUpdate,
@@ -794,12 +876,13 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
 
       if (mounted) {
         setState(() => _isSyncing = false);
-        // Refresh imported status after sync
+        // Refresh imported status and remaining counts after sync
         _loadImportedTmdbIds();
+        _loadSyncRemainingCounts();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Series sync complete! Success: $_syncSuccessCount, Failed: $_syncFailureCount',
+              'Series sync batch complete! Success: $_syncSuccessCount, Failed: $_syncFailureCount\n$_syncRemainingSeries remaining to sync',
             ),
             backgroundColor: _syncFailureCount > 0 ? Colors.orange : Colors.green,
             duration: const Duration(seconds: 4),
@@ -1522,34 +1605,64 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
           Row(
             children: [
               Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: _isSyncing ? null : _syncMovies,
-                  icon: const Icon(Icons.movie, size: 16),
-                  label: const Text('Sync Movies', style: TextStyle(fontSize: 12)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFE50914),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+                child: Column(
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: _isSyncing ? null : _syncMovies,
+                      icon: const Icon(Icons.movie, size: 16),
+                      label: const Text('Sync Movies', style: TextStyle(fontSize: 12)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFE50914),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
                     ),
-                  ),
+                    if (_syncRemainingMovies > 0)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          '$_syncRemainingMovies remaining',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: isDark ? Colors.white54 : Colors.black54,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: _isSyncing ? null : _syncSeries,
-                  icon: const Icon(Icons.tv, size: 16),
-                  label: const Text('Sync Series', style: TextStyle(fontSize: 12)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFE50914),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+                child: Column(
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: _isSyncing ? null : _syncSeries,
+                      icon: const Icon(Icons.tv, size: 16),
+                      label: const Text('Sync Series', style: TextStyle(fontSize: 12)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFE50914),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
                     ),
-                  ),
+                    if (_syncRemainingSeries > 0)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          '$_syncRemainingSeries remaining',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: isDark ? Colors.white54 : Colors.black54,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
             ],

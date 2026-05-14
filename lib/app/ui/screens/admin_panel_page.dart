@@ -31,6 +31,14 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   String _searchQuery = '';
   int _genresTagsSubTabIndex = 0;
 
+  // Bulk delete
+  Set<String> _selectedPostIds = {};
+  bool get _isSelecting => _selectedPostIds.isNotEmpty;
+
+  // Advanced filtering
+  String? _filterGenre;
+  String? _filterYear;
+
   @override
   void initState() {
     super.initState();
@@ -73,13 +81,87 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   void _filterPosts(String query) {
     setState(() {
       _searchQuery = query;
-      if (query.isEmpty) {
-        _filteredPosts = _allPosts;
-      } else {
-        _filteredPosts = _allPosts.where((post) =>
-          post.title.toLowerCase().contains(query.toLowerCase())).toList();
-      }
+      _applyFilters();
     });
+  }
+
+  void _applyFilters() {
+    _filteredPosts = _allPosts.where((post) {
+      // Search query filter
+      if (_searchQuery.isNotEmpty &&
+          !post.title.toLowerCase().contains(_searchQuery.toLowerCase())) {
+        return false;
+      }
+      // Genre filter
+      if (_filterGenre != null && _filterGenre!.isNotEmpty) {
+        if (!post.categories.any((c) =>
+            c.toLowerCase() == _filterGenre!.toLowerCase())) {
+          return false;
+        }
+      }
+      // Year filter
+      if (_filterYear != null && _filterYear!.isNotEmpty) {
+        if (post.year != _filterYear) {
+          return false;
+        }
+      }
+      return true;
+    }).toList();
+  }
+
+  List<String> get _availableYears {
+    final years = _allPosts
+        .where((p) => p.year != null && p.year!.isNotEmpty)
+        .map((p) => p.year!)
+        .toSet()
+        .toList();
+    years.sort((a, b) => b.compareTo(a));
+    return years;
+  }
+
+  Future<void> _bulkDeleteSelected() async {
+    if (_selectedPostIds.isEmpty) return;
+    final count = _selectedPostIds.length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: const Text('Bulk Delete Confirmation', style: TextStyle(color: Colors.white)),
+        content: Text(
+          'Are you sure you want to delete $count post${count > 1 ? 's' : ''}?',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: const Color(0xFFE50914)),
+            child: const Text('Delete All'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      setState(() => _isLoading = true);
+      int deleted = 0;
+      for (final id in _selectedPostIds.toList()) {
+        try {
+          await _contentService.deleteMovie(id);
+          deleted++;
+        } catch (_) {}
+      }
+      _selectedPostIds.clear();
+      await _loadData();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Deleted $deleted post${deleted > 1 ? 's' : ''} successfully')),
+        );
+      }
+    }
   }
 
   Future<void> _deletePost(String id, String type) async {
@@ -195,6 +277,40 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   Widget _buildPostsTab(List<Movie> posts, bool isDark) {
     return Column(
       children: [
+        // Bulk delete bar
+        if (_isSelecting)
+          Container(
+            color: const Color(0xFFE50914).withOpacity(0.15),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                Text(
+                  '${_selectedPostIds.length} selected',
+                  style: const TextStyle(
+                    color: Color(0xFFE50914),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const Spacer(),
+                TextButton(
+                  onPressed: () {
+                    setState(() => _selectedPostIds.clear());
+                  },
+                  child: const Text('Clear', style: TextStyle(color: Colors.white54)),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton.icon(
+                  onPressed: _bulkDeleteSelected,
+                  icon: const Icon(Icons.delete_forever, size: 18),
+                  label: const Text('Delete Selected'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFE50914),
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
         // Search bar
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
@@ -209,9 +325,11 @@ class _AdminPanelPageState extends State<AdminPanelPage>
             ),
           ),
         ),
+        // Filter bar
+        _buildFilterBar(isDark),
         Expanded(
           child: posts.isEmpty
-              ? const Center(child: Text('No posts yet. Tap + to add one.'))
+              ? const Center(child: Text('No posts found.'))
               : ListView.builder(
                   itemCount: posts.length,
                   itemBuilder: (context, index) {
@@ -224,15 +342,151 @@ class _AdminPanelPageState extends State<AdminPanelPage>
     );
   }
 
+  Widget _buildFilterBar(bool isDark) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+      child: Row(
+        children: [
+          // Genre dropdown
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF1E1E1E) : Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: isDark ? Colors.white12 : Colors.grey.shade300,
+                ),
+              ),
+              child: DropdownButton<String>(
+                value: _filterGenre ?? '',
+                hint: const Text('Genre', style: TextStyle(fontSize: 13)),
+                isExpanded: true,
+                underline: const SizedBox.shrink(),
+                icon: const Icon(Icons.filter_list, size: 18),
+                items: [
+                  const DropdownMenuItem<String>(
+                    value: '',
+                    child: Text('All Genres', style: TextStyle(fontSize: 13)),
+                  ),
+                  ..._genres.map((g) => DropdownMenuItem<String>(
+                    value: g.name,
+                    child: Text(g.name, style: const TextStyle(fontSize: 13)),
+                  )),
+                ],
+                onChanged: (value) {
+                  setState(() {
+                    _filterGenre = (value == null || value.isEmpty) ? null : value;
+                    _applyFilters();
+                  });
+                },
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Year dropdown
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF1E1E1E) : Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: isDark ? Colors.white12 : Colors.grey.shade300,
+                ),
+              ),
+              child: DropdownButton<String>(
+                value: _filterYear ?? '',
+                hint: const Text('Year', style: TextStyle(fontSize: 13)),
+                isExpanded: true,
+                underline: const SizedBox.shrink(),
+                icon: const Icon(Icons.calendar_today, size: 16),
+                items: [
+                  const DropdownMenuItem<String>(
+                    value: '',
+                    child: Text('All Years', style: TextStyle(fontSize: 13)),
+                  ),
+                  ..._availableYears.map((y) => DropdownMenuItem<String>(
+                    value: y,
+                    child: Text(y, style: const TextStyle(fontSize: 13)),
+                  )),
+                ],
+                onChanged: (value) {
+                  setState(() {
+                    _filterYear = (value == null || value.isEmpty) ? null : value;
+                    _applyFilters();
+                  });
+                },
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Clear filters button
+          if (_filterGenre != null || _filterYear != null)
+            IconButton(
+              icon: const Icon(Icons.clear, size: 20, color: Color(0xFFE50914)),
+              onPressed: () {
+                setState(() {
+                  _filterGenre = null;
+                  _filterYear = null;
+                  _applyFilters();
+                });
+              },
+              tooltip: 'Clear filters',
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPostListItem(Movie post, bool isDark) {
     final theme = Theme.of(context);
+    final isSelected = _selectedPostIds.contains(post.id);
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      color: isSelected
+          ? const Color(0xFFE50914).withOpacity(0.1)
+          : null,
+      shape: isSelected
+          ? RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(4),
+              side: const BorderSide(color: Color(0xFFE50914), width: 1.5),
+            )
+          : null,
       child: Padding(
         padding: const EdgeInsets.all(8),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Checkbox for bulk selection
+            GestureDetector(
+              onTap: () {
+                setState(() {
+                  if (_selectedPostIds.contains(post.id)) {
+                    _selectedPostIds.remove(post.id);
+                  } else {
+                    _selectedPostIds.add(post.id);
+                  }
+                });
+              },
+              child: Padding(
+                padding: const EdgeInsets.only(right: 6, top: 4),
+                child: Checkbox(
+                  value: isSelected,
+                  onChanged: (val) {
+                    setState(() {
+                      if (val == true) {
+                        _selectedPostIds.add(post.id);
+                      } else {
+                        _selectedPostIds.remove(post.id);
+                      }
+                    });
+                  },
+                  activeColor: const Color(0xFFE50914),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+            ),
             // Poster
             ClipRRect(
               borderRadius: BorderRadius.circular(6),

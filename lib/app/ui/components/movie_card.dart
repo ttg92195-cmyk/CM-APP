@@ -221,8 +221,11 @@ class _MovieCardState extends State<MovieCard> {
                 ),
               ),
             ),
-            // Year + Watch progress indicator below title
-            if (widget.movie.year != null && widget.movie.year!.isNotEmpty || _watchProgress != null)
+            // Year + Duration/Season + Watch progress indicator below title
+            if (widget.movie.year != null && widget.movie.year!.isNotEmpty ||
+                _watchProgress != null ||
+                (widget.movie.type == 'series' && widget.movie.seasons != null && widget.movie.seasons!.isNotEmpty) ||
+                (widget.movie.type != 'series' && widget.movie.duration != null && widget.movie.duration!.isNotEmpty))
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 2),
                 child: Row(
@@ -235,8 +238,46 @@ class _MovieCardState extends State<MovieCard> {
                           fontSize: 10,
                         ),
                       ),
-                    if (_watchProgress != null) ...[
+                    // Show "Season X" for series, or duration for movies
+                    if (widget.movie.type == 'series' && widget.movie.seasons != null && widget.movie.seasons!.isNotEmpty) ...[
                       if (widget.movie.year != null && widget.movie.year!.isNotEmpty)
+                        const SizedBox(width: 4),
+                      Icon(
+                        Icons.tv,
+                        size: 10,
+                        color: theme.colorScheme.onSurface.withOpacity(0.6),
+                      ),
+                      const SizedBox(width: 2),
+                      Text(
+                        'Season ${widget.movie.seasons}',
+                        style: TextStyle(
+                          color: theme.colorScheme.onSurface.withOpacity(0.6),
+                          fontSize: 9,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ] else if (widget.movie.type != 'series' && widget.movie.duration != null && widget.movie.duration!.isNotEmpty) ...[
+                      if (widget.movie.year != null && widget.movie.year!.isNotEmpty)
+                        const SizedBox(width: 4),
+                      Icon(
+                        Icons.access_time,
+                        size: 10,
+                        color: theme.colorScheme.onSurface.withOpacity(0.6),
+                      ),
+                      const SizedBox(width: 2),
+                      Text(
+                        '${widget.movie.duration} min',
+                        style: TextStyle(
+                          color: theme.colorScheme.onSurface.withOpacity(0.6),
+                          fontSize: 9,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                    if (_watchProgress != null) ...[
+                      if (widget.movie.year != null && widget.movie.year!.isNotEmpty ||
+                          (widget.movie.type == 'series' && widget.movie.seasons != null && widget.movie.seasons!.isNotEmpty) ||
+                          (widget.movie.type != 'series' && widget.movie.duration != null && widget.movie.duration!.isNotEmpty))
                         const SizedBox(width: 4),
                       Icon(
                         Icons.play_circle_filled,

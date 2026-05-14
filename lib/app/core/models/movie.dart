@@ -9,6 +9,7 @@ class Movie {
   final String? rating;
   final String? resolution;
   final String? duration;
+  final String? seasons;
   final int? isAdult;
   final List<String> categories;
   final String? type;
@@ -24,6 +25,7 @@ class Movie {
     this.rating,
     this.resolution,
     this.duration,
+    this.seasons,
     this.isAdult,
     this.categories = const [],
     this.type,
@@ -41,6 +43,7 @@ class Movie {
       rating: map['rating']?.toString(),
       resolution: map['resolution'] as String?,
       duration: map['duration']?.toString(),
+      seasons: map['seasons'] is List ? (map['seasons'] as List).length.toString() : map['seasons']?.toString(),
       isAdult: map['isAdult'] as int?,
       categories: map['categories'] != null
           ? List<String>.from(map['categories'] as List)
@@ -61,6 +64,7 @@ class Movie {
       'rating': rating,
       'resolution': resolution,
       'duration': duration,
+      'seasons': seasons,
       'isAdult': isAdult,
       'categories': categories,
       'type': type,

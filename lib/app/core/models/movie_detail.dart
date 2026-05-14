@@ -259,16 +259,22 @@ class Season {
 
 class Episode {
   final String name;
+  final String? videoUrl;
+  final String? downloadUrl;
   final List<MovieDownloadLink> downloadLinks;
 
   Episode({
     required this.name,
+    this.videoUrl,
+    this.downloadUrl,
     this.downloadLinks = const [],
   });
 
   factory Episode.fromMap(Map<String, dynamic> map) {
     return Episode(
       name: map['name'] as String? ?? 'Episode 1',
+      videoUrl: map['videoUrl'] as String?,
+      downloadUrl: map['downloadUrl'] as String?,
       downloadLinks: map['downloadLinks'] != null
           ? List<MovieDownloadLink>.from(
               (map['downloadLinks'] as List).map(
@@ -280,10 +286,13 @@ class Episode {
   }
 
   Map<String, dynamic> toMap() {
-    return {
+    final map = <String, dynamic>{
       'name': name,
       'downloadLinks': downloadLinks.map((x) => x.toMap()).toList(),
     };
+    if (videoUrl != null) map['videoUrl'] = videoUrl;
+    if (downloadUrl != null) map['downloadUrl'] = downloadUrl;
+    return map;
   }
 }
 

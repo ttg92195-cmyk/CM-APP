@@ -42,6 +42,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
   bool _overviewExpanded = false;
 
   late TabController _tabController;
+  int _currentTabIndex = 0;
   List<Movie> _relatedSeries = [];
   bool _isLoadingRelated = true;
 
@@ -49,6 +50,11 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _tabController.addListener(() {
+      if (!_tabController.indexIsChanging) {
+        setState(() => _currentTabIndex = _tabController.index);
+      }
+    });
     _downloadManager.init(); // Ensure download state is loaded (singleton: only runs once)
     _loadSeriesDetail();
   }
@@ -305,6 +311,41 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
     }
   }
 
+  String _formatViews(int views) {
+    if (views >= 1000000) {
+      return '${(views / 1000000).toStringAsFixed(1)}M';
+    } else if (views >= 1000) {
+      return '${(views / 1000).toStringAsFixed(1)}K';
+    }
+    return views.toString();
+  }
+
+  String _countryToDisplay(String? code) {
+    if (code == null || code.isEmpty) return '';
+    const countryLangMap = {
+      'US': 'English', 'GB': 'English', 'AU': 'English', 'CA': 'English',
+      'JP': 'Japanese', 'KR': 'Korean', 'IN': 'Hindi', 'FR': 'French',
+      'DE': 'German', 'ES': 'Spanish', 'CN': 'Chinese', 'TH': 'Thai',
+      'IT': 'Italian', 'PT': 'Portuguese', 'BR': 'Portuguese', 'RU': 'Russian',
+      'MX': 'Spanish', 'AR': 'Spanish', 'TR': 'Turkish', 'PH': 'Filipino',
+      'ID': 'Indonesian', 'MY': 'Malay', 'VN': 'Vietnamese', 'SA': 'Arabic',
+      'AE': 'Arabic', 'EG': 'Arabic', 'IL': 'Hebrew', 'NL': 'Dutch',
+      'SE': 'Swedish', 'NO': 'Norwegian', 'DK': 'Danish', 'PL': 'Polish',
+      'CZ': 'Czech', 'HU': 'Hungarian', 'RO': 'Romanian', 'GR': 'Greek',
+      'UA': 'Ukrainian', 'TW': 'Chinese', 'HK': 'Chinese', 'SG': 'English',
+    };
+    final lang = countryLangMap[code.toUpperCase()];
+    // Convert country code to flag emoji using regional indicator symbols
+    final flagEmoji = code.toUpperCase().split('').map((c) {
+      final codeUnit = 0x1F1E6 + c.codeUnitAt(0) - 'A'.codeUnitAt(0);
+      return String.fromCharCode(codeUnit);
+    }).join('');
+    if (lang != null) {
+      return '$flagEmoji $lang';
+    }
+    return '$flagEmoji $code';
+  }
+
   void _openVideoPlayer(String url, String title) {
     Navigator.push(
       context,
@@ -381,7 +422,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
             expandedHeight: MediaQuery.of(context).padding.top + kToolbarHeight + 172,
             pinned: true,
             floating: false,
-            leadingWidth: 46,
+            leadingWidth: 56,
             backgroundColor: isDark ? const Color(0xFF121212) : bgColor,
             centerTitle: true,
             title: AnimatedOpacity(
@@ -399,8 +440,8 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
               ),
             ),
             leading: Container(
-                width: 28,
-                height: 28,
+                width: 36,
+                height: 36,
                 decoration: BoxDecoration(
                   color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
                   shape: BoxShape.circle,
@@ -408,10 +449,10 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                 child: IconButton(
                   icon: Icon(Icons.arrow_back,
                       color: isDark ? Colors.white : Colors.black87,
-                      size: 16),
+                      size: 20),
                   onPressed: () => Navigator.pop(context),
                   padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                 ),
               ),
             actions: [
@@ -419,8 +460,8 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
               Padding(
                 padding: const EdgeInsets.only(right: 4),
                 child: Container(
-                  width: 28,
-                  height: 28,
+                  width: 36,
+                  height: 36,
                   decoration: BoxDecoration(
                     color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
                     shape: BoxShape.circle,
@@ -433,11 +474,11 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                       color: _isInWatchlist
                           ? const Color(0xFF4CAF50)
                           : (isDark ? Colors.white : Colors.black54),
-                      size: 16,
+                      size: 20,
                     ),
                     onPressed: _toggleWatchlist,
                     padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                   ),
                 ),
               ),
@@ -445,8 +486,8 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
               Padding(
                 padding: const EdgeInsets.only(right: 8),
                 child: Container(
-                  width: 28,
-                  height: 28,
+                  width: 36,
+                  height: 36,
                   decoration: BoxDecoration(
                     color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
                     shape: BoxShape.circle,
@@ -459,11 +500,11 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                       color: _isBookmarked
                           ? accentColor
                           : (isDark ? Colors.white : Colors.black54),
-                      size: 16,
+                      size: 20,
                     ),
                     onPressed: _toggleBookmark,
                     padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                   ),
                 ),
               ),
@@ -556,23 +597,22 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                                   ],
                                   if (detail.rating != null &&
                                       detail.rating!.isNotEmpty) ...[
-                                    const Icon(Icons.star,
-                                        size: 14, color: Colors.amber),
+                                    Icon(Icons.star,
+                                        size: 14, color: const Color(0xFFE50914)),
                                     const SizedBox(width: 3),
                                     Text(detail.rating!,
                                         style: const TextStyle(
-                                            color: Colors.amber,
+                                            color: Color(0xFFE50914),
                                             fontSize: 12,
                                             fontWeight: FontWeight.w600)),
                                     const SizedBox(width: 10),
                                   ],
-                                  // Duration instead of Series badge
-                                  if (detail.duration != null &&
-                                      detail.duration!.isNotEmpty) ...[
-                                    Icon(Icons.access_time,
+                                  // Season count instead of duration for series
+                                  if (detail.seasons.isNotEmpty) ...[
+                                    Icon(Icons.tv,
                                         size: 13, color: metaTextColor),
                                     const SizedBox(width: 4),
-                                    Text('${detail.duration!.replaceAll(' min', '')} min',
+                                    Text('Season ${detail.seasons.length}',
                                         style: TextStyle(
                                             color: metaTextColor,
                                             fontSize: 12)),
@@ -626,6 +666,51 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                                     );
                                   }).toList(),
                                 ),
+                              // Views & Country row
+                              if (detail.views != null || (detail.country != null && detail.country!.isNotEmpty))
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 6),
+                                  child: Row(
+                                    children: [
+                                      if (detail.views != null) ...[
+                                        Icon(Icons.visibility,
+                                            size: 13, color: metaTextColor),
+                                        const SizedBox(width: 3),
+                                        Text(
+                                          _formatViews(detail.views!),
+                                          style: TextStyle(
+                                              color: metaTextColor, fontSize: 11),
+                                        ),
+                                        if (detail.country != null && detail.country!.isNotEmpty)
+                                          const SizedBox(width: 12),
+                                      ],
+                                      if (detail.country != null && detail.country!.isNotEmpty) ...[
+                                        Text(
+                                          _countryToDisplay(detail.country),
+                                          style: TextStyle(
+                                              color: metaTextColor, fontSize: 11),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                              // File Size row
+                              if (detail.fileSize != null && detail.fileSize!.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.sd_storage,
+                                          size: 13, color: metaTextColor),
+                                      const SizedBox(width: 3),
+                                      Text(
+                                        detail.fileSize!,
+                                        style: TextStyle(
+                                            color: metaTextColor, fontSize: 11),
+                                      ),
+                                    ],
+                                  ),
+                                ),
                             ],
                           ),
                         ),
@@ -648,20 +733,14 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
         ],
         body: Container(
           color: bgColor,
-          child: TabBarView(
-            controller: _tabController,
-            children: [
-              // ===== Detail Tab =====
-              _buildDetailTab(
-                  detail, isDark, bodyTextColor, metaTextColor, accentColor),
-              // ===== Download Tab =====
-              _buildDownloadTab(
-                  detail, isDark, accentColor, cardBgColor, metaTextColor, bodyTextColor),
-              // ===== Explore Tab =====
-              _buildExploreTab(
-                  isDark, accentColor, metaTextColor, cardBgColor),
-            ],
-          ),
+          child: _currentTabIndex == 0
+              ? _buildDetailTab(
+                  detail, isDark, bodyTextColor, metaTextColor, accentColor)
+              : _currentTabIndex == 1
+                  ? _buildDownloadTab(
+                      detail, isDark, accentColor, cardBgColor, metaTextColor, bodyTextColor)
+                  : _buildExploreTab(
+                      isDark, accentColor, metaTextColor, cardBgColor),
         ),
       ),
     );

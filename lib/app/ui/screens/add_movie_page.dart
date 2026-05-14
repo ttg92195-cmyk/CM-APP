@@ -24,6 +24,9 @@ class _AddMoviePageState extends State<AddMoviePage> {
   final _ratingController = TextEditingController();
   final _resolutionController = TextEditingController();
   final _durationController = TextEditingController();
+  final _fileSizeController = TextEditingController();
+  final _countryController = TextEditingController();
+  String _format = 'MP4'; // Default format for movies
 
   String _type = 'movie';
   bool _isAdult = false;
@@ -57,6 +60,8 @@ class _AddMoviePageState extends State<AddMoviePage> {
     _ratingController.dispose();
     _resolutionController.dispose();
     _durationController.dispose();
+    _fileSizeController.dispose();
+    _countryController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -91,7 +96,10 @@ class _AddMoviePageState extends State<AddMoviePage> {
         'overview': _overviewController.text.trim().isEmpty ? null : _overviewController.text.trim(),
         'rating': _ratingController.text.trim().isEmpty ? null : _ratingController.text.trim(),
         'resolution': _resolutionController.text.trim().isEmpty ? null : _resolutionController.text.trim(),
-        'duration': _durationController.text.trim().isEmpty ? null : _durationController.text.trim(),
+        'duration': _type != 'series' ? (_durationController.text.trim().isEmpty ? null : _durationController.text.trim()) : null,
+        'fileSize': _fileSizeController.text.trim().isEmpty ? null : _fileSizeController.text.trim(),
+        'country': _countryController.text.trim().isEmpty ? null : _countryController.text.trim(),
+        'format': _type != 'series' ? _format : null,
         'isAdult': _isAdult ? 1 : 0,
         'type': _type,
         'isTrending': _isTrending,
@@ -187,21 +195,63 @@ class _AddMoviePageState extends State<AddMoviePage> {
                     ),
                     const SizedBox(height: 16),
 
-                    // Duration + Resolution row
+                    // Format + Duration + Resolution (for Movies)
+                    if (_type != 'series') ...[
+                      Row(
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              value: _format,
+                              decoration: const InputDecoration(labelText: 'Format'),
+                              items: const [
+                                DropdownMenuItem(value: 'MP4', child: Text('MP4')),
+                                DropdownMenuItem(value: 'MKV', child: Text('MKV')),
+                                DropdownMenuItem(value: 'MKV / MP4', child: Text('MKV / MP4')),
+                              ],
+                              onChanged: (v) => setState(() => _format = v ?? 'MP4'),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: TextFormField(
+                              controller: _durationController,
+                              decoration: const InputDecoration(labelText: 'Duration (min)', hintText: 'e.g. 120'),
+                              keyboardType: TextInputType.number,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: _resolutionController,
+                        decoration: const InputDecoration(labelText: 'Resolution', hintText: 'e.g. 4K, HD'),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+
+                    // Resolution only (for Series - no duration)
+                    if (_type == 'series') ...[
+                      TextFormField(
+                        controller: _resolutionController,
+                        decoration: const InputDecoration(labelText: 'Resolution', hintText: 'e.g. 4K, HD'),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+
+                    // File Size + Country
                     Row(
                       children: [
                         Expanded(
                           child: TextFormField(
-                            controller: _durationController,
-                            decoration: const InputDecoration(labelText: 'Duration (min)', hintText: 'e.g. 120'),
-                            keyboardType: TextInputType.number,
+                            controller: _fileSizeController,
+                            decoration: const InputDecoration(labelText: 'File Size', hintText: 'e.g. 7 GB / 2.2 GB / 1.1 GB'),
                           ),
                         ),
                         const SizedBox(width: 16),
                         Expanded(
                           child: TextFormField(
-                            controller: _resolutionController,
-                            decoration: const InputDecoration(labelText: 'Resolution', hintText: 'e.g. 4K, HD'),
+                            controller: _countryController,
+                            decoration: const InputDecoration(labelText: 'Country', hintText: 'e.g. US, KR, JP'),
                           ),
                         ),
                       ],
