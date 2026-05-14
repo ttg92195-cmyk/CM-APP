@@ -539,19 +539,20 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       // 4K HEVC at 20Mbps ≈ 2.5MB/sec. A 16MB buffer ≈ 6 seconds of 4K.
       // Key insight: large buffers don't help if the network can't fill them fast enough.
       // They just waste RAM → OOM → pixelation/artifacts on low-end devices.
+      // However, with cache-pause enabled, larger buffers ensure smoother playback.
       final int bufferSizeBytes;
       switch (_perfTier) {
-        case 0: // Ultra-low (≤2GB): 16MB — enough for 6 sec of 4K, saves RAM
-          bufferSizeBytes = 16 * 1024 * 1024;
-          break;
-        case 1: // Low (2-3GB): 24MB
-          bufferSizeBytes = 24 * 1024 * 1024;
-          break;
-        case 2: // Mid (3-4GB): 32MB
+        case 0: // Ultra-low (≤2GB): 32MB — enough for ~10 sec of 4K
           bufferSizeBytes = 32 * 1024 * 1024;
           break;
-        default: // High (>4GB): 50MB
-          bufferSizeBytes = 50 * 1024 * 1024;
+        case 1: // Low (2-3GB): 48MB
+          bufferSizeBytes = 48 * 1024 * 1024;
+          break;
+        case 2: // Mid (3-4GB): 64MB
+          bufferSizeBytes = 64 * 1024 * 1024;
+          break;
+        default: // High (>4GB): 96MB
+          bufferSizeBytes = 96 * 1024 * 1024;
           break;
       }
 
@@ -779,6 +780,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       // These are the ONLY overrides we apply by default.
       // mpv's defaults are already great — don't override more than needed.
       // =============================================================
+
+      // Network caching: 5 seconds buffer for smooth streaming
+      // This prevents stuttering when network is slow or fluctuating
+      await _setMpvProperty('demuxer-max-bytes', (50 * 1024 * 1024).toString()); // 50MB forward buffer
+      await _setMpvProperty('demuxer-max-back-bytes', (25 * 1024 * 1024).toString()); // 25MB back buffer
+      await _setMpvProperty('cache', 'yes');
+      await _setMpvProperty('cache-secs', '5'); // 5 seconds cache
+      await _setMpvProperty('cache-pause', 'yes'); // Auto-pause when cache runs low
+      await _setMpvProperty('cache-pause-wait', '3'); // Wait up to 3s for cache to fill
+      await _setMpvProperty('cache-pause-initial', 'yes'); // Pause at start until cache fills
 
       // Display-level frame drop: when the GPU can't keep up,
       // drop late frames at the display stage. This is the least

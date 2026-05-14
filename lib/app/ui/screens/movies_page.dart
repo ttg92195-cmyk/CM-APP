@@ -52,7 +52,13 @@ class _MoviesPageState extends State<MoviesPage> {
   Future<void> _loadMovies() async {
     setState(() => _isLoading = true);
     try {
+      final stopwatch = Stopwatch()..start();
       final result = await _contentService.getMovies(limit: 20);
+      // Ensure skeleton shows for at least 600ms so it doesn't flash too fast
+      final elapsed = stopwatch.elapsedMilliseconds;
+      if (elapsed < 600) {
+        await Future.delayed(Duration(milliseconds: 600 - elapsed));
+      }
       if (mounted) {
         final movies = result['movies'] as List<Movie>;
         for (final m in movies) {

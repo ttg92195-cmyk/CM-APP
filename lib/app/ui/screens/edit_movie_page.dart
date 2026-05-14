@@ -27,6 +27,7 @@ class _EditMoviePageState extends State<EditMoviePage> {
   final _formatController = TextEditingController();
 
   String _type = 'movie';
+  String _format = 'MP4';
   bool _isAdult = false;
   bool _isTrending = false;
   bool _isSaving = false;
@@ -92,6 +93,7 @@ class _EditMoviePageState extends State<EditMoviePage> {
           _durationController.text = detail.duration ?? '';
           _fileSizeController.text = detail.fileSize ?? '';
           _formatController.text = detail.format ?? '';
+          _format = ['MP4', 'MKV', 'MKV / MP4'].contains(detail.format) ? detail.format! : 'MP4';
           _type = detail.type ?? 'movie';
           _isAdult = detail.isAdult != null && detail.isAdult! > 0;
           _isTrending = detail.isTrending;
@@ -134,9 +136,9 @@ class _EditMoviePageState extends State<EditMoviePage> {
         'overview': _overviewController.text.trim().isEmpty ? null : _overviewController.text.trim(),
         'rating': _ratingController.text.trim().isEmpty ? null : _ratingController.text.trim(),
         'resolution': _resolutionController.text.trim().isEmpty ? null : _resolutionController.text.trim(),
-        'duration': _durationController.text.trim().isEmpty ? null : _durationController.text.trim(),
-        'fileSize': _fileSizeController.text.trim().isEmpty ? null : _fileSizeController.text.trim(),
-        'format': _formatController.text.trim().isEmpty ? null : _formatController.text.trim(),
+        'duration': _type != 'series' ? (_durationController.text.trim().isEmpty ? null : _durationController.text.trim()) : null,
+        'fileSize': _type != 'series' ? (_fileSizeController.text.trim().isEmpty ? null : _fileSizeController.text.trim()) : null,
+        'format': _type != 'series' ? _format : null,
         'isAdult': _isAdult ? 1 : 0,
         'type': _type,
         'isTrending': _isTrending,
@@ -221,25 +223,60 @@ class _EditMoviePageState extends State<EditMoviePage> {
                     const SizedBox(height: 16),
 
                     // Duration + Resolution
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextFormField(
-                            controller: _durationController,
-                            decoration: const InputDecoration(labelText: 'Duration (min)', hintText: 'e.g. 120'),
-                            keyboardType: TextInputType.number,
+                    if (_type != 'series') ...[
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: _durationController,
+                              decoration: const InputDecoration(labelText: 'Duration (min)', hintText: 'e.g. 120'),
+                              keyboardType: TextInputType.number,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: TextFormField(
-                            controller: _resolutionController,
-                            decoration: const InputDecoration(labelText: 'Resolution', hintText: 'e.g. 4K / 1080p / 720p'),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: TextFormField(
+                              controller: _resolutionController,
+                              decoration: const InputDecoration(labelText: 'Resolution', hintText: 'e.g. 4K / 1080p / 720p'),
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+
+                    // Series: Seasons/Episodes count fields (read-only)
+                    if (_type == 'series') ...[
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: TextEditingController(text: _seasons.length.toString()),
+                              decoration: const InputDecoration(labelText: 'Seasons', suffixIcon: Icon(Icons.tv, size: 20))),
+                              readOnly: true,
+                              enabled: false,
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: TextFormField(
+                              controller: TextEditingController(text: _seasons.fold<int>(0, (sum, s) => sum + s.episodes.length).toString()),
+                              decoration: const InputDecoration(labelText: 'Episodes', suffixIcon: Icon(Icons.play_circle_outline, size: 20))),
+                              readOnly: true,
+                              enabled: false,
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: TextFormField(
+                              controller: _resolutionController,
+                              decoration: const InputDecoration(labelText: 'Resolution', hintText: 'e.g. 4K / 1080p / 720p'),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                    ],
 
                     // File Size + Format (Movie only)
                     if (_type != 'series') ...[
@@ -253,9 +290,11 @@ class _EditMoviePageState extends State<EditMoviePage> {
                           ),
                           const SizedBox(width: 16),
                           Expanded(
-                            child: TextFormField(
-                              controller: _formatController,
-                              decoration: const InputDecoration(labelText: 'Format', hintText: 'e.g. MKV / MP4'),
+                            child: DropdownButtonFormField<String>(
+                              value: ['MP4', 'MKV', 'MKV / MP4'].contains(_format) ? _format : 'MP4',
+                              decoration: const InputDecoration(labelText: 'Format'),
+                              items: ['MP4', 'MKV', 'MKV / MP4'].map((f) => DropdownMenuItem(value: f, child: Text(f))).toList(),
+                              onChanged: (v) => setState(() => _format = v ?? 'MP4'),
                             ),
                           ),
                         ],
@@ -500,7 +539,8 @@ class _EditMoviePageState extends State<EditMoviePage> {
                                     ],
                                   ),
                                 ),
-                                IconButton(icon: const Icon(Icons.delete, size: 20), onPressed: () => setState(() => _downloadLinks.removeAt(entry.key))),
+                                IconButton(icon: Icon(Icons.edit, size: 20, color: isDark ? Colors.white70 : Colors.blue), onPressed: () => _showEditDownloadLinkModal(entry.key)),
+                                IconButton(icon: const Icon(Icons.delete, size: 20, color: Colors.red), onPressed: () => setState(() => _downloadLinks.removeAt(entry.key))),
                               ],
                             ),
                           ),
@@ -538,7 +578,8 @@ class _EditMoviePageState extends State<EditMoviePage> {
                                     ],
                                   ),
                                 ),
-                                IconButton(icon: const Icon(Icons.delete, size: 20), onPressed: () => setState(() => _watchLinks.removeAt(entry.key))),
+                                IconButton(icon: Icon(Icons.edit, size: 20, color: isDark ? Colors.white70 : Colors.blue), onPressed: () => _showEditWatchLinkModal(entry.key)),
+                                IconButton(icon: const Icon(Icons.delete, size: 20, color: Colors.red), onPressed: () => setState(() => _watchLinks.removeAt(entry.key))),
                               ],
                             ),
                           ),
@@ -749,6 +790,108 @@ class _EditMoviePageState extends State<EditMoviePage> {
     });
   }
 
+  void _showEditDownloadLinkModal(int index) {
+    final link = _downloadLinks[index];
+    String? selectedServer = _serverOptions.contains(link.serverName) ? link.serverName : _serverOptions.first;
+    final urlController = TextEditingController(text: link.url);
+    final qualityController = TextEditingController(text: link.quality ?? '');
+    final sizeController = TextEditingController(text: link.size ?? '');
+
+    showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Edit Download Link'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  value: selectedServer,
+                  decoration: const InputDecoration(labelText: 'Select Server'),
+                  items: _serverOptions.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                  onChanged: (v) => setDialogState(() => selectedServer = v),
+                ),
+                const SizedBox(height: 8),
+                TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. 4K, 1080p, 720p')),
+                const SizedBox(height: 8),
+                TextField(controller: sizeController, decoration: const InputDecoration(labelText: 'Size', hintText: 'e.g. 4.5 GB')),
+                const SizedBox(height: 8),
+                TextField(controller: urlController, decoration: const InputDecoration(labelText: 'Download URL *', hintText: 'Direct download link'), keyboardType: TextInputType.url),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Update')),
+          ],
+        ),
+      ),
+    ).then((result) {
+      if (result == true && urlController.text.trim().isNotEmpty) {
+        setState(() {
+          _downloadLinks[index] = MovieDownloadLink(
+            serverName: selectedServer ?? 'Server 1',
+            url: urlController.text.trim(),
+            quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
+            size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+          );
+        });
+      }
+    });
+  }
+
+  void _showEditWatchLinkModal(int index) {
+    final link = _watchLinks[index];
+    String? selectedServer = _serverOptions.contains(link.serverName) ? link.serverName : _serverOptions.first;
+    final urlController = TextEditingController(text: link.url);
+    final qualityController = TextEditingController(text: link.quality ?? '');
+    final sizeController = TextEditingController(text: link.size ?? '');
+
+    showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Edit Watch Link'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  value: selectedServer,
+                  decoration: const InputDecoration(labelText: 'Select Server'),
+                  items: _serverOptions.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                  onChanged: (v) => setDialogState(() => selectedServer = v),
+                ),
+                const SizedBox(height: 8),
+                TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. 4K, 1080p, 720p')),
+                const SizedBox(height: 8),
+                TextField(controller: sizeController, decoration: const InputDecoration(labelText: 'Size', hintText: 'e.g. 4.5 GB')),
+                const SizedBox(height: 8),
+                TextField(controller: urlController, decoration: const InputDecoration(labelText: 'Watch URL *', hintText: 'Player link for watching'), keyboardType: TextInputType.url),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Update')),
+          ],
+        ),
+      ),
+    ).then((result) {
+      if (result == true && urlController.text.trim().isNotEmpty) {
+        setState(() {
+          _watchLinks[index] = MovieWatchLink(
+            serverName: selectedServer ?? 'Server 1',
+            url: urlController.text.trim(),
+            quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
+            size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+          );
+        });
+      }
+    });
+  }
+
   void _showEditEpisodeDialog(int seasonIndex, int episodeIndex) {
     final episode = _seasons[seasonIndex].episodes[episodeIndex];
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -795,12 +938,24 @@ class _EditMoviePageState extends State<EditMoviePage> {
                           dense: true,
                           title: Text(link.serverName),
                           subtitle: Text('${link.quality ?? ''} ${link.size ?? ''}'.trim()),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete, size: 18, color: Colors.red),
-                            onPressed: () {
-                              setState(() => episode.downloadLinks.removeAt(entry.key));
-                              setModalState(() {});
-                            },
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: Icon(Icons.edit, size: 18, color: isDark ? Colors.white70 : Colors.blue),
+                                onPressed: () {
+                                  Navigator.pop(ctx);
+                                  _showEditEpisodeDownloadLinkDialog(seasonIndex, episodeIndex, entry.key);
+                                },
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete, size: 18, color: Colors.red),
+                                onPressed: () {
+                                  setState(() => episode.downloadLinks.removeAt(entry.key));
+                                  setModalState(() {});
+                                },
+                              ),
+                            ],
                           ),
                         );
                       }),
@@ -816,12 +971,24 @@ class _EditMoviePageState extends State<EditMoviePage> {
                           dense: true,
                           title: Text(link.serverName),
                           subtitle: Text('${link.quality ?? ''} ${link.size ?? ''}'.trim()),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete, size: 18, color: Colors.red),
-                            onPressed: () {
-                              setState(() => episode.watchLinks.removeAt(entry.key));
-                              setModalState(() {});
-                            },
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: Icon(Icons.edit, size: 18, color: isDark ? Colors.white70 : Colors.blue),
+                                onPressed: () {
+                                  Navigator.pop(ctx);
+                                  _showEditEpisodeWatchLinkDialog(seasonIndex, episodeIndex, entry.key);
+                                },
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete, size: 18, color: Colors.red),
+                                onPressed: () {
+                                  setState(() => episode.watchLinks.removeAt(entry.key));
+                                  setModalState(() {});
+                                },
+                              ),
+                            ],
                           ),
                         );
                       }),
@@ -1106,6 +1273,110 @@ class _EditMoviePageState extends State<EditMoviePage> {
             quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
             size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
           ));
+        });
+      }
+    });
+  }
+
+  void _showEditEpisodeDownloadLinkDialog(int seasonIndex, int episodeIndex, int linkIndex) {
+    final episode = _seasons[seasonIndex].episodes[episodeIndex];
+    final link = episode.downloadLinks[linkIndex];
+    String? selectedServer = _serverOptions.contains(link.serverName) ? link.serverName : _serverOptions.first;
+    final qualityController = TextEditingController(text: link.quality ?? '');
+    final sizeController = TextEditingController(text: link.size ?? '');
+    final urlController = TextEditingController(text: link.url);
+
+    showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text('Edit Download Link - ${episode.name}'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  value: selectedServer,
+                  decoration: const InputDecoration(labelText: 'Select Server'),
+                  items: _serverOptions.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                  onChanged: (v) => setDialogState(() => selectedServer = v),
+                ),
+                const SizedBox(height: 8),
+                TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. 4K, 1080p')),
+                const SizedBox(height: 8),
+                TextField(controller: sizeController, decoration: const InputDecoration(labelText: 'Size', hintText: 'e.g. 4.5 GB')),
+                const SizedBox(height: 8),
+                TextField(controller: urlController, decoration: const InputDecoration(labelText: 'Download URL *', hintText: 'Direct download link'), keyboardType: TextInputType.url),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Update')),
+          ],
+        ),
+      ),
+    ).then((result) {
+      if (result == true && urlController.text.trim().isNotEmpty) {
+        setState(() {
+          _seasons[seasonIndex].episodes[episodeIndex].downloadLinks[linkIndex] = MovieDownloadLink(
+            serverName: selectedServer ?? 'Server 1',
+            url: urlController.text.trim(),
+            quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
+            size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+          );
+        });
+      }
+    });
+  }
+
+  void _showEditEpisodeWatchLinkDialog(int seasonIndex, int episodeIndex, int linkIndex) {
+    final episode = _seasons[seasonIndex].episodes[episodeIndex];
+    final link = episode.watchLinks[linkIndex];
+    String? selectedServer = _serverOptions.contains(link.serverName) ? link.serverName : _serverOptions.first;
+    final qualityController = TextEditingController(text: link.quality ?? '');
+    final sizeController = TextEditingController(text: link.size ?? '');
+    final urlController = TextEditingController(text: link.url);
+
+    showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text('Edit Watch Link - ${episode.name}'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  value: selectedServer,
+                  decoration: const InputDecoration(labelText: 'Select Server'),
+                  items: _serverOptions.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                  onChanged: (v) => setDialogState(() => selectedServer = v),
+                ),
+                const SizedBox(height: 8),
+                TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. 720p, 1080p')),
+                const SizedBox(height: 8),
+                TextField(controller: sizeController, decoration: const InputDecoration(labelText: 'Size', hintText: 'e.g. 1.5 GB')),
+                const SizedBox(height: 8),
+                TextField(controller: urlController, decoration: const InputDecoration(labelText: 'Watch URL *', hintText: 'Player link for watching'), keyboardType: TextInputType.url),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Update')),
+          ],
+        ),
+      ),
+    ).then((result) {
+      if (result == true && urlController.text.trim().isNotEmpty) {
+        setState(() {
+          _seasons[seasonIndex].episodes[episodeIndex].watchLinks[linkIndex] = MovieWatchLink(
+            serverName: selectedServer ?? 'Server 1',
+            url: urlController.text.trim(),
+            quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
+            size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+          );
         });
       }
     });
