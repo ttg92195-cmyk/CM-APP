@@ -859,7 +859,7 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
     return PopScope(
       canPop: !_isImporting && !_isSyncing,
       child: Scaffold(
-        backgroundColor: isDark ? const Color(0xFF0A0A0A) : null,
+        backgroundColor: isDark ? const Color(0xFF121212) : null,
         appBar: AppBar(
           title: const Text('TMDB Generator'),
           actions: [

@@ -25,6 +25,7 @@ class _MoviesPageState extends State<MoviesPage> {
   bool _hasMore = true;
   bool _isLoading = true;
   bool _isLoadingMore = false;
+  final Set<String> _seenIds = {};
 
   @override
   void initState() {
@@ -53,8 +54,12 @@ class _MoviesPageState extends State<MoviesPage> {
     try {
       final result = await _contentService.getMovies(limit: 20);
       if (mounted) {
+        final movies = result['movies'] as List<Movie>;
+        for (final m in movies) {
+          _seenIds.add(m.id);
+        }
         setState(() {
-          _movies = result['movies'] as List<Movie>;
+          _movies = movies;
           _hasMore = result['hasMore'] as bool;
           _lastDoc = result['lastDoc'] as DocumentSnapshot?;
           _isLoading = false;
@@ -74,9 +79,18 @@ class _MoviesPageState extends State<MoviesPage> {
         startAfter: _lastDoc,
       );
       if (mounted) {
+        final incoming = result['movies'] as List<Movie>;
+        // Deduplicate by ID to prevent duplicates
+        final newMovies = <Movie>[];
+        for (final m in incoming) {
+          if (!_seenIds.contains(m.id)) {
+            _seenIds.add(m.id);
+            newMovies.add(m);
+          }
+        }
         setState(() {
-          _movies.addAll(result['movies'] as List<Movie>);
-          _hasMore = result['hasMore'] as bool;
+          _movies.addAll(newMovies);
+          _hasMore = result['hasMore'] as bool && incoming.isNotEmpty;
           _lastDoc = result['lastDoc'] as DocumentSnapshot?;
           _isLoadingMore = false;
         });

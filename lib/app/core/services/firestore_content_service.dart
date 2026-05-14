@@ -875,6 +875,76 @@ class FirestoreContentService {
     }
   }
 
+  /// Get movies/series featuring a specific actor by name.
+  /// Searches Firestore 'casts' array for objects with matching 'name' field.
+  /// This only returns items already in the library (no TMDB API call).
+  Future<List<Movie>> getMoviesByActor(String actorName) async {
+    try {
+      // Firestore doesn't support querying inside array of objects directly,
+      // so we fetch recent posts and filter client-side by cast name.
+      final snapshot = await _moviesRef
+          .orderBy('createdAt', descending: true)
+          .limit(100)
+          .get();
+
+      final movies = snapshot.docs
+          .map((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            // Check if this movie's casts contain the actor
+            final casts = data['casts'] as List?;
+            if (casts != null) {
+              final hasActor = casts.any((cast) {
+                if (cast is Map<String, dynamic>) {
+                  return (cast['name'] as String?)?.toLowerCase() ==
+                      actorName.toLowerCase();
+                }
+                return false;
+              });
+              if (hasActor) {
+                return Movie.fromMap(data, docId: doc.id);
+              }
+            }
+            return null;
+          })
+          .whereType<Movie>()
+          .toList();
+
+      return movies;
+    } catch (e) {
+      debugPrint('getMoviesByActor failed: $e');
+      // Fallback: try without orderBy
+      try {
+        final snapshot = await _moviesRef.limit(100).get();
+        final movies = snapshot.docs
+            .map((doc) {
+              final data = doc.data() as Map<String, dynamic>;
+              final casts = data['casts'] as List?;
+              if (casts != null) {
+                final hasActor = casts.any((cast) {
+                  if (cast is Map<String, dynamic>) {
+                    return (cast['name'] as String?)?.toLowerCase() ==
+                        actorName.toLowerCase();
+                  }
+                  return false;
+                });
+                if (hasActor) {
+                  return Movie.fromMap(data, docId: doc.id);
+                }
+              }
+              return null;
+            })
+            .whereType<Movie>()
+            .toList();
+        movies.sort((a, b) => (b.createdAt ?? DateTime(2000))
+            .compareTo(a.createdAt ?? DateTime(2000)));
+        return movies;
+      } catch (e2) {
+        debugPrint('getMoviesByActor fallback also failed: $e2');
+        return [];
+      }
+    }
+  }
+
   // ==================== ADMIN VERIFICATION (Defense-in-Depth) ====================
 
   /// Verify that the current user is an admin by checking Firestore directly.

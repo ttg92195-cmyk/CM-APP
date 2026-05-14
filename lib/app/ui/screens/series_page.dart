@@ -24,6 +24,7 @@ class _SeriesPageState extends State<SeriesPage> {
   bool _hasMore = true;
   bool _isLoading = true;
   bool _isLoadingMore = false;
+  final Set<String> _seenIds = {};
 
   @override
   void initState() {
@@ -52,8 +53,12 @@ class _SeriesPageState extends State<SeriesPage> {
     try {
       final result = await _contentService.getSeries(limit: 20);
       if (mounted) {
+        final seriesList = result['movies'] as List<Movie>;
+        for (final m in seriesList) {
+          _seenIds.add(m.id);
+        }
         setState(() {
-          _series = result['movies'] as List<Movie>;
+          _series = seriesList;
           _hasMore = result['hasMore'] as bool;
           _lastDoc = result['lastDoc'] as DocumentSnapshot?;
           _isLoading = false;
@@ -73,9 +78,18 @@ class _SeriesPageState extends State<SeriesPage> {
         startAfter: _lastDoc,
       );
       if (mounted) {
+        final incoming = result['movies'] as List<Movie>;
+        // Deduplicate by ID to prevent duplicates
+        final newSeries = <Movie>[];
+        for (final m in incoming) {
+          if (!_seenIds.contains(m.id)) {
+            _seenIds.add(m.id);
+            newSeries.add(m);
+          }
+        }
         setState(() {
-          _series.addAll(result['movies'] as List<Movie>);
-          _hasMore = result['hasMore'] as bool;
+          _series.addAll(newSeries);
+          _hasMore = result['hasMore'] as bool && incoming.isNotEmpty;
           _lastDoc = result['lastDoc'] as DocumentSnapshot?;
           _isLoadingMore = false;
         });

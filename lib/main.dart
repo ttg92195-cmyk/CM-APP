@@ -15,7 +15,7 @@ import 'firebase_options.dart';
 // Netflix-style Red accent color
 const Color kNetflixRed = Color(0xFFE50914);
 const Color kNetflixDarkRed = Color(0xFFB81D24);
-const Color kDarkBg = Color(0xFF0A0A0A);
+const Color kDarkBg = Color(0xFF121212);
 const Color kDarkSurface = Color(0xFF121212);
 const Color kDarkCard = Color(0xFF1E1E1E);
 
@@ -163,7 +163,7 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
 
   Widget _buildSplashScreen(AppConfig appConfig) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0A),
+      backgroundColor: kDarkBg,
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,

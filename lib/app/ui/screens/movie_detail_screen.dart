@@ -15,6 +15,7 @@ import 'package:cm_movies/app/ui/screens/category_page.dart';
 import 'package:cm_movies/app/ui/components/age_rating_gate.dart';
 import 'package:cm_movies/app/ui/screens/download_page.dart';
 import 'package:cm_movies/app/ui/screens/video_player_screen.dart';
+import 'package:cm_movies/app/ui/screens/actor_movies_screen.dart';
 
 class MovieDetailScreen extends StatefulWidget {
   final String slug;
@@ -400,7 +401,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
     final accentColor = const Color(0xFFE50914);
     final bodyTextColor = isDark ? Colors.white70 : Colors.black87;
     final metaTextColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
-    final bgColor = isDark ? const Color(0xFF0A0A0A) : const Color(0xFFF5F5F5);
+    final bgColor = isDark ? const Color(0xFF121212) : const Color(0xFFF5F5F5);
     final cardBgColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
 
     return Scaffold(
@@ -413,7 +414,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
             pinned: true,
             floating: false,
             leadingWidth: 46,
-            backgroundColor: isDark ? const Color(0xFF0A0A0A) : bgColor,
+            backgroundColor: isDark ? const Color(0xFF121212) : bgColor,
             centerTitle: true,
             title: AnimatedOpacity(
               opacity: innerBoxIsScrolled ? 1.0 : 0.0,
@@ -707,10 +708,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
             ),
           ),
         ],
-        body: MediaQuery.removePadding(
-          context: context,
-          removeBottom: true,
-          child: Container(
+        body: Container(
             color: bgColor,
             child: TabBarView(
               controller: _tabController,
@@ -727,7 +725,6 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
               ],
             ),
           ),
-        ),
       ),
     );
   }
@@ -741,6 +738,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
     Color accentColor,
   ) {
     return ListView(
+      physics: const ClampingScrollPhysics(),
       padding: const EdgeInsets.only(bottom: 16),
       children: [
         // Overview Section
@@ -823,6 +821,11 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
 
         const SizedBox(height: 6),
 
+        // Details Section - Clean text rows, no background boxes
+        _buildDetailsRows(detail, isDark, bodyTextColor, metaTextColor),
+
+        const SizedBox(height: 6),
+
         // Cast Section
         if (detail.casts.isNotEmpty)
           Padding(
@@ -844,7 +847,16 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                     itemCount: detail.casts.length,
                     itemBuilder: (context, index) {
                       final cast = detail.casts[index];
-                      return Padding(
+                      return GestureDetector(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => ActorMoviesScreen(actorName: cast.name),
+                            ),
+                          );
+                        },
+                        child: Padding(
                         padding: const EdgeInsets.only(right: 14),
                         child: Column(
                           children: [
@@ -911,6 +923,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                             ),
                           ],
                         ),
+                        ),
                       );
                     },
                   ),
@@ -919,6 +932,102 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
             ),
           ),
       ],
+    );
+  }
+
+  // ===== DETAILS ROWS (Clean text rows, no background boxes) =====
+  Widget _buildDetailsRows(
+    MovieDetail detail,
+    bool isDark,
+    Color bodyTextColor,
+    Color metaTextColor,
+  ) {
+    // Build detail rows for Movies: Quality, Format, Genre, Duration, Director
+    final isMovie = detail.type != 'series' && detail.type != 'tv';
+    final rows = <Widget>[];
+
+    if (isMovie) {
+      // Movie Details
+      if (detail.resolution != null && detail.resolution!.isNotEmpty) {
+        rows.add(_detailRow('Quality', detail.resolution!, bodyTextColor, metaTextColor));
+      }
+      if (detail.format != null && detail.format!.isNotEmpty) {
+        rows.add(_detailRow('Format', detail.format!, bodyTextColor, metaTextColor));
+      }
+      if (detail.categories.isNotEmpty) {
+        rows.add(_detailRow('Genre', detail.categories.join(' '), bodyTextColor, metaTextColor));
+      }
+      if (detail.duration != null && detail.duration!.isNotEmpty) {
+        // Format duration like "1h 44m"
+        final mins = int.tryParse(detail.duration!.replaceAll(RegExp(r'[^\d]'), ''));
+        if (mins != null && mins > 0) {
+          final h = mins ~/ 60;
+          final m = mins % 60;
+          final durStr = h > 0 ? '${h}h ${m}m' : '${m}m';
+          rows.add(_detailRow('Duration', durStr, bodyTextColor, metaTextColor));
+        } else {
+          rows.add(_detailRow('Duration', detail.duration!, bodyTextColor, metaTextColor));
+        }
+      }
+      if (detail.directors.isNotEmpty) {
+        rows.add(_detailRow('Director', detail.directors.join(', '), bodyTextColor, metaTextColor));
+      }
+    } else {
+      // Series Details: Seasons, Episodes, Genre only (no Duration, no Director)
+      if (detail.seasons.isNotEmpty) {
+        rows.add(_detailRow('Seasons', '${detail.seasons.length}', bodyTextColor, metaTextColor));
+        final totalEpisodes = detail.seasons.fold<int>(0, (sum, s) => sum + s.episodes.length);
+        rows.add(_detailRow('Episodes', '$totalEpisodes', bodyTextColor, metaTextColor));
+      }
+      if (detail.categories.isNotEmpty) {
+        rows.add(_detailRow('Genre', detail.categories.join(' '), bodyTextColor, metaTextColor));
+      }
+    }
+
+    if (rows.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Details',
+              style: TextStyle(
+                  color: bodyTextColor,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          ...rows,
+        ],
+      ),
+    );
+  }
+
+  /// Single detail row: label + value, no background, no borders
+  Widget _detailRow(String label, String value, Color bodyTextColor, Color metaTextColor) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 80,
+            child: Text(label,
+                style: TextStyle(
+                    color: metaTextColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500)),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(value,
+                style: TextStyle(
+                    color: bodyTextColor,
+                    fontSize: 13,
+                    height: 1.4)),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1185,6 +1294,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
     Color cardBgColor,
   ) {
     return ListView(
+      physics: const ClampingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
       children: [
         Text('You may also like',
@@ -1497,7 +1607,7 @@ class _TabBarDelegate extends SliverPersistentHeaderDelegate {
   Widget build(
       BuildContext context, double shrinkOffset, bool overlapsContent) {
     return Container(
-      color: isDark ? const Color(0xFF0A0A0A) : const Color(0xFFF5F5F5),
+      color: isDark ? const Color(0xFF121212) : const Color(0xFFF5F5F5),
       child: TabBar(
         controller: tabController,
         labelColor: accentColor,

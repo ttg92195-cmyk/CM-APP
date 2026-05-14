@@ -14,6 +14,7 @@ import 'package:cm_movies/app/ui/screens/category_page.dart';
 import 'package:cm_movies/app/ui/screens/download_page.dart';
 import 'package:cm_movies/app/ui/screens/video_player_screen.dart';
 import 'package:cm_movies/app/ui/components/age_rating_gate.dart';
+import 'package:cm_movies/app/ui/screens/actor_movies_screen.dart';
 
 class SeriesDetailScreen extends StatefulWidget {
   final String slug;
@@ -368,7 +369,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
     final accentColor = const Color(0xFFE50914);
     final bodyTextColor = isDark ? Colors.white70 : Colors.black87;
     final metaTextColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
-    final bgColor = isDark ? const Color(0xFF0A0A0A) : const Color(0xFFF5F5F5);
+    final bgColor = isDark ? const Color(0xFF121212) : const Color(0xFFF5F5F5);
     final cardBgColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
 
     return Scaffold(
@@ -381,7 +382,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
             pinned: true,
             floating: false,
             leadingWidth: 46,
-            backgroundColor: isDark ? const Color(0xFF0A0A0A) : bgColor,
+            backgroundColor: isDark ? const Color(0xFF121212) : bgColor,
             centerTitle: true,
             title: AnimatedOpacity(
               opacity: innerBoxIsScrolled ? 1.0 : 0.0,
@@ -758,6 +759,11 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
 
         const SizedBox(height: 6),
 
+        // Details Section - Clean text rows, no background boxes
+        _buildDetailsRows(detail, isDark, bodyTextColor, metaTextColor),
+
+        const SizedBox(height: 6),
+
         // Cast Section
         if (detail.casts.isNotEmpty)
           Padding(
@@ -778,7 +784,16 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                     itemCount: detail.casts.length,
                     itemBuilder: (context, index) {
                       final cast = detail.casts[index];
-                      return Padding(
+                      return GestureDetector(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => ActorMoviesScreen(actorName: cast.name),
+                            ),
+                          );
+                        },
+                        child: Padding(
                         padding: const EdgeInsets.only(right: 14),
                         child: Column(
                           children: [
@@ -845,6 +860,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
                             ),
                           ],
                         ),
+                        ),
                       );
                     },
                   ),
@@ -853,6 +869,72 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
             ),
           ),
       ],
+    );
+  }
+
+  // ===== DETAILS ROWS (Clean text rows, no background boxes) =====
+  Widget _buildDetailsRows(
+    MovieDetail detail,
+    bool isDark,
+    Color bodyTextColor,
+    Color metaTextColor,
+  ) {
+    // Series Details: Seasons, Episodes, Genre only (no Duration, no Director)
+    final rows = <Widget>[];
+
+    if (detail.seasons.isNotEmpty) {
+      rows.add(_detailRow('Seasons', '${detail.seasons.length}', bodyTextColor, metaTextColor));
+      final totalEpisodes = detail.seasons.fold<int>(0, (sum, s) => sum + s.episodes.length);
+      rows.add(_detailRow('Episodes', '$totalEpisodes', bodyTextColor, metaTextColor));
+    }
+    if (detail.categories.isNotEmpty) {
+      rows.add(_detailRow('Genre', detail.categories.join(' '), bodyTextColor, metaTextColor));
+    }
+
+    if (rows.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Details',
+              style: TextStyle(
+                  color: bodyTextColor,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          ...rows,
+        ],
+      ),
+    );
+  }
+
+  /// Single detail row: label + value, no background, no borders
+  Widget _detailRow(String label, String value, Color bodyTextColor, Color metaTextColor) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 80,
+            child: Text(label,
+                style: TextStyle(
+                    color: metaTextColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500)),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(value,
+                style: TextStyle(
+                    color: bodyTextColor,
+                    fontSize: 13,
+                    height: 1.4)),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1557,7 +1639,7 @@ class _SeriesTabBarDelegate extends SliverPersistentHeaderDelegate {
   Widget build(
       BuildContext context, double shrinkOffset, bool overlapsContent) {
     return Container(
-      color: isDark ? const Color(0xFF0A0A0A) : const Color(0xFFF5F5F5),
+      color: isDark ? const Color(0xFF121212) : const Color(0xFFF5F5F5),
       child: TabBar(
         controller: tabController,
         labelColor: accentColor,

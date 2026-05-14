@@ -11,6 +11,8 @@ class MovieDetail {
   final String? rating;
   final String? resolution;
   final String? duration;
+  final String? format;
+  final String? fileSize;
   final int? isAdult;
   final String? type;
   final bool isTrending;
@@ -37,6 +39,8 @@ class MovieDetail {
     this.rating,
     this.resolution,
     this.duration,
+    this.format,
+    this.fileSize,
     this.isAdult,
     this.type,
     this.isTrending = false,
@@ -64,6 +68,8 @@ class MovieDetail {
       rating: map['rating']?.toString(),
       resolution: map['resolution'] as String?,
       duration: map['duration']?.toString(),
+      format: map['format'] as String?,
+      fileSize: map['fileSize']?.toString(),
       isAdult: map['isAdult'] as int?,
       type: map['type'] as String?,
       isTrending: map['isTrending'] as bool? ?? false,
@@ -117,6 +123,8 @@ class MovieDetail {
       'rating': rating,
       'resolution': resolution,
       'duration': duration,
+      'format': format,
+      'fileSize': fileSize,
       'isAdult': isAdult,
       'type': type,
       'isTrending': isTrending,

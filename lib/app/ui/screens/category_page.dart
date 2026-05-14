@@ -42,6 +42,8 @@ class _CategoryPageState extends State<CategoryPage> {
   bool _hasMore = true;
   bool _isLoading = true;
   bool _isLoadingMore = false;
+  // Track seen IDs to prevent duplicates
+  final Set<String> _seenIds = {};
 
   @override
   void initState() {
@@ -65,8 +67,21 @@ class _CategoryPageState extends State<CategoryPage> {
     }
   }
 
+  /// Add movies while deduplicating by ID
+  List<Movie> _deduplicate(List<Movie> existing, List<Movie> incoming) {
+    final result = <Movie>[...existing];
+    for (final movie in incoming) {
+      if (!_seenIds.contains(movie.id)) {
+        _seenIds.add(movie.id);
+        result.add(movie);
+      }
+    }
+    return result;
+  }
+
   Future<void> _loadMovies() async {
     setState(() => _isLoading = true);
+    _seenIds.clear();
     try {
       Map<String, dynamic> result;
 
@@ -89,6 +104,9 @@ class _CategoryPageState extends State<CategoryPage> {
           if (mounted) {
             setState(() {
               _movies = trendingList;
+              for (final m in trendingList) {
+                _seenIds.add(m.id);
+              }
               _hasMore = false;
               _isLoading = false;
             });
@@ -100,6 +118,9 @@ class _CategoryPageState extends State<CategoryPage> {
           if (mounted) {
             setState(() {
               _movies = trendingList;
+              for (final m in trendingList) {
+                _seenIds.add(m.id);
+              }
               _hasMore = false;
               _isLoading = false;
             });
@@ -107,9 +128,14 @@ class _CategoryPageState extends State<CategoryPage> {
           return;
       }
 
+      final newMovies = result['movies'] as List<Movie>;
+      for (final m in newMovies) {
+        _seenIds.add(m.id);
+      }
+
       if (mounted) {
         setState(() {
-          _movies = result['movies'] as List<Movie>;
+          _movies = newMovies;
           _hasMore = result['hasMore'] as bool;
           _lastDoc = result['lastDoc'] as DocumentSnapshot?;
           _isLoading = false;
@@ -147,10 +173,13 @@ class _CategoryPageState extends State<CategoryPage> {
           return;
       }
 
+      final incomingMovies = result['movies'] as List<Movie>;
+      final deduped = _deduplicate(_movies, incomingMovies);
+
       if (mounted) {
         setState(() {
-          _movies.addAll(result['movies'] as List<Movie>);
-          _hasMore = result['hasMore'] as bool;
+          _movies = deduped;
+          _hasMore = result['hasMore'] as bool && incomingMovies.isNotEmpty;
           _lastDoc = result['lastDoc'] as DocumentSnapshot?;
           _isLoadingMore = false;
         });
@@ -194,6 +223,7 @@ class _CategoryPageState extends State<CategoryPage> {
               onRefresh: _loadMovies,
               child: CustomScrollView(
                 controller: _scrollController,
+                physics: const AlwaysScrollableScrollPhysics(),
                 slivers: [
                   // Movie grid (3 columns)
                   SliverPadding(
