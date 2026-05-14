@@ -210,3 +210,63 @@ Files Modified:
 - lib/app/ui/screens/add_series_page.dart
 - lib/app/ui/components/movie_card.dart
 - lib/app/ui/screens/series_detail_screen.dart
+
+---
+
+Task ID: 7
+Agent: Main Agent
+Task: Part 2 - Skeleton Loading, Admin Edit Buttons, Format Dropdown, Video Player Caching
+
+Work Log:
+
+Change 1: Skeleton Loading improvements
+- movies_page.dart: Added minimum 600ms display time for skeleton (Stopwatch + Future.delayed)
+- series_page.dart: Same minimum 600ms skeleton display time
+- genres_tags_collections_page.dart: Removed _GenreButtonSkeleton class entirely, replaced with simple CircularProgressIndicator, added 500ms minimum display
+- FilterResultPage: Added minimum 600ms skeleton display time
+
+Change 2: Admin Panel - Format Dropdown & Series Fields
+- edit_movie_page.dart:
+  - Added `String _format = 'MP4'` state variable
+  - Format field changed from TextFormField to DropdownButtonFormField with options: MP4, MKV, MKV / MP4
+  - Duration field only shown for movies (_type != 'series')
+  - Series: Replaced Duration with read-only Seasons/Episodes count + Resolution row
+  - Save method: duration/fileSize/format are null for series; format uses _format dropdown variable
+  - _loadData: Sets _format from loaded detail.format with safe validation
+
+Change 3: Admin Panel - Edit Buttons for Download/Watch Links
+- edit_movie_page.dart - Movies:
+  - Added Edit icon button (blue/white) next to Delete icon (red) for Download Links
+  - Added Edit icon button for Watch Links
+  - Added _showEditDownloadLinkModal(index): Pre-filled modal with existing Server/Quality/Size/URL, Update button overwrites original
+  - Added _showEditWatchLinkModal(index): Same pattern for watch links
+- edit_movie_page.dart - Series:
+  - Episode edit dialog: Added Edit icon for download links and watch links in each episode
+  - Added _showEditEpisodeDownloadLinkDialog(seasonIndex, episodeIndex, linkIndex): Pre-filled modal, Update overwrites
+  - Added _showEditEpisodeWatchLinkDialog(seasonIndex, episodeIndex, linkIndex): Same pattern
+
+Change 4: Video Player Network Caching Optimization
+- video_player_screen.dart:
+  - Added mpv network caching properties: cache=yes, cache-secs=5, cache-pause=yes
+  - cache-pause-wait=3 (wait up to 3s for cache to fill before resuming)
+  - cache-pause-initial=yes (pause at start until cache fills)
+  - demuxer-max-bytes=50MB (forward buffer for all devices)
+  - demuxer-max-back-bytes=25MB (back buffer for all devices)
+  - Increased PlayerConfiguration bufferSizeBytes: 32MB/48MB/64MB/96MB by tier (was 16/24/32/50)
+- android/app/build.gradle: Verified minSdk=23 (≥21 requirement met)
+
+Stage Summary:
+- Skeleton loading now shows for minimum 600ms to prevent flash
+- Genres/Tags/Collections skeleton removed, simple loading indicator instead
+- Format dropdown (MP4/MKV/MKV MP4) replaces text field for movies
+- Series: Duration replaced with Seasons/Episodes read-only fields
+- Edit buttons added to all Download/Watch links (Movies + Series)
+- Video player has 5-second network caching for smooth MKV 1080p streaming
+- All changes pushed to GitHub Main branch
+
+Files Modified:
+- lib/app/ui/screens/movies_page.dart
+- lib/app/ui/screens/series_page.dart
+- lib/app/ui/screens/genres_tags_collections_page.dart
+- lib/app/ui/screens/edit_movie_page.dart
+- lib/app/ui/screens/video_player_screen.dart
