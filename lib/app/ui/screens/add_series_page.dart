@@ -21,7 +21,6 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
   final _overviewController = TextEditingController();
   final _ratingController = TextEditingController();
   final _resolutionController = TextEditingController();
-  final _durationController = TextEditingController();
 
   bool _isAdult = false;
   bool _isTrending = false;
@@ -38,6 +37,12 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
   List<CastMember> _casts = [];
   List<Season> _seasons = [];
 
+  // Server options (1-10)
+  static const List<String> _serverOptions = [
+    'Server 1', 'Server 2', 'Server 3', 'Server 4', 'Server 5',
+    'Server 6', 'Server 7', 'Server 8', 'Server 9', 'Server 10',
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -52,7 +57,6 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
     _overviewController.dispose();
     _ratingController.dispose();
     _resolutionController.dispose();
-    _durationController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -85,8 +89,9 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
         'overview': _overviewController.text.trim().isEmpty ? null : _overviewController.text.trim(),
         'rating': _ratingController.text.trim().isEmpty ? null : _ratingController.text.trim(),
         'resolution': _resolutionController.text.trim().isEmpty ? null : _resolutionController.text.trim(),
-        'duration': null,
-        'format': null,
+        'duration': null, // Series doesn't have duration
+        'fileSize': null, // Series doesn't have file size
+        'format': null, // Series doesn't have format
         'isAdult': _isAdult ? 1 : 0,
         'type': 'series',
         'isTrending': _isTrending,
@@ -95,6 +100,7 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
         'directors': _directors,
         'casts': _casts.map((c) => {'name': c.name, 'profilePath': c.profilePath}).toList(),
         'downloadLinks': <Map<String, dynamic>>[],
+        'watchLinks': <Map<String, dynamic>>[],
         'seasons': _seasons.map((s) => s.toMap()).toList(),
       };
 
@@ -169,10 +175,10 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
                     ),
                     const SizedBox(height: 16),
 
-                    // Resolution
+                    // Resolution only (no Duration for series)
                     TextFormField(
                       controller: _resolutionController,
-                      decoration: const InputDecoration(labelText: 'Resolution', hintText: 'e.g. FHD, 4K'),
+                      decoration: const InputDecoration(labelText: 'Resolution', hintText: 'e.g. 4K / 1080p / 720p'),
                     ),
                     const SizedBox(height: 16),
 
@@ -297,17 +303,7 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
                               child: Text(cast.name.isNotEmpty ? cast.name[0].toUpperCase() : '?', style: const TextStyle(color: Color(0xFFE50914))),
                             ),
                             const SizedBox(width: 8),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(cast.name, style: const TextStyle(fontWeight: FontWeight.w500)),
-                                  if (cast.profilePath != null && cast.profilePath!.isNotEmpty)
-                                    Text(cast.profilePath!, maxLines: 1, overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(fontSize: 11, color: isDark ? Colors.white38 : Colors.black38)),
-                                ],
-                              ),
-                            ),
+                            Expanded(child: Text(cast.name, style: const TextStyle(fontWeight: FontWeight.w500))),
                             IconButton(icon: const Icon(Icons.delete, size: 20), onPressed: () => setState(() => _casts.removeAt(entry.key))),
                           ],
                         ),
@@ -361,63 +357,79 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
                     ),
                     const SizedBox(height: 12),
 
-                    // Seasons list
+                    // Seasons list with ExpansionTile
                     ..._seasons.asMap().entries.map((entry) {
                       final seasonIndex = entry.key;
                       final season = entry.value;
                       return Card(
                         margin: const EdgeInsets.only(bottom: 12),
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                        child: ExpansionTile(
+                          tilePadding: const EdgeInsets.all(12),
+                          childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                          leading: Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE50914).withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(Icons.video_library, color: Color(0xFFE50914), size: 22),
+                          ),
+                          title: Text(season.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                          subtitle: Text('${season.episodes.length} episode${season.episodes.length == 1 ? '' : 's'}'),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(season.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(Icons.delete, size: 20, color: Colors.red),
-                                    onPressed: () => setState(() => _seasons.removeAt(seasonIndex)),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              // Episodes
-                              ...season.episodes.asMap().entries.map((epEntry) {
-                                final epIndex = epEntry.key;
-                                final episode = epEntry.value;
-                                return ListTile(
-                                  dense: true,
-                                  contentPadding: EdgeInsets.zero,
-                                  leading: const Icon(Icons.play_circle_outline, size: 20, color: Color(0xFFE50914)),
-                                  title: Text(episode.name, style: const TextStyle(fontSize: 13)),
-                                  subtitle: Text('${episode.downloadLinks.length} download link(s)',
-                                    style: TextStyle(fontSize: 11, color: isDark ? Colors.white38 : Colors.black38)),
-                                  trailing: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      IconButton(
-                                        icon: const Icon(Icons.edit, size: 18),
-                                        onPressed: () => _showEditEpisodeDialog(seasonIndex, epIndex),
-                                      ),
-                                      IconButton(
-                                        icon: const Icon(Icons.delete, size: 18, color: Colors.red),
-                                        onPressed: () => setState(() => _seasons[seasonIndex].episodes.removeAt(epIndex)),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              }),
-                              // Add Episode button
-                              TextButton.icon(
-                                onPressed: () => _showAddEpisodeDialog(seasonIndex),
-                                icon: const Icon(Icons.add, size: 18),
-                                label: const Text('Add Episode'),
+                              IconButton(
+                                icon: const Icon(Icons.delete, size: 20, color: Colors.red),
+                                onPressed: () => setState(() => _seasons.removeAt(seasonIndex)),
                               ),
                             ],
                           ),
+                          children: [
+                            // Episodes
+                            ...season.episodes.asMap().entries.map((epEntry) {
+                              final epIndex = epEntry.key;
+                              final episode = epEntry.value;
+                              return ListTile(
+                                dense: true,
+                                contentPadding: EdgeInsets.zero,
+                                leading: const Icon(Icons.play_circle_outline, size: 20, color: Color(0xFFE50914)),
+                                title: Text(episode.name, style: const TextStyle(fontSize: 13)),
+                                subtitle: Text(
+                                  '${episode.downloadLinks.length} download · ${episode.watchLinks.length} watch',
+                                  style: TextStyle(fontSize: 11, color: isDark ? Colors.white38 : Colors.black38)),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(Icons.edit, size: 18),
+                                      onPressed: () => _showEditEpisodeDialog(seasonIndex, epIndex),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.delete, size: 18, color: Colors.red),
+                                      onPressed: () => setState(() => _seasons[seasonIndex].episodes.removeAt(epIndex)),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }),
+                            // Add Episode buttons
+                            Row(
+                              children: [
+                                TextButton.icon(
+                                  onPressed: () => _showAddEpisodeDownloadDialog(seasonIndex),
+                                  icon: const Icon(Icons.download, size: 18),
+                                  label: const Text('Add Episode (Download)'),
+                                ),
+                                const SizedBox(width: 8),
+                                TextButton.icon(
+                                  onPressed: () => _showAddEpisodeWatchDialog(seasonIndex),
+                                  icon: const Icon(Icons.play_arrow, size: 18),
+                                  label: const Text('Add Episode (Watch)'),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
                       );
                     }),
@@ -451,22 +463,146 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
     });
   }
 
-  void _showAddEpisodeDialog(int seasonIndex) {
-    final controller = TextEditingController(text: 'Episode ${_seasons[seasonIndex].episodes.length + 1}');
+  void _showAddEpisodeDownloadDialog(int seasonIndex) {
+    final episodeNameController = TextEditingController(text: 'Episode ${_seasons[seasonIndex].episodes.length + 1}');
+    String? selectedServer = _serverOptions.first;
+    final qualityController = TextEditingController();
+    final sizeController = TextEditingController();
+    final urlController = TextEditingController();
+
     showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Add Episode - ${_seasons[seasonIndex].name}'),
-        content: TextField(controller: controller, decoration: const InputDecoration(labelText: 'Episode Name'), autofocus: true),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
-        ],
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text('Add Episode - ${_seasons[seasonIndex].name}'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(controller: episodeNameController, decoration: const InputDecoration(labelText: 'Episode Title *'), autofocus: true),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  value: selectedServer,
+                  decoration: const InputDecoration(labelText: 'Select Server'),
+                  items: _serverOptions.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                  onChanged: (v) => setDialogState(() => selectedServer = v),
+                ),
+                const SizedBox(height: 8),
+                TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. 4K, 1080p, 720p')),
+                const SizedBox(height: 8),
+                TextField(controller: sizeController, decoration: const InputDecoration(labelText: 'Size', hintText: 'e.g. 4.5 GB')),
+                const SizedBox(height: 8),
+                TextField(controller: urlController, decoration: const InputDecoration(labelText: 'Download URL *', hintText: 'Direct download link'), keyboardType: TextInputType.url),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
+          ],
+        ),
       ),
     ).then((result) {
-      if (result == true && controller.text.trim().isNotEmpty) {
+      if (result == true && episodeNameController.text.trim().isNotEmpty) {
         setState(() {
-          _seasons[seasonIndex].episodes.add(Episode(name: controller.text.trim()));
+          final epName = episodeNameController.text.trim();
+          // Find existing episode or create new one
+          final existingIndex = _seasons[seasonIndex].episodes.indexWhere((e) => e.name == epName);
+          if (existingIndex >= 0) {
+            // Add download link to existing episode
+            _seasons[seasonIndex].episodes[existingIndex].downloadLinks.add(MovieDownloadLink(
+              serverName: selectedServer ?? 'Server 1',
+              url: urlController.text.trim(),
+              quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
+              size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+            ));
+          } else {
+            // Create new episode with this download link
+            _seasons[seasonIndex].episodes.add(Episode(
+              name: epName,
+              downloadLinks: [
+                MovieDownloadLink(
+                  serverName: selectedServer ?? 'Server 1',
+                  url: urlController.text.trim(),
+                  quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
+                  size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+                ),
+              ],
+              watchLinks: [],
+            ));
+          }
+        });
+      }
+    });
+  }
+
+  void _showAddEpisodeWatchDialog(int seasonIndex) {
+    final episodeNameController = TextEditingController(text: 'Episode ${_seasons[seasonIndex].episodes.length + 1}');
+    String? selectedServer = _serverOptions.first;
+    final qualityController = TextEditingController();
+    final sizeController = TextEditingController();
+    final urlController = TextEditingController();
+
+    showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text('Add Episode - ${_seasons[seasonIndex].name}'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(controller: episodeNameController, decoration: const InputDecoration(labelText: 'Episode Title *'), autofocus: true),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  value: selectedServer,
+                  decoration: const InputDecoration(labelText: 'Select Server'),
+                  items: _serverOptions.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                  onChanged: (v) => setDialogState(() => selectedServer = v),
+                ),
+                const SizedBox(height: 8),
+                TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. 4K, 1080p, 720p')),
+                const SizedBox(height: 8),
+                TextField(controller: sizeController, decoration: const InputDecoration(labelText: 'Size', hintText: 'e.g. 4.5 GB')),
+                const SizedBox(height: 8),
+                TextField(controller: urlController, decoration: const InputDecoration(labelText: 'Watch URL *', hintText: 'Player link for watching'), keyboardType: TextInputType.url),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
+          ],
+        ),
+      ),
+    ).then((result) {
+      if (result == true && episodeNameController.text.trim().isNotEmpty) {
+        setState(() {
+          final epName = episodeNameController.text.trim();
+          final existingIndex = _seasons[seasonIndex].episodes.indexWhere((e) => e.name == epName);
+          if (existingIndex >= 0) {
+            // Add watch link to existing episode
+            _seasons[seasonIndex].episodes[existingIndex].watchLinks.add(MovieWatchLink(
+              serverName: selectedServer ?? 'Server 1',
+              url: urlController.text.trim(),
+              quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
+              size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+            ));
+          } else {
+            // Create new episode with this watch link
+            _seasons[seasonIndex].episodes.add(Episode(
+              name: epName,
+              downloadLinks: [],
+              watchLinks: [
+                MovieWatchLink(
+                  serverName: selectedServer ?? 'Server 1',
+                  url: urlController.text.trim(),
+                  quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
+                  size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+                ),
+              ],
+            ));
+          }
         });
       }
     });
@@ -498,44 +634,95 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
               Padding(
                 padding: const EdgeInsets.all(16),
                 child: Text(
-                  '${_seasons[seasonIndex].name} - ${episode.name} - Download Links',
+                  '${_seasons[seasonIndex].name} - ${episode.name}',
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                 ),
               ),
               const Divider(),
               Expanded(
-                child: episode.downloadLinks.isEmpty
-                    ? Center(child: Text('No download links yet', style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5))))
-                    : ListView.builder(
-                        controller: scrollController,
-                        itemCount: episode.downloadLinks.length,
-                        itemBuilder: (_, index) {
-                          final link = episode.downloadLinks[index];
-                          return ListTile(
-                            dense: true,
-                            title: Text(link.serverName),
-                            subtitle: Text('${link.quality ?? ''} ${link.size ?? ''}'.trim()),
-                            trailing: IconButton(
-                              icon: const Icon(Icons.delete, size: 18, color: Colors.red),
-                              onPressed: () {
-                                setState(() => episode.downloadLinks.removeAt(index));
-                                setModalState(() {});
-                              },
-                            ),
-                          );
-                        },
+                child: ListView(
+                  controller: scrollController,
+                  children: [
+                    // Download Links section
+                    if (episode.downloadLinks.isNotEmpty) ...[
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        child: Text('Download Links', style: TextStyle(fontWeight: FontWeight.w600, color: isDark ? Colors.white : Colors.black87)),
                       ),
+                      ...episode.downloadLinks.asMap().entries.map((entry) {
+                        final link = entry.value;
+                        return ListTile(
+                          dense: true,
+                          title: Text(link.serverName),
+                          subtitle: Text('${link.quality ?? ''} ${link.size ?? ''}'.trim()),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete, size: 18, color: Colors.red),
+                            onPressed: () {
+                              setState(() => episode.downloadLinks.removeAt(entry.key));
+                              setModalState(() {});
+                            },
+                          ),
+                        );
+                      }),
+                    ],
+                    // Watch Links section
+                    if (episode.watchLinks.isNotEmpty) ...[
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        child: Text('Watch Links', style: TextStyle(fontWeight: FontWeight.w600, color: isDark ? Colors.white : Colors.black87)),
+                      ),
+                      ...episode.watchLinks.asMap().entries.map((entry) {
+                        final link = entry.value;
+                        return ListTile(
+                          dense: true,
+                          title: Text(link.serverName),
+                          subtitle: Text('${link.quality ?? ''} ${link.size ?? ''}'.trim()),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete, size: 18, color: Colors.red),
+                            onPressed: () {
+                              setState(() => episode.watchLinks.removeAt(entry.key));
+                              setModalState(() {});
+                            },
+                          ),
+                        );
+                      }),
+                    ],
+                    if (episode.downloadLinks.isEmpty && episode.watchLinks.isEmpty)
+                      const Center(child: Padding(
+                        padding: EdgeInsets.all(20),
+                        child: Text('No links yet'),
+                      )),
+                  ],
+                ),
               ),
               Padding(
                 padding: const EdgeInsets.all(16),
-                child: ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    _showAddEpisodeDownloadLinkDialog(seasonIndex, episodeIndex);
-                  },
-                  icon: const Icon(Icons.add),
-                  label: const Text('Add Download Link'),
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE50914), foregroundColor: Colors.white),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          _showAddDownloadLinkToEpisode(seasonIndex, episodeIndex);
+                        },
+                        icon: const Icon(Icons.download),
+                        label: const Text('Add Download'),
+                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE50914), foregroundColor: Colors.white),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          _showAddWatchLinkToEpisode(seasonIndex, episodeIndex);
+                        },
+                        icon: const Icon(Icons.play_arrow),
+                        label: const Text('Add Watch'),
+                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE50914), foregroundColor: Colors.white),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -545,52 +732,99 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
     );
   }
 
-  void _showAddEpisodeDownloadLinkDialog(int seasonIndex, int episodeIndex) {
-    final serverController = TextEditingController();
-    final urlController = TextEditingController();
-    final watchNameController = TextEditingController();
-    final watchUrlController = TextEditingController();
+  void _showAddDownloadLinkToEpisode(int seasonIndex, int episodeIndex) {
+    String? selectedServer = _serverOptions.first;
     final qualityController = TextEditingController();
-    final resController = TextEditingController();
     final sizeController = TextEditingController();
+    final urlController = TextEditingController();
 
     showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('${_seasons[seasonIndex].name} - ${_seasons[seasonIndex].episodes[episodeIndex].name} - Download Link'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: serverController, decoration: const InputDecoration(labelText: 'Server Name *', hintText: 'e.g. Direct-1'), autofocus: true),
-              const SizedBox(height: 8),
-              TextField(controller: urlController, decoration: const InputDecoration(labelText: 'Download URL *', hintText: 'Direct download link'), keyboardType: TextInputType.url),
-              const SizedBox(height: 8),
-              TextField(controller: watchNameController, decoration: const InputDecoration(labelText: 'Watch Name', hintText: 'e.g. Server-1')),
-              const SizedBox(height: 8),
-              TextField(controller: watchUrlController, decoration: const InputDecoration(labelText: 'Watch URL', hintText: 'Player link for watching'), keyboardType: TextInputType.url),
-              const SizedBox(height: 8),
-              TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. 720p, 1080p')),
-              const SizedBox(height: 8),
-              TextField(controller: sizeController, decoration: const InputDecoration(labelText: 'Size', hintText: 'e.g. 1.5 GB')),
-            ],
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text('${_seasons[seasonIndex].name} - ${_seasons[seasonIndex].episodes[episodeIndex].name} - Download Link'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  value: selectedServer,
+                  decoration: const InputDecoration(labelText: 'Select Server'),
+                  items: _serverOptions.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                  onChanged: (v) => setDialogState(() => selectedServer = v),
+                ),
+                const SizedBox(height: 8),
+                TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. 720p, 1080p')),
+                const SizedBox(height: 8),
+                TextField(controller: sizeController, decoration: const InputDecoration(labelText: 'Size', hintText: 'e.g. 1.5 GB')),
+                const SizedBox(height: 8),
+                TextField(controller: urlController, decoration: const InputDecoration(labelText: 'Download URL *', hintText: 'Direct download link'), keyboardType: TextInputType.url),
+              ],
+            ),
           ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
+          ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
-        ],
       ),
     ).then((result) {
-      if (result == true && serverController.text.trim().isNotEmpty) {
+      if (result == true && urlController.text.trim().isNotEmpty) {
         setState(() {
           _seasons[seasonIndex].episodes[episodeIndex].downloadLinks.add(MovieDownloadLink(
-            serverName: serverController.text.trim(),
+            serverName: selectedServer ?? 'Server 1',
             url: urlController.text.trim(),
-            watchName: watchNameController.text.trim().isEmpty ? null : watchNameController.text.trim(),
-            watchUrl: watchUrlController.text.trim().isEmpty ? null : watchUrlController.text.trim(),
             quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-            resolution: resController.text.trim().isEmpty ? null : resController.text.trim(),
+            size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+          ));
+        });
+      }
+    });
+  }
+
+  void _showAddWatchLinkToEpisode(int seasonIndex, int episodeIndex) {
+    String? selectedServer = _serverOptions.first;
+    final qualityController = TextEditingController();
+    final sizeController = TextEditingController();
+    final urlController = TextEditingController();
+
+    showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text('${_seasons[seasonIndex].name} - ${_seasons[seasonIndex].episodes[episodeIndex].name} - Watch Link'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  value: selectedServer,
+                  decoration: const InputDecoration(labelText: 'Select Server'),
+                  items: _serverOptions.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                  onChanged: (v) => setDialogState(() => selectedServer = v),
+                ),
+                const SizedBox(height: 8),
+                TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. 720p, 1080p')),
+                const SizedBox(height: 8),
+                TextField(controller: sizeController, decoration: const InputDecoration(labelText: 'Size', hintText: 'e.g. 1.5 GB')),
+                const SizedBox(height: 8),
+                TextField(controller: urlController, decoration: const InputDecoration(labelText: 'Watch URL *', hintText: 'Player link for watching'), keyboardType: TextInputType.url),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
+          ],
+        ),
+      ),
+    ).then((result) {
+      if (result == true && urlController.text.trim().isNotEmpty) {
+        setState(() {
+          _seasons[seasonIndex].episodes[episodeIndex].watchLinks.add(MovieWatchLink(
+            serverName: selectedServer ?? 'Server 1',
+            url: urlController.text.trim(),
+            quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
             size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
           ));
         });

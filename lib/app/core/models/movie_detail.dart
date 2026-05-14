@@ -23,6 +23,7 @@ class MovieDetail {
   final List<String> categories;
   final List<String> tags;
   final List<MovieDownloadLink> downloadLinks;
+  final List<MovieWatchLink> watchLinks;
   // Series-specific: seasons with episodes
   final List<Season> seasons;
   final int? tmdbId;
@@ -51,6 +52,7 @@ class MovieDetail {
     this.categories = const [],
     this.tags = const [],
     this.downloadLinks = const [],
+    this.watchLinks = const [],
     this.seasons = const [],
     this.tmdbId,
     this.createdAt,
@@ -100,6 +102,13 @@ class MovieDetail {
               ),
             )
           : [],
+      watchLinks: map['watchLinks'] != null
+          ? List<MovieWatchLink>.from(
+              (map['watchLinks'] as List).map(
+                (x) => MovieWatchLink.fromMap(x as Map<String, dynamic>),
+              ),
+            )
+          : [],
       seasons: map['seasons'] != null
           ? List<Season>.from(
               (map['seasons'] as List).map(
@@ -135,6 +144,7 @@ class MovieDetail {
       'categories': categories,
       'tags': tags,
       'downloadLinks': downloadLinks.map((x) => x.toMap()).toList(),
+      'watchLinks': watchLinks.map((x) => x.toMap()).toList(),
       'seasons': seasons.map((x) => x.toMap()).toList(),
       'tmdbId': tmdbId,
     };
@@ -183,23 +193,18 @@ class CastMember {
   }
 }
 
+/// Download link - used for download quality/size/server entries
 class MovieDownloadLink {
   final String serverName;
   final String url;
   final String? size;
   final String? quality;
-  final String? resolution;
-  final String? watchName;
-  final String? watchUrl;
 
   MovieDownloadLink({
     required this.serverName,
     required this.url,
     this.size,
     this.quality,
-    this.resolution,
-    this.watchName,
-    this.watchUrl,
   });
 
   factory MovieDownloadLink.fromMap(Map<String, dynamic> map) {
@@ -208,9 +213,6 @@ class MovieDownloadLink {
       url: map['url'] as String? ?? '',
       size: map['size']?.toString(),
       quality: map['quality']?.toString(),
-      resolution: map['resolution']?.toString(),
-      watchName: map['watchName'] as String?,
-      watchUrl: map['watchUrl'] as String?,
     );
   }
 
@@ -220,9 +222,39 @@ class MovieDownloadLink {
       'url': url,
       'size': size,
       'quality': quality,
-      'resolution': resolution,
-      'watchName': watchName,
-      'watchUrl': watchUrl,
+    };
+  }
+}
+
+/// Watch link - used for streaming quality/size/server entries
+class MovieWatchLink {
+  final String serverName;
+  final String url;
+  final String? size;
+  final String? quality;
+
+  MovieWatchLink({
+    required this.serverName,
+    required this.url,
+    this.size,
+    this.quality,
+  });
+
+  factory MovieWatchLink.fromMap(Map<String, dynamic> map) {
+    return MovieWatchLink(
+      serverName: map['serverName'] as String? ?? '',
+      url: map['url'] as String? ?? '',
+      size: map['size']?.toString(),
+      quality: map['quality']?.toString(),
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'serverName': serverName,
+      'url': url,
+      'size': size,
+      'quality': quality,
     };
   }
 }
@@ -262,12 +294,14 @@ class Episode {
   final String? videoUrl;
   final String? downloadUrl;
   final List<MovieDownloadLink> downloadLinks;
+  final List<MovieWatchLink> watchLinks;
 
   Episode({
     required this.name,
     this.videoUrl,
     this.downloadUrl,
     this.downloadLinks = const [],
+    this.watchLinks = const [],
   });
 
   factory Episode.fromMap(Map<String, dynamic> map) {
@@ -282,6 +316,13 @@ class Episode {
               ),
             )
           : [],
+      watchLinks: map['watchLinks'] != null
+          ? List<MovieWatchLink>.from(
+              (map['watchLinks'] as List).map(
+                (x) => MovieWatchLink.fromMap(x as Map<String, dynamic>),
+              ),
+            )
+          : [],
     );
   }
 
@@ -289,6 +330,7 @@ class Episode {
     final map = <String, dynamic>{
       'name': name,
       'downloadLinks': downloadLinks.map((x) => x.toMap()).toList(),
+      'watchLinks': watchLinks.map((x) => x.toMap()).toList(),
     };
     if (videoUrl != null) map['videoUrl'] = videoUrl;
     if (downloadUrl != null) map['downloadUrl'] = downloadUrl;

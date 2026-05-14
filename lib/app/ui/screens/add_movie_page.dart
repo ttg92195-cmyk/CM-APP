@@ -25,8 +25,7 @@ class _AddMoviePageState extends State<AddMoviePage> {
   final _resolutionController = TextEditingController();
   final _durationController = TextEditingController();
   final _fileSizeController = TextEditingController();
-  final _countryController = TextEditingController();
-  String _format = 'MP4'; // Default format for movies
+  final _formatController = TextEditingController();
 
   String _type = 'movie';
   bool _isAdult = false;
@@ -43,6 +42,13 @@ class _AddMoviePageState extends State<AddMoviePage> {
   List<String> _directors = [];
   List<CastMember> _casts = [];
   List<MovieDownloadLink> _downloadLinks = [];
+  List<MovieWatchLink> _watchLinks = [];
+
+  // Server options (1-10)
+  static const List<String> _serverOptions = [
+    'Server 1', 'Server 2', 'Server 3', 'Server 4', 'Server 5',
+    'Server 6', 'Server 7', 'Server 8', 'Server 9', 'Server 10',
+  ];
 
   @override
   void initState() {
@@ -61,7 +67,7 @@ class _AddMoviePageState extends State<AddMoviePage> {
     _resolutionController.dispose();
     _durationController.dispose();
     _fileSizeController.dispose();
-    _countryController.dispose();
+    _formatController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -80,9 +86,7 @@ class _AddMoviePageState extends State<AddMoviePage> {
   Future<void> _saveMovie() async {
     if (!_formKey.currentState!.validate()) return;
     if (_titleController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Title is required')),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Title is required')));
       return;
     }
 
@@ -96,10 +100,9 @@ class _AddMoviePageState extends State<AddMoviePage> {
         'overview': _overviewController.text.trim().isEmpty ? null : _overviewController.text.trim(),
         'rating': _ratingController.text.trim().isEmpty ? null : _ratingController.text.trim(),
         'resolution': _resolutionController.text.trim().isEmpty ? null : _resolutionController.text.trim(),
-        'duration': _type != 'series' ? (_durationController.text.trim().isEmpty ? null : _durationController.text.trim()) : null,
+        'duration': _durationController.text.trim().isEmpty ? null : _durationController.text.trim(),
         'fileSize': _fileSizeController.text.trim().isEmpty ? null : _fileSizeController.text.trim(),
-        'country': _countryController.text.trim().isEmpty ? null : _countryController.text.trim(),
-        'format': _type != 'series' ? _format : null,
+        'format': _formatController.text.trim().isEmpty ? null : _formatController.text.trim(),
         'isAdult': _isAdult ? 1 : 0,
         'type': _type,
         'isTrending': _isTrending,
@@ -107,29 +110,20 @@ class _AddMoviePageState extends State<AddMoviePage> {
         'tags': _selectedTags,
         'directors': _directors,
         'casts': _casts.map((c) => {'name': c.name, 'profilePath': c.profilePath}).toList(),
-        'downloadLinks': _downloadLinks.map((l) => {
-          'serverName': l.serverName,
-          'url': l.url,
-          'size': l.size,
-          'quality': l.quality,
-          'resolution': l.resolution,
-        }).toList(),
+        'downloadLinks': _downloadLinks.map((l) => l.toMap()).toList(),
+        'watchLinks': _watchLinks.map((l) => l.toMap()).toList(),
         'seasons': <Map<String, dynamic>>[],
       };
 
       await _contentService.addMovie(data);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Saved successfully!')),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved successfully!')));
         Navigator.pop(context);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
@@ -165,10 +159,7 @@ class _AddMoviePageState extends State<AddMoviePage> {
                     // Title
                     TextFormField(
                       controller: _titleController,
-                      decoration: const InputDecoration(
-                        labelText: 'Title *',
-                        hintText: 'Enter movie title',
-                      ),
+                      decoration: const InputDecoration(labelText: 'Title *', hintText: 'Enter movie title'),
                       validator: (v) => v == null || v.trim().isEmpty ? 'Title is required' : null,
                     ),
                     const SizedBox(height: 16),
@@ -195,63 +186,41 @@ class _AddMoviePageState extends State<AddMoviePage> {
                     ),
                     const SizedBox(height: 16),
 
-                    // Format + Duration + Resolution (for Movies)
-                    if (_type != 'series') ...[
-                      Row(
-                        children: [
-                          Expanded(
-                            child: DropdownButtonFormField<String>(
-                              value: _format,
-                              decoration: const InputDecoration(labelText: 'Format'),
-                              items: const [
-                                DropdownMenuItem(value: 'MP4', child: Text('MP4')),
-                                DropdownMenuItem(value: 'MKV', child: Text('MKV')),
-                                DropdownMenuItem(value: 'MKV / MP4', child: Text('MKV / MP4')),
-                              ],
-                              onChanged: (v) => setState(() => _format = v ?? 'MP4'),
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: TextFormField(
-                              controller: _durationController,
-                              decoration: const InputDecoration(labelText: 'Duration (min)', hintText: 'e.g. 120'),
-                              keyboardType: TextInputType.number,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        controller: _resolutionController,
-                        decoration: const InputDecoration(labelText: 'Resolution', hintText: 'e.g. 4K, HD'),
-                      ),
-                      const SizedBox(height: 16),
-                    ],
-
-                    // Resolution only (for Series - no duration)
-                    if (_type == 'series') ...[
-                      TextFormField(
-                        controller: _resolutionController,
-                        decoration: const InputDecoration(labelText: 'Resolution', hintText: 'e.g. 4K, HD'),
-                      ),
-                      const SizedBox(height: 16),
-                    ],
-
-                    // File Size + Country
+                    // Duration + Resolution row
                     Row(
                       children: [
                         Expanded(
                           child: TextFormField(
-                            controller: _fileSizeController,
-                            decoration: const InputDecoration(labelText: 'File Size', hintText: 'e.g. 7 GB / 2.2 GB / 1.1 GB'),
+                            controller: _durationController,
+                            decoration: const InputDecoration(labelText: 'Duration (min)', hintText: 'e.g. 120'),
+                            keyboardType: TextInputType.number,
                           ),
                         ),
                         const SizedBox(width: 16),
                         Expanded(
                           child: TextFormField(
-                            controller: _countryController,
-                            decoration: const InputDecoration(labelText: 'Country', hintText: 'e.g. US, KR, JP'),
+                            controller: _resolutionController,
+                            decoration: const InputDecoration(labelText: 'Resolution', hintText: 'e.g. 4K / 1080p / 720p'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+
+                    // File Size + Format row
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: _fileSizeController,
+                            decoration: const InputDecoration(labelText: 'File Size', hintText: 'e.g. 4.8 GB / 1.9 GB / 976 MB'),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: TextFormField(
+                            controller: _formatController,
+                            decoration: const InputDecoration(labelText: 'Format', hintText: 'e.g. MKV / MP4'),
                           ),
                         ),
                       ],
@@ -291,12 +260,8 @@ class _AddMoviePageState extends State<AddMoviePage> {
                         border: Border.all(color: const Color(0xFFE50914).withOpacity(0.3)),
                       ),
                       child: Text(
-                        '${_type == 'movie' ? 'Movie' : 'Series'} Details',
-                        style: const TextStyle(
-                          color: Color(0xFFE50914),
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
+                        'Movie Details',
+                        style: const TextStyle(color: Color(0xFFE50914), fontWeight: FontWeight.bold, fontSize: 16),
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -386,17 +351,7 @@ class _AddMoviePageState extends State<AddMoviePage> {
                               child: Text(cast.name.isNotEmpty ? cast.name[0].toUpperCase() : '?', style: const TextStyle(color: Color(0xFFE50914))),
                             ),
                             const SizedBox(width: 8),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(cast.name, style: const TextStyle(fontWeight: FontWeight.w500)),
-                                  if (cast.profilePath != null && cast.profilePath!.isNotEmpty)
-                                    Text(cast.profilePath!, maxLines: 1, overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(fontSize: 11, color: isDark ? Colors.white38 : Colors.black38)),
-                                ],
-                              ),
-                            ),
+                            Expanded(child: Text(cast.name, style: const TextStyle(fontWeight: FontWeight.w500))),
                             IconButton(icon: const Icon(Icons.delete, size: 20), onPressed: () => setState(() => _casts.removeAt(entry.key))),
                           ],
                         ),
@@ -438,7 +393,7 @@ class _AddMoviePageState extends State<AddMoviePage> {
                     ),
                     const SizedBox(height: 24),
 
-                    // Download Links
+                    // ===== DOWNLOAD LINKS =====
                     _buildSectionTitle('Download Links'),
                     const SizedBox(height: 8),
                     ..._downloadLinks.asMap().entries.map((entry) {
@@ -458,8 +413,8 @@ class _AddMoviePageState extends State<AddMoviePage> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(link.serverName, style: const TextStyle(fontWeight: FontWeight.w500)),
-                                    Text('${link.quality ?? ''} ${link.resolution ?? ''} ${link.size ?? ''}'.trim(),
-                                      style: TextStyle(fontSize: 11, color: isDark ? Colors.white38 : Colors.black38)),
+                                    Text('${link.quality ?? ''} ${link.size ?? ''}'.trim(),
+                                        style: TextStyle(fontSize: 11, color: isDark ? Colors.white38 : Colors.black38)),
                                   ],
                                 ),
                               ),
@@ -474,6 +429,45 @@ class _AddMoviePageState extends State<AddMoviePage> {
                       icon: const Icon(Icons.add),
                       label: const Text('Add Download Link'),
                     ),
+                    const SizedBox(height: 24),
+
+                    // ===== WATCH LINKS =====
+                    _buildSectionTitle('Watch Links'),
+                    const SizedBox(height: 8),
+                    ..._watchLinks.asMap().entries.map((entry) {
+                      final link = entry.value;
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: isDark ? Colors.white12 : Colors.grey.shade300),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(link.serverName, style: const TextStyle(fontWeight: FontWeight.w500)),
+                                    Text('${link.quality ?? ''} ${link.size ?? ''}'.trim(),
+                                        style: TextStyle(fontSize: 11, color: isDark ? Colors.white38 : Colors.black38)),
+                                  ],
+                                ),
+                              ),
+                              IconButton(icon: const Icon(Icons.delete, size: 20), onPressed: () => setState(() => _watchLinks.removeAt(entry.key))),
+                            ],
+                          ),
+                        ),
+                      );
+                    }),
+                    OutlinedButton.icon(
+                      onPressed: () => _showAddWatchLinkModal(),
+                      icon: const Icon(Icons.add),
+                      label: const Text('Add Watch Link'),
+                    ),
+
                     const SizedBox(height: 80),
                   ],
                 ),
@@ -483,51 +477,108 @@ class _AddMoviePageState extends State<AddMoviePage> {
   }
 
   void _showAddDownloadLinkModal() {
-    final serverController = TextEditingController();
+    String? selectedServer = _serverOptions.first;
     final urlController = TextEditingController();
-    final watchNameController = TextEditingController();
-    final watchUrlController = TextEditingController();
     final qualityController = TextEditingController();
-    final resController = TextEditingController();
     final sizeController = TextEditingController();
 
     showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Add Download Link'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: serverController, decoration: const InputDecoration(labelText: 'Server Name *', hintText: 'e.g. Direct-1'), autofocus: true),
-              const SizedBox(height: 8),
-              TextField(controller: urlController, decoration: const InputDecoration(labelText: 'Download URL *', hintText: 'Direct download link'), keyboardType: TextInputType.url),
-              const SizedBox(height: 8),
-              TextField(controller: watchNameController, decoration: const InputDecoration(labelText: 'Watch Name', hintText: 'e.g. Server-1')),
-              const SizedBox(height: 8),
-              TextField(controller: watchUrlController, decoration: const InputDecoration(labelText: 'Watch URL', hintText: 'Player link for watching'), keyboardType: TextInputType.url),
-              const SizedBox(height: 8),
-              TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. 720p, 1080p')),
-              const SizedBox(height: 8),
-              TextField(controller: sizeController, decoration: const InputDecoration(labelText: 'Size', hintText: 'e.g. 1.5 GB')),
-            ],
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Add Download Link'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Select Server
+                DropdownButtonFormField<String>(
+                  value: selectedServer,
+                  decoration: const InputDecoration(labelText: 'Select Server'),
+                  items: _serverOptions.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                  onChanged: (v) => setDialogState(() => selectedServer = v),
+                ),
+                const SizedBox(height: 8),
+                TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. 4K, 1080p, 720p')),
+                const SizedBox(height: 8),
+                TextField(controller: sizeController, decoration: const InputDecoration(labelText: 'Size', hintText: 'e.g. 4.5 GB')),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: urlController,
+                  decoration: const InputDecoration(labelText: 'Download URL *', hintText: 'Direct download link'),
+                  keyboardType: TextInputType.url,
+                ),
+              ],
+            ),
           ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
+          ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
-        ],
       ),
     ).then((result) {
-      if (result == true && serverController.text.trim().isNotEmpty) {
+      if (result == true && urlController.text.trim().isNotEmpty) {
         setState(() {
           _downloadLinks.add(MovieDownloadLink(
-            serverName: serverController.text.trim(),
+            serverName: selectedServer ?? 'Server 1',
             url: urlController.text.trim(),
-            watchName: watchNameController.text.trim().isEmpty ? null : watchNameController.text.trim(),
-            watchUrl: watchUrlController.text.trim().isEmpty ? null : watchUrlController.text.trim(),
             quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-            resolution: resController.text.trim().isEmpty ? null : resController.text.trim(),
+            size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+          ));
+        });
+      }
+    });
+  }
+
+  void _showAddWatchLinkModal() {
+    String? selectedServer = _serverOptions.first;
+    final urlController = TextEditingController();
+    final qualityController = TextEditingController();
+    final sizeController = TextEditingController();
+
+    showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Add Watch Link'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Select Server
+                DropdownButtonFormField<String>(
+                  value: selectedServer,
+                  decoration: const InputDecoration(labelText: 'Select Server'),
+                  items: _serverOptions.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                  onChanged: (v) => setDialogState(() => selectedServer = v),
+                ),
+                const SizedBox(height: 8),
+                TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. 4K, 1080p, 720p')),
+                const SizedBox(height: 8),
+                TextField(controller: sizeController, decoration: const InputDecoration(labelText: 'Size', hintText: 'e.g. 4.5 GB')),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: urlController,
+                  decoration: const InputDecoration(labelText: 'Watch URL *', hintText: 'Player link for watching'),
+                  keyboardType: TextInputType.url,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
+          ],
+        ),
+      ),
+    ).then((result) {
+      if (result == true && urlController.text.trim().isNotEmpty) {
+        setState(() {
+          _watchLinks.add(MovieWatchLink(
+            serverName: selectedServer ?? 'Server 1',
+            url: urlController.text.trim(),
+            quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
             size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
           ));
         });

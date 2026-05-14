@@ -2,7 +2,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/models/movie_detail.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
@@ -10,12 +9,11 @@ import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/core/services/bookmark_service.dart';
 import 'package:cm_movies/app/core/services/watchlist_service.dart';
 import 'package:cm_movies/app/core/services/recent_service.dart';
-import 'package:cm_movies/app/core/services/download_manager_service.dart';
 import 'package:cm_movies/app/ui/screens/category_page.dart';
 import 'package:cm_movies/app/ui/components/age_rating_gate.dart';
-import 'package:cm_movies/app/ui/screens/download_page.dart';
-import 'package:cm_movies/app/ui/screens/video_player_screen.dart';
 import 'package:cm_movies/app/ui/screens/actor_movies_screen.dart';
+import 'package:cm_movies/app/ui/screens/movie_watch_screen.dart';
+import 'package:cm_movies/app/ui/screens/movie_download_screen.dart';
 
 class MovieDetailScreen extends StatefulWidget {
   final String slug;
@@ -26,13 +24,11 @@ class MovieDetailScreen extends StatefulWidget {
   State<MovieDetailScreen> createState() => _MovieDetailScreenState();
 }
 
-class _MovieDetailScreenState extends State<MovieDetailScreen>
-    with SingleTickerProviderStateMixin {
+class _MovieDetailScreenState extends State<MovieDetailScreen> {
   final FirestoreContentService _contentService = FirestoreContentService();
   final BookmarkService _bookmarkService = BookmarkService();
   final WatchlistService _watchlistService = WatchlistService();
   final RecentService _recentService = RecentService();
-  final DownloadManagerService _downloadManager = DownloadManagerService.instance;
 
   MovieDetail? _movieDetail;
   bool _isLoading = true;
@@ -42,28 +38,13 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
   bool _ageVerified = false;
   bool _overviewExpanded = false;
 
-  late TabController _tabController;
-  int _currentTabIndex = 0;
   List<Movie> _relatedMovies = [];
   bool _isLoadingRelated = true;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
-    _tabController.addListener(() {
-      if (!_tabController.indexIsChanging) {
-        setState(() => _currentTabIndex = _tabController.index);
-      }
-    });
-    _downloadManager.init(); // Ensure download state is loaded (singleton: only runs once)
     _loadMovieDetail();
-  }
-
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
   }
 
   Future<void> _loadMovieDetail() async {
@@ -74,7 +55,6 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
     try {
       final detail = await _contentService.getMovieBySlug(widget.slug);
       if (detail != null && mounted) {
-        // Age gate check for adult content
         if (detail.isAdult != null && detail.isAdult != 0) {
           final verified = await AgeRatingGate.checkAndShowGate(
             context,
@@ -131,27 +111,27 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
       if (detail.categories.isNotEmpty) {
         final result = await _contentService.getMoviesByGenre(
           detail.categories.first,
-          limit: 9,
+          limit: 11,
         );
         related = (result['movies'] as List<Movie>)
             .where((m) => m.id != detail.id)
             .toList();
       }
-      if (related.length < 6 && detail.tags.isNotEmpty) {
+      if (related.length < 10 && detail.tags.isNotEmpty) {
         final tagResult = await _contentService.getMoviesByTagSimple(
           detail.tags.first,
-          limit: 9,
+          limit: 11,
         );
         for (final m in tagResult) {
           if (m.id != detail.id && !related.any((r) => r.id == m.id)) {
             related.add(m);
           }
-          if (related.length >= 9) break;
+          if (related.length >= 10) break;
         }
       }
       if (related.isEmpty) {
         final result = await _contentService.getTrendingMovies();
-        related = result.where((m) => m.id != detail.id).take(9).toList();
+        related = result.where((m) => m.id != detail.id).take(10).toList();
       }
       if (mounted) {
         setState(() {
@@ -226,114 +206,6 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
     }
   }
 
-  Future<void> _startInAppDownload(MovieDownloadLink link) async {
-    if (_movieDetail == null) return;
-
-    // Validate URL before starting download
-    if (link.url.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Download link is not available'),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-      }
-      return;
-    }
-
-    // Check storage permission first — require it before allowing download
-    if (Platform.isAndroid) {
-      final downloadManager = DownloadManagerService.instance;
-      final hasPermission = await downloadManager.checkStoragePermission();
-      if (!hasPermission) {
-        if (mounted) {
-          // Show permission dialog
-          final granted = await _showDownloadPermissionDialog();
-          if (!granted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Storage permission is required to download files'),
-                backgroundColor: Colors.redAccent,
-                duration: Duration(seconds: 3),
-              ),
-            );
-            return;
-          }
-        }
-      }
-    }
-
-    // Check if download is enabled
-    final appConfig = Provider.of<AppConfig>(context, listen: false);
-    if (!appConfig.downloadEnabled) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(appConfig.translate('download_disabled_msg')),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
-      return;
-    }
-
-    final result = await _downloadManager.addTaskWithResult(
-      movieId: _movieDetail!.id,
-      movieTitle: _movieDetail!.title,
-      moviePoster: _movieDetail!.fullPosterUrl.isNotEmpty ? _movieDetail!.fullPosterUrl : _movieDetail!.poster,
-      url: link.url,
-      quality: link.quality ?? link.resolution ?? 'Standard',
-      size: link.size,
-      serverName: link.serverName,
-    );
-    if (mounted) {
-      String message;
-      Color bgColor;
-      switch (result) {
-        case AddTaskResult.success:
-          message = '${appConfig.translate('downloading')} — ${link.quality ?? link.resolution ?? 'Standard'}';
-          bgColor = const Color(0xFF4CAF50);
-          break;
-        case AddTaskResult.blockedDomain:
-          message = 'Download blocked: domain not allowed';
-          bgColor = Colors.redAccent;
-          break;
-        case AddTaskResult.emptyUrl:
-          message = 'Download URL is empty';
-          bgColor = Colors.redAccent;
-          break;
-        case AddTaskResult.alreadyExists:
-          message = 'Already downloading ${link.quality ?? link.resolution ?? 'Standard'}';
-          bgColor = Colors.orange;
-          break;
-        case AddTaskResult.permissionDenied:
-          message = 'Storage permission required. Grant permission in Download Settings.';
-          bgColor = Colors.redAccent;
-          break;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: bgColor,
-          duration: const Duration(seconds: 3),
-          action: result == AddTaskResult.success
-              ? SnackBarAction(
-                  label: 'View',
-                  textColor: Colors.white,
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const DownloadPage()),
-                    );
-                  },
-                )
-              : null,
-        ),
-      );
-    }
-  }
-
   String _formatViews(int views) {
     if (views >= 1000000) {
       return '${(views / 1000000).toStringAsFixed(1)}M';
@@ -343,57 +215,15 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
     return views.toString();
   }
 
-  String _countryToDisplay(String? code) {
-    if (code == null || code.isEmpty) return '';
-    const countryLangMap = {
-      'US': 'English', 'GB': 'English', 'AU': 'English', 'CA': 'English',
-      'JP': 'Japanese', 'KR': 'Korean', 'IN': 'Hindi', 'FR': 'French',
-      'DE': 'German', 'ES': 'Spanish', 'CN': 'Chinese', 'TH': 'Thai',
-      'IT': 'Italian', 'PT': 'Portuguese', 'BR': 'Portuguese', 'RU': 'Russian',
-      'MX': 'Spanish', 'AR': 'Spanish', 'TR': 'Turkish', 'PH': 'Filipino',
-      'ID': 'Indonesian', 'MY': 'Malay', 'VN': 'Vietnamese', 'SA': 'Arabic',
-      'AE': 'Arabic', 'EG': 'Arabic', 'IL': 'Hebrew', 'NL': 'Dutch',
-      'SE': 'Swedish', 'NO': 'Norwegian', 'DK': 'Danish', 'PL': 'Polish',
-      'CZ': 'Czech', 'HU': 'Hungarian', 'RO': 'Romanian', 'GR': 'Greek',
-      'UA': 'Ukrainian', 'TW': 'Chinese', 'HK': 'Chinese', 'SG': 'English',
-    };
-    final lang = countryLangMap[code.toUpperCase()];
-    // Convert country code to flag emoji using regional indicator symbols
-    final flagEmoji = code.toUpperCase().split('').map((c) {
-      final codeUnit = 0x1F1E6 + c.codeUnitAt(0) - 'A'.codeUnitAt(0);
-      return String.fromCharCode(codeUnit);
-    }).join('');
-    if (lang != null) {
-      return '$flagEmoji $lang';
+  String _formatDuration(String? duration) {
+    if (duration == null || duration.isEmpty) return '';
+    final mins = int.tryParse(duration.replaceAll(RegExp(r'[^\d]'), ''));
+    if (mins != null && mins > 0) {
+      final h = mins ~/ 60;
+      final m = mins % 60;
+      return h > 0 ? '${h}h ${m}m' : '${m}m';
     }
-    return '$flagEmoji $code';
-  }
-
-  void _openVideoPlayer(String url, String title) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => VideoPlayerScreen(
-          videoUrl: url,
-          title: title,
-          videoId: _movieDetail?.id, // Pass movie ID for resume playback
-        ),
-      ),
-    );
-  }
-
-  Future<void> _launchUrl(String url) async {
-    if (url.isEmpty) return;
-    final uri = Uri.parse(url);
-    try {
-      final launched =
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
-      if (!launched) {
-        await launchUrl(uri, mode: LaunchMode.platformDefault);
-      }
-    } catch (e) {
-      debugPrint('Could not launch URL: $url - $e');
-    }
+    return duration;
   }
 
   @override
@@ -434,22 +264,20 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
     final bodyTextColor = isDark ? Colors.white70 : Colors.black87;
     final metaTextColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
     final bgColor = isDark ? const Color(0xFF121212) : const Color(0xFFF5F5F5);
-    final cardBgColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
 
     return Scaffold(
       backgroundColor: bgColor,
-      body: NestedScrollView(
-        headerSliverBuilder: (context, innerBoxIsScrolled) => [
-          // Header: Poster + Title info (no backdrop)
+      body: CustomScrollView(
+        slivers: [
+          // ===== App Bar with poster and action icons =====
           SliverAppBar(
-            expandedHeight: MediaQuery.of(context).padding.top + kToolbarHeight + 172,
             pinned: true,
             floating: false,
-            leadingWidth: 56,
+            leadingWidth: 46,
             backgroundColor: isDark ? const Color(0xFF121212) : bgColor,
             centerTitle: true,
             title: AnimatedOpacity(
-              opacity: innerBoxIsScrolled ? 1.0 : 0.0,
+              opacity: 1.0,
               duration: const Duration(milliseconds: 200),
               child: Text(
                 detail.title,
@@ -462,91 +290,55 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            leading: Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
-                  shape: BoxShape.circle,
-                ),
-                child: IconButton(
-                  icon: Icon(Icons.arrow_back,
-                      color: isDark ? Colors.white : Colors.black87,
-                      size: 20),
-                  onPressed: () => Navigator.pop(context),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                ),
-              ),
+            leading: IconButton(
+              icon: Icon(Icons.arrow_back,
+                  color: isDark ? Colors.white : Colors.black87, size: 24),
+              onPressed: () => Navigator.pop(context),
+            ),
             actions: [
               // Watchlist button
-              Padding(
-                padding: const EdgeInsets.only(right: 4),
-                child: Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
-                    shape: BoxShape.circle,
-                  ),
-                  child: IconButton(
-                    icon: Icon(
-                      _isInWatchlist
-                          ? Icons.watch_later
-                          : Icons.watch_later_outlined,
-                      color: _isInWatchlist
-                          ? const Color(0xFF4CAF50)
-                          : (isDark ? Colors.white : Colors.black54),
-                      size: 20,
-                    ),
-                    onPressed: _toggleWatchlist,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                  ),
+              IconButton(
+                icon: Icon(
+                  _isInWatchlist ? Icons.watch_later : Icons.watch_later_outlined,
+                  color: _isInWatchlist
+                      ? const Color(0xFF4CAF50)
+                      : (isDark ? Colors.white : Colors.black54),
+                  size: 24,
                 ),
+                onPressed: _toggleWatchlist,
               ),
               // Bookmark button
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
-                    shape: BoxShape.circle,
-                  ),
-                  child: IconButton(
-                    icon: Icon(
-                      _isBookmarked
-                          ? Icons.bookmark
-                          : Icons.bookmark_outline,
-                      color: _isBookmarked
-                          ? accentColor
-                          : (isDark ? Colors.white : Colors.black54),
-                      size: 20,
-                    ),
-                    onPressed: _toggleBookmark,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                  ),
+              IconButton(
+                icon: Icon(
+                  _isBookmarked ? Icons.bookmark : Icons.bookmark_outline,
+                  color: _isBookmarked
+                      ? accentColor
+                      : (isDark ? Colors.white : Colors.black54),
+                  size: 24,
                 ),
+                onPressed: _toggleBookmark,
               ),
+              const SizedBox(width: 4),
             ],
-            flexibleSpace: FlexibleSpaceBar(
-              background: Container(
-                color: bgColor,
-                child: Padding(
-                  padding: EdgeInsets.only(
-                      left: 16, right: 16, top: MediaQuery.of(context).padding.top + kToolbarHeight + 8, bottom: 8),
+          ),
+
+          // ===== Main Content =====
+          SliverToBoxAdapter(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ===== 1. INFO SECTION (Hero Row) =====
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Poster thumbnail
+                      // Small Poster with rounded corners
                       Container(
                         width: 110,
                         height: 155,
                         decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(12),
                           boxShadow: [
                             BoxShadow(
                               color: Colors.black.withOpacity(0.3),
@@ -556,7 +348,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                           ],
                         ),
                         child: ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(12),
                           child: detail.fullPosterUrl.isNotEmpty
                               ? CachedNetworkImage(
                                   imageUrl: detail.fullPosterUrl,
@@ -589,15 +381,16 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                       // Title + Meta
                       Expanded(
                         child: Padding(
-                          padding: const EdgeInsets.only(top: 8),
+                          padding: const EdgeInsets.only(top: 4),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              // Title
                               Text(
                                 detail.title,
                                 style: TextStyle(
                                   color: isDark ? Colors.white : Colors.black87,
-                                  fontSize: 18,
+                                  fontSize: 20,
                                   fontWeight: FontWeight.bold,
                                   height: 1.2,
                                 ),
@@ -605,50 +398,65 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                                 overflow: TextOverflow.ellipsis,
                               ),
                               const SizedBox(height: 8),
+                              // MetaData: Year ⭐ Rating Duration 🇺🇸 English
                               Row(
                                 children: [
                                   if (detail.year != null &&
                                       detail.year!.isNotEmpty) ...[
-                                    Icon(Icons.calendar_today,
-                                        size: 13, color: metaTextColor),
-                                    const SizedBox(width: 4),
                                     Text(detail.year!,
                                         style: TextStyle(
                                             color: metaTextColor,
-                                            fontSize: 12)),
-                                    const SizedBox(width: 10),
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w500)),
+                                    const SizedBox(width: 8),
+                                    Text('·',
+                                        style: TextStyle(
+                                            color: metaTextColor,
+                                            fontSize: 13)),
+                                    const SizedBox(width: 8),
                                   ],
                                   if (detail.rating != null &&
                                       detail.rating!.isNotEmpty) ...[
                                     Icon(Icons.star,
-                                        size: 14, color: const Color(0xFFE50914)),
+                                        size: 16, color: accentColor),
                                     const SizedBox(width: 3),
                                     Text(detail.rating!,
-                                        style: const TextStyle(
-                                            color: Color(0xFFE50914),
-                                            fontSize: 12,
+                                        style: TextStyle(
+                                            color: accentColor,
+                                            fontSize: 13,
                                             fontWeight: FontWeight.w600)),
-                                    const SizedBox(width: 10),
+                                    const SizedBox(width: 8),
+                                    Text('·',
+                                        style: TextStyle(
+                                            color: metaTextColor,
+                                            fontSize: 13)),
+                                    const SizedBox(width: 8),
                                   ],
                                   if (detail.duration != null &&
                                       detail.duration!.isNotEmpty) ...[
-                                    Icon(Icons.access_time,
-                                        size: 13, color: metaTextColor),
-                                    const SizedBox(width: 4),
-                                    Text('${detail.duration!.replaceAll(' min', '')} min',
+                                    Text(_formatDuration(detail.duration),
                                         style: TextStyle(
                                             color: metaTextColor,
-                                            fontSize: 12)),
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w500)),
+                                    const SizedBox(width: 8),
+                                    Text('·',
+                                        style: TextStyle(
+                                            color: metaTextColor,
+                                            fontSize: 13)),
+                                    const SizedBox(width: 8),
                                   ],
+                                  const Text('🇺🇸 English',
+                                      style: TextStyle(fontSize: 12)),
                                 ],
                               ),
-                              const SizedBox(height: 8),
-                              // Category tags - tappable pill chips
+                              const SizedBox(height: 10),
+                              // Category Tags (up to 6)
                               if (detail.categories.isNotEmpty)
                                 Wrap(
                                   spacing: 6,
                                   runSpacing: 4,
-                                  children: detail.categories.take(3).map((cat) {
+                                  children: detail.categories.take(6).map((cat) {
                                     return GestureDetector(
                                       onTap: () {
                                         Navigator.push(
@@ -689,51 +497,6 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                                     );
                                   }).toList(),
                                 ),
-                              // Views & Country row
-                              if (detail.views != null || (detail.country != null && detail.country!.isNotEmpty))
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 6),
-                                  child: Row(
-                                    children: [
-                                      if (detail.views != null) ...[
-                                        Icon(Icons.visibility,
-                                            size: 13, color: metaTextColor),
-                                        const SizedBox(width: 3),
-                                        Text(
-                                          _formatViews(detail.views!),
-                                          style: TextStyle(
-                                              color: metaTextColor, fontSize: 11),
-                                        ),
-                                        if (detail.country != null && detail.country!.isNotEmpty)
-                                          const SizedBox(width: 12),
-                                      ],
-                                      if (detail.country != null && detail.country!.isNotEmpty) ...[
-                                        Text(
-                                          _countryToDisplay(detail.country),
-                                          style: TextStyle(
-                                              color: metaTextColor, fontSize: 11),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                ),
-                              // File Size row
-                              if (detail.fileSize != null && detail.fileSize!.isNotEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 4),
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.sd_storage,
-                                          size: 13, color: metaTextColor),
-                                      const SizedBox(width: 3),
-                                      Text(
-                                        detail.fileSize!,
-                                        style: TextStyle(
-                                            color: metaTextColor, fontSize: 11),
-                                      ),
-                                    ],
-                                  ),
-                                ),
                             ],
                           ),
                         ),
@@ -741,310 +504,372 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                     ],
                   ),
                 ),
-              ),
-            ),
-          ),
-          // Tab bar
-          SliverPersistentHeader(
-            pinned: true,
-            delegate: _TabBarDelegate(
-              tabController: _tabController,
-              accentColor: accentColor,
-              isDark: isDark,
-            ),
-          ),
-        ],
-        body: Container(
-            color: bgColor,
-            child: _currentTabIndex == 0
-                ? _buildDetailTab(
-                    detail, isDark, bodyTextColor, metaTextColor, accentColor)
-                : _currentTabIndex == 1
-                    ? _buildDownloadTab(
-                        detail, isDark, accentColor, cardBgColor, metaTextColor, bodyTextColor)
-                    : _buildExploreTab(
-                        isDark, accentColor, metaTextColor, cardBgColor),
-          ),
-      ),
-    );
-  }
 
-  // ===== DETAIL TAB =====
-  Widget _buildDetailTab(
-    MovieDetail detail,
-    bool isDark,
-    Color bodyTextColor,
-    Color metaTextColor,
-    Color accentColor,
-  ) {
-    return ListView(
-      physics: const NeverScrollableScrollPhysics(),
-      shrinkWrap: true,
-      padding: const EdgeInsets.only(bottom: 16),
-      children: [
-        // Overview Section
-        if (detail.overview != null && detail.overview!.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Overview',
-                    style: TextStyle(
-                        color: bodyTextColor,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600)),
-                const SizedBox(height: 6),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final textSpan = TextSpan(
-                      text: detail.overview!,
-                      style:
-                          TextStyle(fontSize: 13, height: 1.5, color: bodyTextColor),
-                    );
-                    final textPainter = TextPainter(
-                      text: textSpan,
-                      maxLines: 10,
-                      textDirection: TextDirection.ltr,
-                    );
-                    textPainter.layout(maxWidth: constraints.maxWidth);
-                    final isOverflow = textPainter.didExceedMaxLines;
+                const SizedBox(height: 20),
 
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          detail.overview!,
-                          maxLines: _overviewExpanded ? null : 10,
-                          overflow: _overviewExpanded
-                              ? TextOverflow.visible
-                              : TextOverflow.ellipsis,
+                // ===== 2. DETAILS SECTION =====
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Details',
                           style: TextStyle(
-                              fontSize: 13, height: 1.5, color: bodyTextColor),
-                        ),
-                        if (isOverflow)
-                          GestureDetector(
-                            onTap: () => setState(
-                                () => _overviewExpanded = !_overviewExpanded),
-                            child: Padding(
-                              padding: const EdgeInsets.only(top: 4),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    _overviewExpanded
-                                        ? 'View Less'
-                                        : 'View More',
-                                    style: TextStyle(
-                                      color: accentColor,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                  Icon(
-                                    _overviewExpanded
-                                        ? Icons.keyboard_arrow_up
-                                        : Icons.keyboard_arrow_down,
-                                    color: accentColor,
-                                    size: 16,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                      ],
-                    );
-                  },
-                ),
-              ],
-            ),
-          ),
-
-        const SizedBox(height: 6),
-
-        // Details Section - Clean text rows, no background boxes
-        _buildDetailsRows(detail, isDark, bodyTextColor, metaTextColor),
-
-        const SizedBox(height: 6),
-
-        // Cast Section
-        if (detail.casts.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Casts',
-                    style: TextStyle(
-                        color: bodyTextColor,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600)),
-                const SizedBox(height: 8),
-                SizedBox(
-                  height: 110,
-                  child: ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    clipBehavior: Clip.none,
-                    itemCount: detail.casts.length,
-                    itemBuilder: (context, index) {
-                      final cast = detail.casts[index];
-                      return GestureDetector(
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => ActorMoviesScreen(actorName: cast.name),
-                            ),
-                          );
-                        },
-                        child: Padding(
-                        padding: const EdgeInsets.only(right: 14),
-                        child: Column(
-                          children: [
-                            CircleAvatar(
-                              radius: 34,
-                              backgroundColor: isDark
-                                  ? const Color(0xFF1E1E1E)
-                                  : Colors.grey.shade300,
-                              child: ClipOval(
-                                child: cast.fullProfileUrl.isNotEmpty
-                                    ? CachedNetworkImage(
-                                        imageUrl: cast.fullProfileUrl,
-                                        fit: BoxFit.cover,
-                                        width: 68,
-                                        height: 68,
-                                        placeholder: (context, url) =>
-                                            const Center(
-                                                child:
-                                                    CircularProgressIndicator(
-                                                        strokeWidth: 2)),
-                                        errorWidget: (context, url, error) =>
-                                            Center(
-                                          child: Text(
-                                            cast.name.isNotEmpty
-                                                ? cast.name[0].toUpperCase()
-                                                : '?',
-                                            style: TextStyle(
-                                                color: isDark
-                                                    ? Colors.white54
-                                                    : Colors.black54,
-                                                fontSize: 24,
-                                                fontWeight: FontWeight.bold),
-                                          ),
-                                        ),
-                                      )
-                                    : Center(
-                                        child: Text(
-                                          cast.name.isNotEmpty
-                                              ? cast.name[0].toUpperCase()
-                                              : '?',
-                                          style: TextStyle(
-                                              color: isDark
-                                                  ? Colors.white54
-                                                  : Colors.black54,
-                                              fontSize: 24,
-                                              fontWeight: FontWeight.bold),
-                                        ),
-                                      ),
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            SizedBox(
-                              width: 76,
-                              child: Text(
-                                cast.name,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w500,
-                                    color: bodyTextColor),
-                              ),
-                            ),
-                          ],
-                        ),
-                        ),
-                      );
-                    },
+                              color: bodyTextColor,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 8),
+                      if (detail.fileSize != null && detail.fileSize!.isNotEmpty)
+                        _detailRow('File Size', detail.fileSize!, bodyTextColor, metaTextColor),
+                      if (detail.resolution != null && detail.resolution!.isNotEmpty)
+                        _detailRow('Quality', detail.resolution!, bodyTextColor, metaTextColor),
+                      if (detail.format != null && detail.format!.isNotEmpty)
+                        _detailRow('Format', detail.format!, bodyTextColor, metaTextColor),
+                      if (detail.categories.isNotEmpty)
+                        _detailRow('Genre', detail.categories.join('  '), bodyTextColor, metaTextColor),
+                      if (detail.duration != null && detail.duration!.isNotEmpty)
+                        _detailRow('Duration', _formatDuration(detail.duration), bodyTextColor, metaTextColor),
+                      if (detail.directors.isNotEmpty)
+                        _detailRow('Director', detail.directors.join(', '), bodyTextColor, metaTextColor),
+                    ],
                   ),
                 ),
+
+                const SizedBox(height: 20),
+
+                // ===== 3. ACTION BUTTONS =====
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: [
+                      // Watch Now Button
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: detail.watchLinks.isNotEmpty
+                              ? () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => MovieWatchScreen(movieDetail: detail),
+                                    ),
+                                  );
+                                }
+                              : null,
+                          icon: const Icon(Icons.play_arrow, size: 20),
+                          label: const Text('Watch Now',
+                              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: accentColor,
+                            foregroundColor: Colors.white,
+                            disabledBackgroundColor: isDark
+                                ? Colors.white12
+                                : Colors.grey.shade300,
+                            disabledForegroundColor: isDark
+                                ? Colors.white38
+                                : Colors.black38,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      // Download Button
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: detail.downloadLinks.isNotEmpty
+                              ? () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => MovieDownloadScreen(movieDetail: detail),
+                                    ),
+                                  );
+                                }
+                              : null,
+                          icon: const Icon(Icons.download, size: 20),
+                          label: const Text('Download',
+                              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: accentColor,
+                            foregroundColor: Colors.white,
+                            disabledBackgroundColor: isDark
+                                ? Colors.white12
+                                : Colors.grey.shade300,
+                            disabledForegroundColor: isDark
+                                ? Colors.white38
+                                : Colors.black38,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 20),
+
+                // ===== 4. CONTENT SECTION (Synopsis/Overview) =====
+                if (detail.overview != null && detail.overview!.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Overview',
+                            style: TextStyle(
+                                color: accentColor,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 8),
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            final textSpan = TextSpan(
+                              text: detail.overview!,
+                              style: TextStyle(fontSize: 13, height: 1.6, color: bodyTextColor),
+                            );
+                            final textPainter = TextPainter(
+                              text: textSpan,
+                              maxLines: 4,
+                              textDirection: TextDirection.ltr,
+                            );
+                            textPainter.layout(maxWidth: constraints.maxWidth);
+                            final isOverflow = textPainter.didExceedMaxLines;
+
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  detail.overview!,
+                                  maxLines: _overviewExpanded ? null : 4,
+                                  overflow: _overviewExpanded
+                                      ? TextOverflow.visible
+                                      : TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      fontSize: 13, height: 1.6, color: bodyTextColor),
+                                ),
+                                if (isOverflow)
+                                  GestureDetector(
+                                    onTap: () => setState(
+                                        () => _overviewExpanded = !_overviewExpanded),
+                                    child: Padding(
+                                      padding: const EdgeInsets.only(top: 4),
+                                      child: Text(
+                                        _overviewExpanded ? 'View Less' : 'View More',
+                                        style: TextStyle(
+                                          color: accentColor,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+
+                const SizedBox(height: 20),
+
+                // ===== 5. CAST SECTION =====
+                if (detail.casts.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Casts',
+                            style: TextStyle(
+                                color: bodyTextColor,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          height: 110,
+                          child: ListView.builder(
+                            scrollDirection: Axis.horizontal,
+                            clipBehavior: Clip.none,
+                            itemCount: detail.casts.length,
+                            itemBuilder: (context, index) {
+                              final cast = detail.casts[index];
+                              return GestureDetector(
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => ActorMoviesScreen(actorName: cast.name),
+                                    ),
+                                  );
+                                },
+                                child: Padding(
+                                  padding: const EdgeInsets.only(right: 14),
+                                  child: Column(
+                                    children: [
+                                      CircleAvatar(
+                                        radius: 34,
+                                        backgroundColor: isDark
+                                            ? const Color(0xFF1E1E1E)
+                                            : Colors.grey.shade300,
+                                        child: ClipOval(
+                                          child: cast.fullProfileUrl.isNotEmpty
+                                              ? CachedNetworkImage(
+                                                  imageUrl: cast.fullProfileUrl,
+                                                  fit: BoxFit.cover,
+                                                  width: 68,
+                                                  height: 68,
+                                                  placeholder: (context, url) =>
+                                                      const Center(
+                                                          child:
+                                                              CircularProgressIndicator(
+                                                                  strokeWidth: 2)),
+                                                  errorWidget: (context, url, error) =>
+                                                      Center(
+                                                    child: Text(
+                                                      cast.name.isNotEmpty
+                                                          ? cast.name[0].toUpperCase()
+                                                          : '?',
+                                                      style: TextStyle(
+                                                          color: isDark
+                                                              ? Colors.white54
+                                                              : Colors.black54,
+                                                          fontSize: 24,
+                                                          fontWeight: FontWeight.bold),
+                                                    ),
+                                                  ),
+                                                )
+                                              : Center(
+                                                  child: Text(
+                                                    cast.name.isNotEmpty
+                                                        ? cast.name[0].toUpperCase()
+                                                        : '?',
+                                                    style: TextStyle(
+                                                        color: isDark
+                                                            ? Colors.white54
+                                                            : Colors.black54,
+                                                        fontSize: 24,
+                                                        fontWeight: FontWeight.bold),
+                                                  ),
+                                                ),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      SizedBox(
+                                        width: 76,
+                                        child: Text(
+                                          cast.name,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w500,
+                                              color: bodyTextColor),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                const SizedBox(height: 20),
+
+                // ===== 6. YOU MAY ALSO LIKE =====
+                if (_relatedMovies.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('You May Also Like',
+                            style: TextStyle(
+                                color: bodyTextColor,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          height: 200,
+                          child: ListView.builder(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: _relatedMovies.length,
+                            itemBuilder: (context, index) {
+                              final movie = _relatedMovies[index];
+                              return GestureDetector(
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => MovieDetailScreen(slug: movie.slug),
+                                    ),
+                                  );
+                                },
+                                child: Container(
+                                  width: 110,
+                                  margin: const EdgeInsets.only(right: 12),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Container(
+                                        width: 110,
+                                        height: 155,
+                                        decoration: BoxDecoration(
+                                          borderRadius: BorderRadius.circular(10),
+                                          color: isDark ? const Color(0xFF1E1E1E) : Colors.grey.shade200,
+                                        ),
+                                        child: ClipRRect(
+                                          borderRadius: BorderRadius.circular(10),
+                                          child: movie.fullPosterUrl.isNotEmpty
+                                              ? CachedNetworkImage(
+                                                  imageUrl: movie.fullPosterUrl,
+                                                  fit: BoxFit.cover,
+                                                  errorWidget: (_, __, ___) => const Icon(Icons.movie, size: 30),
+                                                )
+                                              : const Icon(Icons.movie, size: 30),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        movie.title,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w500,
+                                          color: bodyTextColor,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                const SizedBox(height: 30),
               ],
             ),
           ),
-      ],
-    );
-  }
-
-  // ===== DETAILS ROWS (Clean text rows, no background boxes) =====
-  Widget _buildDetailsRows(
-    MovieDetail detail,
-    bool isDark,
-    Color bodyTextColor,
-    Color metaTextColor,
-  ) {
-    // Build detail rows for Movies: Quality, Format, Genre, Duration, Director
-    final isMovie = detail.type != 'series' && detail.type != 'tv';
-    final rows = <Widget>[];
-
-    if (isMovie) {
-      // Movie Details
-      if (detail.resolution != null && detail.resolution!.isNotEmpty) {
-        rows.add(_detailRow('Quality', detail.resolution!, bodyTextColor, metaTextColor));
-      }
-      if (detail.format != null && detail.format!.isNotEmpty) {
-        rows.add(_detailRow('Format', detail.format!, bodyTextColor, metaTextColor));
-      }
-      if (detail.categories.isNotEmpty) {
-        rows.add(_detailRow('Genre', detail.categories.join(' '), bodyTextColor, metaTextColor));
-      }
-      if (detail.duration != null && detail.duration!.isNotEmpty) {
-        // Format duration like "1h 44m"
-        final mins = int.tryParse(detail.duration!.replaceAll(RegExp(r'[^\d]'), ''));
-        if (mins != null && mins > 0) {
-          final h = mins ~/ 60;
-          final m = mins % 60;
-          final durStr = h > 0 ? '${h}h ${m}m' : '${m}m';
-          rows.add(_detailRow('Duration', durStr, bodyTextColor, metaTextColor));
-        } else {
-          rows.add(_detailRow('Duration', detail.duration!, bodyTextColor, metaTextColor));
-        }
-      }
-      if (detail.directors.isNotEmpty) {
-        rows.add(_detailRow('Director', detail.directors.join(', '), bodyTextColor, metaTextColor));
-      }
-    } else {
-      // Series Details: Seasons, Episodes, Genre only (no Duration, no Director)
-      if (detail.seasons.isNotEmpty) {
-        rows.add(_detailRow('Seasons', '${detail.seasons.length}', bodyTextColor, metaTextColor));
-        final totalEpisodes = detail.seasons.fold<int>(0, (sum, s) => sum + s.episodes.length);
-        rows.add(_detailRow('Episodes', '$totalEpisodes', bodyTextColor, metaTextColor));
-      }
-      if (detail.categories.isNotEmpty) {
-        rows.add(_detailRow('Genre', detail.categories.join(' '), bodyTextColor, metaTextColor));
-      }
-    }
-
-    if (rows.isEmpty) return const SizedBox.shrink();
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Details',
-              style: TextStyle(
-                  color: bodyTextColor,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600)),
-          const SizedBox(height: 8),
-          ...rows,
         ],
       ),
     );
   }
 
-  /// Single detail row: label + value, no background, no borders
   Widget _detailRow(String label, String value, Color bodyTextColor, Color metaTextColor) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -1067,605 +892,6 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
                     fontSize: 13,
                     height: 1.4)),
           ),
-        ],
-      ),
-    );
-  }
-
-  // ===== DOWNLOAD TAB =====
-  Widget _buildDownloadTab(
-    MovieDetail detail,
-    bool isDark,
-    Color accentColor,
-    Color cardBgColor,
-    Color metaTextColor,
-    Color bodyTextColor,
-  ) {
-    if (detail.downloadLinks.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.cloud_off,
-                size: 48, color: isDark ? Colors.white24 : Colors.black12),
-            const SizedBox(height: 12),
-            Text('No download links available',
-                style: TextStyle(
-                    color: isDark ? Colors.white54 : Colors.black45,
-                    fontSize: 14)),
-          ],
-        ),
-      );
-    }
-
-    // Group download links by server
-    final Map<String, List<MovieDownloadLink>> serverGroups = {};
-    for (final link in detail.downloadLinks) {
-      final serverName = link.serverName.isNotEmpty ? link.serverName : 'Server';
-      serverGroups.putIfAbsent(serverName, () => []).add(link);
-    }
-
-    return DividerTheme(
-      data: const DividerThemeData(color: Colors.transparent),
-      child: ListView(
-        physics: const NeverScrollableScrollPhysics(),
-        shrinkWrap: true,
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-        children: [
-          Text('Download Options',
-              style: TextStyle(
-                  color: isDark ? Colors.white : Colors.black87,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold)),
-          const SizedBox(height: 12),
-          ...serverGroups.entries.map((entry) {
-          final serverName = entry.key;
-          final links = entry.value;
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Container(
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: ExpansionTile(
-                tilePadding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-                childrenPadding:
-                    const EdgeInsets.fromLTRB(14, 0, 14, 12),
-                collapsedIconColor: metaTextColor,
-                iconColor: accentColor,
-                collapsedBackgroundColor: Colors.transparent,
-                backgroundColor: Colors.transparent,
-                shape: const RoundedRectangleBorder(side: BorderSide.none),
-                collapsedShape: const RoundedRectangleBorder(side: BorderSide.none),
-                leading: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: accentColor.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(Icons.dns_outlined,
-                      color: accentColor, size: 22),
-                ),
-                title: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(serverName,
-                        style: TextStyle(
-                            color: isDark ? Colors.white : Colors.black87,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 2),
-                    Text(
-                      links
-                          .map((l) => l.quality ?? l.resolution ?? 'Link')
-                          .join(', '),
-                      style: TextStyle(
-                          color: metaTextColor, fontSize: 11),
-                    ),
-                  ],
-                ),
-                subtitle: Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: isDark ? Colors.white10 : Colors.grey.shade200,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      '${links.length} ${links.length == 1 ? 'quality' : 'qualities'}',
-                      style: TextStyle(
-                          color: isDark ? Colors.blue.shade300 : Colors.blue,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w500),
-                    ),
-                  ),
-                ),
-                children: links.map((link) {
-                  final qualityLabel = link.quality ?? link.resolution ?? 'Standard';
-                  final qualityBadgeColor = _getQualityBadgeColor(qualityLabel);
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: isDark
-                            ? Colors.white.withOpacity(0.05)
-                            : Colors.grey.shade50,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(10),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 8, vertical: 3),
-                                  decoration: BoxDecoration(
-                                    color: qualityBadgeColor,
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    qualityLabel,
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w700),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  _getQualityDescription(qualityLabel),
-                                  style: TextStyle(
-                                      color: isDark
-                                          ? Colors.white
-                                          : Colors.black87,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w500),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'MKV · Myanmar Subtitle (Hardsub)${link.size != null ? ' · ${link.size}' : ''}',
-                              style: TextStyle(
-                                  color: metaTextColor, fontSize: 11),
-                            ),
-                            const SizedBox(height: 8),
-                            // Download buttons row
-                            Row(
-                              children: [
-                                // In-app download
-                                Expanded(
-                                  child: ElevatedButton.icon(
-                                    onPressed: link.url.isNotEmpty
-                                        ? () => _startInAppDownload(link)
-                                        : null,
-                                    icon: const Icon(Icons.downloading, size: 16),
-                                    label: Text('Save $qualityLabel'),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFF4CAF50),
-                                      foregroundColor: Colors.white,
-                                      disabledBackgroundColor:
-                                          isDark ? Colors.grey.shade700 : Colors.grey.shade400,
-                                      disabledForegroundColor:
-                                          isDark ? Colors.grey.shade500 : Colors.grey.shade600,
-                                      padding: const EdgeInsets.symmetric(vertical: 10),
-                                      shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(8)),
-                                      textStyle: const TextStyle(
-                                          fontWeight: FontWeight.w600, fontSize: 12),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                // Watch button — fallback to download URL if watchUrl is empty
-                                Expanded(
-                                  child: OutlinedButton.icon(
-                                    onPressed: (link.watchUrl != null && link.watchUrl!.isNotEmpty) || link.url.isNotEmpty
-                                        ? () => _openVideoPlayer(
-                                            (link.watchUrl != null && link.watchUrl!.isNotEmpty) ? link.watchUrl! : link.url,
-                                            link.watchName ?? qualityLabel,
-                                          )
-                                        : null,
-                                    icon: const Icon(Icons.play_circle_outline, size: 16),
-                                    label: const Text('Watch'),
-                                    style: OutlinedButton.styleFrom(
-                                      foregroundColor: accentColor,
-                                      disabledForegroundColor:
-                                          isDark ? Colors.grey.shade500 : Colors.grey.shade600,
-                                      padding: const EdgeInsets.symmetric(vertical: 10),
-                                      shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(8)),
-                                      side: BorderSide(
-                                          color: (link.watchUrl != null && link.watchUrl!.isNotEmpty) || link.url.isNotEmpty
-                                              ? accentColor
-                                              : (isDark ? Colors.grey.shade700 : Colors.grey.shade400)),
-                                      textStyle: const TextStyle(
-                                          fontWeight: FontWeight.w600, fontSize: 12),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
-          );
-        }),
-      ],
-    ),
-    );
-  }
-
-  Color _getQualityBadgeColor(String quality) {
-    final q = quality.toLowerCase();
-    if (q.contains('4k') || q.contains('uhd')) {
-      return const Color(0xFFE50914); // Red for 4K
-    } else if (q.contains('1080')) {
-      return const Color(0xFFFF6D00); // Orange for 1080p
-    } else if (q.contains('720')) {
-      return const Color(0xFFFFAB00); // Yellow/amber for 720p
-    }
-    return const Color(0xFF4CAF50); // Green for others
-  }
-
-  String _getQualityDescription(String quality) {
-    final q = quality.toLowerCase();
-    if (q.contains('4k') || q.contains('uhd')) return 'Ultra HD';
-    if (q.contains('1080')) return 'Full HD';
-    if (q.contains('720')) return 'HD';
-    if (q.contains('480')) return 'Standard';
-    return 'Standard';
-  }
-
-  // ===== EXPLORE TAB =====
-  Widget _buildExploreTab(
-    bool isDark,
-    Color accentColor,
-    Color metaTextColor,
-    Color cardBgColor,
-  ) {
-    return ListView(
-      physics: const NeverScrollableScrollPhysics(),
-      shrinkWrap: true,
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-      children: [
-        Text('You may also like',
-            style: TextStyle(
-                color: isDark ? Colors.white : Colors.black87,
-                fontSize: 18,
-                fontWeight: FontWeight.bold)),
-        const SizedBox(height: 12),
-        _isLoadingRelated
-            ? const Center(
-                child: Padding(
-                  padding: EdgeInsets.only(top: 40),
-                  child: CircularProgressIndicator(),
-                ),
-              )
-            : _relatedMovies.isEmpty
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 60),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.movie_outlined,
-                              size: 56,
-                              color: isDark ? Colors.white24 : Colors.black12),
-                          const SizedBox(height: 12),
-                          Text('No related movies found',
-                              style: TextStyle(
-                                  color: isDark ? Colors.white54 : Colors.black45,
-                                  fontSize: 14)),
-                        ],
-                      ),
-                    ),
-                  )
-                : GridView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 3,
-                      childAspectRatio: 0.52,
-                      crossAxisSpacing: 10,
-                      mainAxisSpacing: 12,
-                    ),
-                    itemCount: _relatedMovies.length,
-                    itemBuilder: (context, index) {
-                      final movie = _relatedMovies[index];
-                      return GestureDetector(
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => MovieDetailScreen(
-                                  slug: movie.slug),
-                            ),
-                          );
-                        },
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // Poster with badges
-                            Expanded(
-                              child: Stack(
-                                children: [
-                                  Container(
-                                    width: double.infinity,
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(8),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.black.withOpacity(0.3),
-                                          blurRadius: 6,
-                                          offset: const Offset(0, 2),
-                                        ),
-                                      ],
-                                    ),
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(8),
-                                      child: movie.fullPosterUrl.isNotEmpty
-                                          ? CachedNetworkImage(
-                                              imageUrl: movie.fullPosterUrl,
-                                              fit: BoxFit.cover,
-                                              placeholder: (context, url) =>
-                                                  Container(
-                                                color: isDark
-                                                    ? const Color(0xFF1E1E1E)
-                                                    : Colors.grey.shade300,
-                                                child: const Center(
-                                                    child:
-                                                        CircularProgressIndicator(
-                                                            strokeWidth: 2)),
-                                              ),
-                                              errorWidget:
-                                                  (context, url, error) =>
-                                                      Container(
-                                                color: isDark
-                                                    ? const Color(0xFF1E1E1E)
-                                                    : Colors.grey.shade300,
-                                                child: Icon(Icons.movie,
-                                                    size: 30,
-                                                    color: isDark
-                                                        ? Colors.white24
-                                                        : Colors.black12),
-                                              ),
-                                            )
-                                          : Container(
-                                              color: isDark
-                                                  ? const Color(0xFF1E1E1E)
-                                                  : Colors.grey.shade300,
-                                              child: Icon(Icons.movie,
-                                                  size: 30,
-                                                  color: isDark
-                                                      ? Colors.white24
-                                                      : Colors.black12),
-                                            ),
-                                    ),
-                                  ),
-                                  // Quality badge - top left
-                                  if (movie.poster != null &&
-                                      movie.poster!.isNotEmpty)
-                                    Positioned(
-                                      top: 6,
-                                      left: 6,
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 6, vertical: 2),
-                                        decoration: BoxDecoration(
-                                          color: accentColor,
-                                          borderRadius:
-                                              BorderRadius.circular(4),
-                                        ),
-                                        child: const Text('1080p',
-                                            style: TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 8,
-                                                fontWeight: FontWeight.w700)),
-                                      ),
-                                    ),
-                                  // Rating badge - top right
-                                  Positioned(
-                                    top: 6,
-                                    right: 6,
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 5, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: Colors.amber.shade700,
-                                        borderRadius: BorderRadius.circular(4),
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          const Icon(Icons.star,
-                                              size: 9, color: Colors.white),
-                                          const SizedBox(width: 2),
-                                          Text(
-                                            movie.rating ?? '7.0',
-                                            style: const TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 8,
-                                                fontWeight: FontWeight.w700),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            // Title
-                            Text(
-                              movie.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: isDark ? Colors.white : Colors.black87,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            // Year
-                            if (movie.year != null && movie.year!.isNotEmpty)
-                              Text(
-                                movie.year!,
-                                style: TextStyle(
-                                    color: metaTextColor, fontSize: 10),
-                              ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-      ],
-    );
-  }
-
-  /// Show dialog requesting storage permission before download
-  /// Show dialog requesting storage permission before download.
-  /// Uses the native Android system permission dialog (Permission.videos / Permission.storage).
-  Future<bool> _showDownloadPermissionDialog() async {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Icon(Icons.shield_outlined, color: Colors.red.shade400, size: 24),
-            const SizedBox(width: 8),
-            const Text('Storage Permission', style: TextStyle(fontSize: 18)),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Storage permission is required to download and save videos to your device.',
-              style: TextStyle(
-                color: isDark ? Colors.grey.shade300 : Colors.grey.shade700,
-                fontSize: 14,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: isDark ? Colors.white10 : Colors.grey.shade100,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.info_outline, size: 16, color: isDark ? Colors.grey.shade400 : Colors.grey.shade600),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'You will be asked to grant access. This is required for downloading videos.',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text('Cancel', style: TextStyle(color: isDark ? Colors.grey.shade400 : Colors.grey.shade600)),
-          ),
-          ElevatedButton.icon(
-            onPressed: () async {
-              Navigator.pop(ctx, true);
-              // Use the native Android runtime permission dialog
-              final granted = await _downloadManager.requestRuntimePermission();
-              if (!granted && mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Permission denied. You can enable it in app settings.'),
-                    backgroundColor: Colors.redAccent,
-                    duration: Duration(seconds: 3),
-                  ),
-                );
-              }
-            },
-            icon: const Icon(Icons.verified_user_rounded, size: 18),
-            label: const Text('Grant Permission'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFE50914),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            ),
-          ),
-        ],
-      ),
-    ) ?? false;
-  }
-}
-
-// Custom TabBar SliverPersistentHeaderDelegate
-class _TabBarDelegate extends SliverPersistentHeaderDelegate {
-  final TabController tabController;
-  final Color accentColor;
-  final bool isDark;
-
-  _TabBarDelegate({
-    required this.tabController,
-    required this.accentColor,
-    required this.isDark,
-  });
-
-  @override
-  double get minExtent => 52;
-
-  @override
-  double get maxExtent => 52;
-
-  @override
-  bool shouldRebuild(covariant _TabBarDelegate oldDelegate) {
-    return oldDelegate.isDark != isDark ||
-        oldDelegate.accentColor != accentColor;
-  }
-
-  @override
-  Widget build(
-      BuildContext context, double shrinkOffset, bool overlapsContent) {
-    return Container(
-      color: isDark ? const Color(0xFF121212) : const Color(0xFFF5F5F5),
-      child: TabBar(
-        controller: tabController,
-        labelColor: accentColor,
-        unselectedLabelColor: isDark ? Colors.grey.shade500 : Colors.grey.shade600,
-        indicator: const BoxDecoration(),
-        dividerColor: Colors.transparent,
-        labelStyle:
-            const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-        unselectedLabelStyle:
-            const TextStyle(fontSize: 14, fontWeight: FontWeight.normal),
-        tabs: const [
-          Tab(icon: Icon(Icons.info_outline, size: 20), text: 'Detail'),
-          Tab(icon: Icon(Icons.file_download_outlined, size: 20), text: 'Download'),
-          Tab(icon: Icon(Icons.explore_outlined, size: 20), text: 'Explore'),
         ],
       ),
     );
