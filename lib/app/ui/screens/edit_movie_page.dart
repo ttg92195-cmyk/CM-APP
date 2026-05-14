@@ -252,7 +252,7 @@ class _EditMoviePageState extends State<EditMoviePage> {
                           Expanded(
                             child: TextFormField(
                               controller: TextEditingController(text: _seasons.length.toString()),
-                              decoration: const InputDecoration(labelText: 'Seasons', suffixIcon: Icon(Icons.tv, size: 20))),
+                              decoration: const InputDecoration(labelText: 'Seasons', suffixIcon: Icon(Icons.tv, size: 20)),
                               readOnly: true,
                               enabled: false,
                             ),
@@ -261,7 +261,7 @@ class _EditMoviePageState extends State<EditMoviePage> {
                           Expanded(
                             child: TextFormField(
                               controller: TextEditingController(text: _seasons.fold<int>(0, (sum, s) => sum + s.episodes.length).toString()),
-                              decoration: const InputDecoration(labelText: 'Episodes', suffixIcon: Icon(Icons.play_circle_outline, size: 20))),
+                              decoration: const InputDecoration(labelText: 'Episodes', suffixIcon: Icon(Icons.play_circle_outline, size: 20)),
                               readOnly: true,
                               enabled: false,
                             ),
