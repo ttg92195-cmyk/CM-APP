@@ -676,7 +676,8 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
     Color accentColor,
   ) {
     return ListView(
-      physics: const ClampingScrollPhysics(),
+      physics: const NeverScrollableScrollPhysics(),
+      shrinkWrap: true,
       padding: const EdgeInsets.only(bottom: 4),
       children: [
         // Overview Section
@@ -970,7 +971,8 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
     return DividerTheme(
       data: const DividerThemeData(color: Colors.transparent),
       child: ListView(
-        physics: const ClampingScrollPhysics(),
+        physics: const NeverScrollableScrollPhysics(),
+        shrinkWrap: true,
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
         children: [
           Text('Download Options',
@@ -1412,7 +1414,8 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen>
     Color cardBgColor,
   ) {
     return ListView(
-      physics: const ClampingScrollPhysics(),
+      physics: const NeverScrollableScrollPhysics(),
+      shrinkWrap: true,
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
       children: [
         Text('You may also like',

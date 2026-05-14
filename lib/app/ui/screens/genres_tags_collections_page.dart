@@ -520,6 +520,8 @@ class _FilterResultPageState extends State<FilterResultPage> {
   bool _hasMore = true;
   bool _isLoading = true;
   bool _isLoadingMore = false;
+  // Track seen IDs to prevent duplicates
+  final Set<String> _seenIds = {};
 
   @override
   void initState() {
@@ -528,7 +530,10 @@ class _FilterResultPageState extends State<FilterResultPage> {
   }
 
   Future<void> _loadMovies() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _seenIds.clear();
+    });
     try {
       Map<String, dynamic> result;
       if (widget.genreName != null) {
@@ -543,6 +548,11 @@ class _FilterResultPageState extends State<FilterResultPage> {
 
       if (mounted) {
         final allMovies = result['movies'] as List<Movie>;
+
+        // Track IDs to prevent future duplicates
+        for (final m in allMovies) {
+          _seenIds.add(m.id);
+        }
 
         // Apply type filter if specified (Movies or Series sub-tab)
         List<Movie> filtered;
@@ -591,19 +601,29 @@ class _FilterResultPageState extends State<FilterResultPage> {
 
       if (mounted) {
         final newMovies = result['movies'] as List<Movie>;
+
+        // Deduplicate by ID to prevent duplicates
+        final dedupedMovies = <Movie>[];
+        for (final m in newMovies) {
+          if (!_seenIds.contains(m.id)) {
+            _seenIds.add(m.id);
+            dedupedMovies.add(m);
+          }
+        }
+
         List<Movie> filtered;
         if (widget.typeFilter != null) {
-          filtered = newMovies
+          filtered = dedupedMovies
               .where((m) => m.type == widget.typeFilter)
               .toList();
         } else {
-          filtered = newMovies;
+          filtered = dedupedMovies;
         }
 
         setState(() {
-          _movies.addAll(newMovies);
+          _movies.addAll(dedupedMovies);
           _filteredMovies.addAll(filtered);
-          _hasMore = result['hasMore'] as bool;
+          _hasMore = result['hasMore'] as bool && newMovies.isNotEmpty;
           _lastDoc = result['lastDoc'] as DocumentSnapshot?;
           _isLoadingMore = false;
         });

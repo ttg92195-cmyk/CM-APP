@@ -738,7 +738,8 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
     Color accentColor,
   ) {
     return ListView(
-      physics: const ClampingScrollPhysics(),
+      physics: const NeverScrollableScrollPhysics(),
+      shrinkWrap: true,
       padding: const EdgeInsets.only(bottom: 16),
       children: [
         // Overview Section
@@ -1067,6 +1068,8 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
     return DividerTheme(
       data: const DividerThemeData(color: Colors.transparent),
       child: ListView(
+        physics: const NeverScrollableScrollPhysics(),
+        shrinkWrap: true,
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
         children: [
           Text('Download Options',
@@ -1294,7 +1297,8 @@ class _MovieDetailScreenState extends State<MovieDetailScreen>
     Color cardBgColor,
   ) {
     return ListView(
-      physics: const ClampingScrollPhysics(),
+      physics: const NeverScrollableScrollPhysics(),
+      shrinkWrap: true,
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
       children: [
         Text('You may also like',

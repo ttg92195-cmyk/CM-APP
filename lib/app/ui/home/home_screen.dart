@@ -37,6 +37,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Movie> _bollywoodMovies = [];
 
   bool _isLoading = true;
+  bool _isLoadingTags = true;
   String? _error;
 
   static const int _homeLimit = 10; // Show 10 posts per section on Home
@@ -91,6 +92,7 @@ class _HomeScreenState extends State<HomeScreen> {
           _allMovies = allMovies;
           _allSeries = allSeries;
           _isLoading = false;
+          _isLoadingTags = true;
         });
 
         _loadTagBasedData();
@@ -164,6 +166,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _animationMovies = animationMovies;
         _animeMovies = animeMovies;
         _bollywoodMovies = bollywoodMovies;
+        _isLoadingTags = false;
       });
     }
   }
@@ -198,7 +201,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       body: RefreshIndicator(
         onRefresh: _loadData,
-        child: _isLoading
+        child: (_isLoading || _isLoadingTags)
             ? _buildSkeletonLoading(theme, appConfig)
             : _error != null
                 ? _buildErrorWidget(appConfig)
