@@ -144,7 +144,36 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
-      child: NavigationBar(
+      child: NavigationBarTheme(
+        data: NavigationBarThemeData(
+          backgroundColor: isDark ? const Color(0xFF121212) : Colors.white,
+          indicatorColor: Colors.transparent,
+          height: 64,
+          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+          surfaceTintColor: Colors.transparent,
+          overlayColor: WidgetStateProperty.resolveWith<Color?>((states) {
+            if (states.contains(WidgetState.pressed)) {
+              return selectedColor.withOpacity(0.08);
+            }
+            return Colors.transparent;
+          }),
+          iconTheme: WidgetStateProperty.resolveWith<IconThemeData?>((states) {
+            final isSelected = states.contains(WidgetState.selected);
+            return IconThemeData(
+              size: 24,
+              color: isSelected ? selectedColor : unselectedColor,
+            );
+          }),
+          labelTextStyle: WidgetStateProperty.resolveWith<TextStyle?>((states) {
+            final isSelected = states.contains(WidgetState.selected);
+            return TextStyle(
+              fontSize: 11,
+              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+              color: isSelected ? selectedColor : unselectedColor,
+            );
+          }),
+        ),
+        child: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: (index) {
           setState(() {
@@ -159,32 +188,6 @@ class _HomePageState extends State<HomePage> {
             if (state != null) (state as dynamic).onTabSelected();
           }
         },
-        backgroundColor: isDark ? const Color(0xFF121212) : Colors.white,
-        indicatorColor: Colors.transparent, // Remove pill/capsule indicator
-        height: 64,
-        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-        surfaceTintColor: Colors.transparent,
-        overlayColor: WidgetStateProperty.resolveWith<Color?>((states) {
-          if (states.contains(WidgetState.pressed)) {
-            return selectedColor.withOpacity(0.08);
-          }
-          return Colors.transparent;
-        }),
-        textStyle: WidgetStateProperty.resolveWith<TextStyle?>((states) {
-          final isSelected = states.contains(WidgetState.selected);
-          return TextStyle(
-            fontSize: 11,
-            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-            color: isSelected ? selectedColor : unselectedColor,
-          );
-        }),
-        iconTheme: WidgetStateProperty.resolveWith<IconThemeData?>((states) {
-          final isSelected = states.contains(WidgetState.selected);
-          return IconThemeData(
-            size: 24,
-            color: isSelected ? selectedColor : unselectedColor,
-          );
-        }),
         destinations: [
           NavigationDestination(
             icon: const Icon(Icons.home_outlined),
@@ -207,6 +210,7 @@ class _HomePageState extends State<HomePage> {
             label: appConfig.translate('settings'),
           ),
         ],
+      ),
       ),
     );
   }
