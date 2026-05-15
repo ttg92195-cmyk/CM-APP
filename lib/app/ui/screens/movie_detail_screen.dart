@@ -226,6 +226,61 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
     return duration;
   }
 
+  /// Dynamic Country Flag + Language mapping
+  /// Maps country code/name to emoji flag + language name
+  static String _getCountryLanguage(String? country) {
+    if (country == null || country.isEmpty) return '🇺🇸 English';
+
+    final normalized = country.trim().toUpperCase();
+
+    // Map of country codes/names → flag + language
+    const Map<String, String> countryMap = {
+      // Country codes
+      'US': '🇺🇸 English',
+      'JP': '🇯🇵 Japanese',
+      'KR': '🇰🇷 Korean',
+      'TH': '🇹🇭 Thai',
+      'CN': '🇨🇳 Chinese',
+      'HK': '🇭🇰 Cantonese',
+      'TW': '🇹🇼 Mandarin',
+      'IN': '🇮🇳 Hindi',
+      'GB': '🇬🇧 English',
+      'UK': '🇬🇧 English',
+      'FR': '🇫🇷 French',
+      'DE': '🇩🇪 German',
+      'ES': '🇪🇸 Spanish',
+      'IT': '🇮🇹 Italian',
+      'PH': '🇵🇭 Filipino',
+      'TR': '🇹🇷 Turkish',
+      'BR': '🇧🇷 Portuguese',
+      'RU': '🇷🇺 Russian',
+      'ID': '🇮🇩 Indonesian',
+      'MY': '🇲🇾 Malay',
+      'MM': '🇲🇲 Myanmar',
+      // Full names (common)
+      'UNITED STATES': '🇺🇸 English',
+      'JAPAN': '🇯🇵 Japanese',
+      'KOREA': '🇰🇷 Korean',
+      'SOUTH KOREA': '🇰🇷 Korean',
+      'THAILAND': '🇹🇭 Thai',
+      'CHINA': '🇨🇳 Chinese',
+      'INDIA': '🇮🇳 Hindi',
+      'ENGLISH': '🇺🇸 English',
+      'JAPANESE': '🇯🇵 Japanese',
+      'KOREAN': '🇰🇷 Korean',
+      'THAI': '🇹🇭 Thai',
+      'CHINESE': '🇨🇳 Chinese',
+      'HINDI': '🇮🇳 Hindi',
+      'CANTONESE': '🇭🇰 Cantonese',
+      'MANDARIN': '🇨🇳 Chinese',
+      'FRENCH': '🇫🇷 French',
+      'SPANISH': '🇪🇸 Spanish',
+      'GERMAN': '🇩🇪 German',
+    };
+
+    return countryMap[normalized] ?? '🇺🇸 English';
+  }
+
   @override
   Widget build(BuildContext context) {
     final appConfig = Provider.of<AppConfig>(context);
@@ -446,8 +501,8 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                                             fontSize: 13)),
                                     const SizedBox(width: 8),
                                   ],
-                                  const Text('🇺🇸 English',
-                                      style: TextStyle(fontSize: 12)),
+                                  Text(_getCountryLanguage(detail.country),
+                                      style: const TextStyle(fontSize: 12)),
                                 ],
                               ),
                               const SizedBox(height: 10),
@@ -575,10 +630,10 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                         ),
                       ),
                       const SizedBox(width: 12),
-                      // Download Button
+                      // Download Button (controlled by Show Download toggle)
                       Expanded(
                         child: ElevatedButton.icon(
-                          onPressed: detail.downloadLinks.isNotEmpty
+                          onPressed: (detail.downloadLinks.isNotEmpty && appConfig.downloadEnabled)
                               ? () {
                                   Navigator.push(
                                     context,
@@ -592,8 +647,8 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                           label: const Text('Download',
                               style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: accentColor,
-                            foregroundColor: Colors.white,
+                            backgroundColor: appConfig.downloadEnabled ? accentColor : (isDark ? Colors.white12 : Colors.grey.shade400),
+                            foregroundColor: appConfig.downloadEnabled ? Colors.white : (isDark ? Colors.white38 : Colors.black38),
                             disabledBackgroundColor: isDark
                                 ? Colors.white12
                                 : Colors.grey.shade300,

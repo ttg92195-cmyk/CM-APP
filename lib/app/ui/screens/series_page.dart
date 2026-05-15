@@ -25,6 +25,7 @@ class _SeriesPageState extends State<SeriesPage> {
   bool _isLoading = true;
   bool _isLoadingMore = false;
   final Set<String> _seenIds = {};
+  bool _isFirstLoad = true;
 
   @override
   void initState() {
@@ -37,6 +38,25 @@ class _SeriesPageState extends State<SeriesPage> {
   void dispose() {
     _scrollController.dispose();
     super.dispose();
+  }
+
+  /// Called when this tab becomes active (from HomePage)
+  /// Refreshes data to show newly added posts
+  void onTabSelected() {
+    if (_isFirstLoad) {
+      _isFirstLoad = false;
+      return; // initState already loads on first time
+    }
+    _refreshData();
+  }
+
+  Future<void> _refreshData() async {
+    setState(() {
+      _seenIds.clear();
+      _lastDoc = null;
+      _hasMore = true;
+    });
+    await _loadSeries();
   }
 
   void _onScroll() {

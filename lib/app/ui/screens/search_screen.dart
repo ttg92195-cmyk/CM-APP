@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
@@ -19,6 +20,7 @@ class _SearchScreenState extends State<SearchScreen> {
   final FirestoreContentService _contentService = FirestoreContentService();
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  Timer? _debounceTimer;
 
   List<Movie> _results = [];
   bool _isLoading = false;
@@ -41,12 +43,26 @@ class _SearchScreenState extends State<SearchScreen> {
     super.initState();
     _searchController.addListener(() {
       setState(() {}); // Rebuild to show/hide clear button
+      // Debounced auto-search: wait 400ms after user stops typing
+      _debounceTimer?.cancel();
+      final query = _searchController.text.trim();
+      if (query.isNotEmpty || _hasActiveFilters) {
+        _debounceTimer = Timer(const Duration(milliseconds: 400), () {
+          _search();
+        });
+      } else if (query.isEmpty && !_hasActiveFilters) {
+        setState(() {
+          _results = [];
+          _hasSearched = false;
+        });
+      }
     });
     _loadFilterOptions();
   }
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _searchController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -745,22 +761,6 @@ class _SearchScreenState extends State<SearchScreen> {
                             ),
                           ),
                         ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-            // Results count
-            if (_hasSearched && _results.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                child: Row(
-                  children: [
-                    Text(
-                      '${_results.length} ${appConfig.translate('results')}',
-                      style: theme.textTheme.labelMedium?.copyWith(
-                        color: theme.colorScheme.onSurface.withOpacity(0.6),
                       ),
                     ),
                   ],

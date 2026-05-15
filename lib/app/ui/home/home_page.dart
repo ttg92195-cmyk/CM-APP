@@ -130,6 +130,8 @@ class _HomePageState extends State<HomePage> {
 
   Widget _buildBottomNav(AppConfig appConfig, ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
+    final unselectedColor = isDark ? Colors.grey.shade500 : Colors.grey.shade600;
+    const selectedColor = Color(0xFFE50914);
 
     return Container(
       decoration: BoxDecoration(
@@ -148,29 +150,60 @@ class _HomePageState extends State<HomePage> {
           setState(() {
             _currentIndex = index;
           });
+          // Trigger data refresh when switching to Movies/Series tabs
+          if (index == kMoviesTab) {
+            final state = _moviesKey.currentState;
+            if (state != null) (state as dynamic).onTabSelected();
+          } else if (index == kSeriesTab) {
+            final state = _seriesKey.currentState;
+            if (state != null) (state as dynamic).onTabSelected();
+          }
         },
         backgroundColor: isDark ? const Color(0xFF121212) : Colors.white,
-        indicatorColor: const Color(0xFFE50914).withOpacity(0.12),
+        indicatorColor: Colors.transparent, // Remove pill/capsule indicator
         height: 64,
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+        surfaceTintColor: Colors.transparent,
+        overlayColor: WidgetStateProperty.resolveWith<Color?>((states) {
+          if (states.contains(WidgetState.pressed)) {
+            return selectedColor.withOpacity(0.08);
+          }
+          return Colors.transparent;
+        }),
+        textStyle: WidgetStateProperty.resolveWith<TextStyle?>((states) {
+          final isSelected = states.contains(WidgetState.selected);
+          return TextStyle(
+            fontSize: 11,
+            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+            color: isSelected ? selectedColor : unselectedColor,
+          );
+        }),
+        iconTheme: WidgetStateProperty.resolveWith<IconThemeData?>((states) {
+          final isSelected = states.contains(WidgetState.selected);
+          return IconThemeData(
+            size: 24,
+            color: isSelected ? selectedColor : unselectedColor,
+          );
+        }),
         destinations: [
           NavigationDestination(
-            icon: Icon(Icons.home_outlined, color: isDark ? Colors.grey : Colors.grey.shade600),
-            selectedIcon: const Icon(Icons.home, color: Color(0xFFE50914)),
+            icon: const Icon(Icons.home_outlined),
+            selectedIcon: const Icon(Icons.home),
             label: appConfig.translate('home'),
           ),
           NavigationDestination(
-            icon: Icon(Icons.movie_outlined, color: isDark ? Colors.grey : Colors.grey.shade600),
-            selectedIcon: const Icon(Icons.movie, color: Color(0xFFE50914)),
+            icon: const Icon(Icons.movie_outlined),
+            selectedIcon: const Icon(Icons.movie),
             label: appConfig.translate('movies'),
           ),
           NavigationDestination(
-            icon: Icon(Icons.tv_outlined, color: isDark ? Colors.grey : Colors.grey.shade600),
-            selectedIcon: const Icon(Icons.tv, color: Color(0xFFE50914)),
+            icon: const Icon(Icons.tv_outlined),
+            selectedIcon: const Icon(Icons.tv),
             label: appConfig.translate('series'),
           ),
           NavigationDestination(
-            icon: Icon(Icons.settings_outlined, color: isDark ? Colors.grey : Colors.grey.shade600),
-            selectedIcon: const Icon(Icons.settings, color: Color(0xFFE50914)),
+            icon: const Icon(Icons.settings_outlined),
+            selectedIcon: const Icon(Icons.settings),
             label: appConfig.translate('settings'),
           ),
         ],
