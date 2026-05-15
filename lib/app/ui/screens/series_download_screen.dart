@@ -98,6 +98,10 @@ class _SeriesDownloadScreenState extends State<SeriesDownloadScreen> {
           message = 'Storage permission required.';
           bgColor = Colors.redAccent;
           break;
+        case AddTaskResult.maxTotalReached:
+          message = 'Maximum 10 downloads reached. Please wait for a download to finish.';
+          bgColor = Colors.orange;
+          break;
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

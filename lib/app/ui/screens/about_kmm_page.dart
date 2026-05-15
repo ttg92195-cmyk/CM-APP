@@ -163,7 +163,7 @@ class AboutKmmPage extends StatelessWidget {
             _buildFeatureCard(
               theme,
               isDark,
-              Icons.dark_mode_outline,
+              Icons.dark_mode_outlined,
               appConfig.translate('dark_mode'),
               'Choose between a sleek dark theme and a clean light theme. Your preference is saved automatically and persists across sessions. The dark theme uses a rich #121212 background with vibrant red accents for comfortable viewing at night.',
             ),
