@@ -95,10 +95,19 @@ class CMMoviesApp extends StatefulWidget {
 }
 
 class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
+  // Splash: minimum display time before dismissing
+  bool _minSplashElapsed = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Start minimum splash delay (3 seconds)
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) {
+        setState(() => _minSplashElapsed = true);
+      }
+    });
   }
 
   @override
@@ -106,6 +115,10 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
+
+  /// Whether splash screen should still be shown.
+  /// True if auth is still loading OR minimum splash time hasn't elapsed.
+  bool get _showSplash => !_minSplashElapsed;
 
   // L3: Track app lifecycle for session timeout
   @override
@@ -152,8 +165,9 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
         themeMode: appConfig.themeMode,
         // Auth gate: show LoginPage if not logged in, HomePage if logged in
         // This ensures Firestore reads only happen after authentication
-        home: appConfig.isLoadingAuth
-            ? _buildSplashScreen(appConfig)
+        // Splash is shown until both: auth loads AND minimum 3s elapsed
+        home: (_showSplash || appConfig.isLoadingAuth)
+            ? _buildSplashScreen()
             : appConfig.isLoggedIn
                 ? const HomePage()
                 : const LoginPage(),
@@ -161,39 +175,45 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildSplashScreen(AppConfig appConfig) {
-    return Scaffold(
-      backgroundColor: kDarkBg,
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: const Color(0xFFE50914).withOpacity(0.15),
+  Widget _buildSplashScreen() {
+    // Force light mode during splash — white bg, dark text, red accents
+    return Theme(
+      data: ThemeData.light(useMaterial3: true).copyWith(
+        scaffoldBackgroundColor: Colors.white,
+      ),
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: const Color(0xFFE50914).withOpacity(0.15),
+                ),
+                child: const Icon(
+                  Icons.play_circle_fill,
+                  size: 60,
+                  color: Color(0xFFE50914),
+                ),
               ),
-              child: const Icon(
-                Icons.play_circle_fill,
-                size: 60,
+              const SizedBox(height: 20),
+              const Text(
+                'KMM',
+                style: TextStyle(
+                  color: Color(0xFF212121),
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 16),
+              const CircularProgressIndicator(
                 color: Color(0xFFE50914),
               ),
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'KMM',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
-            const CircularProgressIndicator(
-              color: Color(0xFFE50914),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

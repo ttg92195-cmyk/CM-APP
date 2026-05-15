@@ -528,8 +528,8 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                       if (post.year != null && post.year!.isNotEmpty)
                         const Text(' • ', style: TextStyle(fontSize: 12)),
                       if (post.rating != null && post.rating!.isNotEmpty) ...[
-                        const Icon(Icons.star, size: 12, color: Colors.amber),
-                        Text(post.rating!, style: const TextStyle(fontSize: 12, color: Colors.amber)),
+                        const Icon(Icons.star, size: 12, color: Color(0xFFFF0000)),
+                        Text(post.rating!, style: const TextStyle(fontSize: 12, color: Color(0xFFFF0000))),
                         const Text(' • ', style: TextStyle(fontSize: 12)),
                       ],
                       Text(

@@ -201,11 +201,11 @@ class _WatchlistScreenState extends State<WatchlistScreen> {
                             const SizedBox(width: 10),
                           ],
                           if (movie.rating != null && movie.rating!.isNotEmpty) ...[
-                            const Icon(Icons.star, size: 13, color: Colors.amber),
+                            const Icon(Icons.star, size: 13, color: Color(0xFFFF0000)),
                             const SizedBox(width: 2),
                             Text(movie.rating!,
                                 style: const TextStyle(
-                                    color: Colors.amber, fontSize: 11, fontWeight: FontWeight.w600)),
+                                    color: Color(0xFFFF0000), fontSize: 11, fontWeight: FontWeight.w600)),
                           ],
                         ],
                       ),

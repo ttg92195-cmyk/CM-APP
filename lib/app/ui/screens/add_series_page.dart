@@ -469,6 +469,7 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
     final qualityController = TextEditingController();
     final sizeController = TextEditingController();
     final urlController = TextEditingController();
+    final fileNameController = TextEditingController();
 
     showDialog<bool>(
       context: context,
@@ -487,6 +488,8 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
                   items: _serverOptions.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
                   onChanged: (v) => setDialogState(() => selectedServer = v),
                 ),
+                const SizedBox(height: 8),
+                TextField(controller: fileNameController, decoration: const InputDecoration(labelText: 'File Name', hintText: 'e.g. Movie_Name_1080p.mkv')),
                 const SizedBox(height: 8),
                 TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. 4K, 1080p, 720p')),
                 const SizedBox(height: 8),
@@ -515,6 +518,7 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
               url: urlController.text.trim(),
               quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
               size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+              fileName: fileNameController.text.trim().isEmpty ? null : fileNameController.text.trim(),
             ));
           } else {
             // Create new episode with this download link
@@ -526,6 +530,7 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
                   url: urlController.text.trim(),
                   quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
                   size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+                  fileName: fileNameController.text.trim().isEmpty ? null : fileNameController.text.trim(),
                 ),
               ],
               watchLinks: [],
@@ -737,6 +742,7 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
     final qualityController = TextEditingController();
     final sizeController = TextEditingController();
     final urlController = TextEditingController();
+    final fileNameController = TextEditingController();
 
     showDialog<bool>(
       context: context,
@@ -753,6 +759,8 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
                   items: _serverOptions.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
                   onChanged: (v) => setDialogState(() => selectedServer = v),
                 ),
+                const SizedBox(height: 8),
+                TextField(controller: fileNameController, decoration: const InputDecoration(labelText: 'File Name', hintText: 'e.g. Movie_Name_1080p.mkv')),
                 const SizedBox(height: 8),
                 TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. 720p, 1080p')),
                 const SizedBox(height: 8),
@@ -776,6 +784,7 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
             url: urlController.text.trim(),
             quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
             size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+            fileName: fileNameController.text.trim().isEmpty ? null : fileNameController.text.trim(),
           ));
         });
       }

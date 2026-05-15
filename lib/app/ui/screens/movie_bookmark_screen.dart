@@ -121,7 +121,7 @@ class _MovieBookmarkScreenState extends State<MovieBookmarkScreen> {
                     gridDelegate:
                         const SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: 3,
-                      childAspectRatio: 0.55,
+                      childAspectRatio: 0.48,
                       crossAxisSpacing: 8,
                       mainAxisSpacing: 8,
                     ),

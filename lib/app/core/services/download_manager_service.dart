@@ -190,6 +190,7 @@ enum AddTaskResult {
   emptyUrl,
   alreadyExists,
   permissionDenied,
+  maxTotalReached,
 }
 
 /// Download Manager Service - handles all download operations
@@ -198,6 +199,7 @@ class DownloadManagerService extends ChangeNotifier {
   static DownloadManagerService? _instance;
   static const String _tasksKey = 'download_tasks';
   static const int _maxConcurrentDownloads = 3;
+  static const int _maxTotalDownloads = 10;
 
   final Dio _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 30),
@@ -691,6 +693,7 @@ class DownloadManagerService extends ChangeNotifier {
     required String quality,
     String? size,
     required String serverName,
+    String? customFileName,
   }) async {
     // Check for empty or invalid URL first (before domain check)
     if (url.trim().isEmpty) {
@@ -740,10 +743,18 @@ class DownloadManagerService extends ChangeNotifier {
       }
     }
 
+    // Check if max total downloads reached
+    if (_tasks.length >= _maxTotalDownloads) {
+      debugPrint('Download blocked: Max total downloads ($_maxTotalDownloads) reached');
+      return AddTaskResult.maxTotalReached;
+    }
+
     // Detect correct file extension from URL
     final fileExt = _detectFileExtension(normalizedUrl);
-    final fileName = '${movieTitle.replaceAll(RegExp(r'[^\w\s-]'), '')}_$quality$fileExt'
-        .replaceAll(' ', '_');
+    final fileName = customFileName?.isNotEmpty == true
+        ? customFileName!
+        : '${movieTitle.replaceAll(RegExp(r'[^\w\s-]'), '')}_$quality$fileExt'
+            .replaceAll(' ', '_');
     final downloadDir = await _getDownloadDir();
     final savePath = '$downloadDir/$fileName';
 
@@ -802,7 +813,7 @@ class DownloadManagerService extends ChangeNotifier {
       if (idx != -1) {
         _tasks[idx] = _tasks[idx].copyWith(
           status: DownloadStatus.idle,
-          errorMessage: 'Queued (max $_maxConcurrentDownloads simultaneous)',
+          errorMessage: 'Queued (max $_maxConcurrentDownloads active)',
         );
         notifyListeners();
       }

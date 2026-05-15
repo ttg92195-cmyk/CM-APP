@@ -152,7 +152,7 @@ class _MovieCardState extends State<MovieCard> {
                           const Icon(
                             Icons.star,
                             size: 10,
-                            color: Color(0xFFFFC107),
+                            color: Color(0xFFFF0000),
                           ),
                           const SizedBox(width: 3),
                           Text(

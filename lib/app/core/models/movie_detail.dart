@@ -199,12 +199,14 @@ class MovieDownloadLink {
   final String url;
   final String? size;
   final String? quality;
+  final String? fileName;
 
   MovieDownloadLink({
     required this.serverName,
     required this.url,
     this.size,
     this.quality,
+    this.fileName,
   });
 
   factory MovieDownloadLink.fromMap(Map<String, dynamic> map) {
@@ -213,16 +215,19 @@ class MovieDownloadLink {
       url: map['url'] as String? ?? '',
       size: map['size']?.toString(),
       quality: map['quality']?.toString(),
+      fileName: map['fileName'] as String?,
     );
   }
 
   Map<String, dynamic> toMap() {
-    return {
+    final map = <String, dynamic>{
       'serverName': serverName,
       'url': url,
       'size': size,
       'quality': quality,
     };
+    if (fileName != null) map['fileName'] = fileName;
+    return map;
   }
 }
 

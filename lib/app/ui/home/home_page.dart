@@ -16,6 +16,7 @@ import 'package:cm_movies/app/ui/screens/search_screen.dart';
 import 'package:cm_movies/app/ui/screens/admin_panel_page.dart';
 import 'package:cm_movies/app/core/services/download_manager_service.dart';
 import 'package:cm_movies/app/ui/screens/tmdb_generator_page.dart';
+import 'package:cm_movies/app/ui/components/download_notification_banner.dart';
 
 // Bottom nav tab indices (4 tabs)
 const int kHomeTab = 0;
@@ -119,9 +120,49 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
       drawer: _buildDrawer(appConfig, theme),
-      body: IndexedStack(
-        index: _currentIndex,
-        children: bottomNavPages,
+      body: Stack(
+        children: [
+          IndexedStack(
+            index: _currentIndex,
+            children: bottomNavPages,
+          ),
+          // Floating download progress indicator - shows when downloads are active
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: DownloadMiniIndicator(
+              downloadManager: DownloadManagerService.instance,
+              onTap: () async {
+                // Navigate to download page
+                if (Platform.isAndroid) {
+                  final hasPermission = await DownloadManagerService.instance.hasRuntimePermission();
+                  if (!hasPermission) {
+                    final granted = await DownloadManagerService.instance.requestRuntimePermission();
+                    if (!granted) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(appConfig.translate('storage_permission_required')),
+                            backgroundColor: Colors.redAccent,
+                            duration: const Duration(seconds: 3),
+                          ),
+                        );
+                      }
+                      return;
+                    }
+                  }
+                }
+                if (mounted) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const DownloadPage()),
+                  );
+                }
+              },
+            ),
+          ),
+        ],
       ),
       bottomNavigationBar: _buildBottomNav(appConfig, theme),
     ),

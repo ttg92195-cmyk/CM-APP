@@ -92,7 +92,7 @@ class MovieListTile extends StatelessWidget {
         child: Row(
           children: [
             if (movie.rating != null && movie.rating!.isNotEmpty) ...[
-              const Icon(Icons.star, size: 14, color: Color(0xFFFFC107)),
+              const Icon(Icons.star, size: 14, color: Color(0xFFFF0000)),
               const SizedBox(width: 2),
               Text(
                 movie.rating!,

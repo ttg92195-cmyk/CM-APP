@@ -71,6 +71,7 @@ class _SeriesDownloadScreenState extends State<SeriesDownloadScreen> {
       quality: link.quality ?? 'Standard',
       size: link.size,
       serverName: link.serverName,
+      customFileName: link.fileName,
     );
 
     if (mounted) {
@@ -193,8 +194,8 @@ class _SeriesDownloadScreenState extends State<SeriesDownloadScreen> {
                         title: Text(season.name,
                             style: TextStyle(
                               color: isDark ? Colors.white : Colors.black87,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 16,
                             )),
                         subtitle: Text('${season.episodes.length} episode${season.episodes.length == 1 ? '' : 's'}',
                             style: TextStyle(color: metaTextColor, fontSize: 12)),
@@ -207,6 +208,8 @@ class _SeriesDownloadScreenState extends State<SeriesDownloadScreen> {
                             return Column(
                               children: [
                                 InkWell(
+                                  splashColor: Colors.transparent,
+                                  highlightColor: Colors.transparent,
                                   onTap: episode.downloadLinks.isNotEmpty
                                       ? () {
                                           setState(() {
@@ -238,8 +241,8 @@ class _SeriesDownloadScreenState extends State<SeriesDownloadScreen> {
                                           child: Text(episode.name,
                                               style: TextStyle(
                                                 color: episode.downloadLinks.isNotEmpty ? bodyTextColor : metaTextColor,
-                                                fontSize: 13,
-                                                fontWeight: FontWeight.w500,
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.w600,
                                               )),
                                         ),
                                         if (episode.downloadLinks.isNotEmpty)
@@ -262,7 +265,7 @@ class _SeriesDownloadScreenState extends State<SeriesDownloadScreen> {
                                         cardBgColor: cardBgColor,
                                       )),
                                 ],
-                                const Divider(height: 1, thickness: 0.5),
+                                const SizedBox.shrink(),
                               ],
                             );
                           }),

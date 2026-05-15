@@ -71,12 +71,19 @@ class _LoginPageState extends State<LoginPage>
     // L2: Check rate limit before attempting login
     if (_isLockedOut) {
       final remaining = _remainingLockout.inSeconds;
+      final appConfig = Provider.of<AppConfig>(context, listen: false);
       setState(() {
-        _loginError = 'Too many failed attempts. Please wait ${remaining}s before trying again.';
+        _loginError = appConfig
+            .translate('too_many_attempts')
+            .replaceAll('{seconds}', remaining.toString());
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Too many failed attempts. Wait ${remaining}s.'),
+          content: Text(
+            appConfig
+                .translate('too_many_attempts_short')
+                .replaceAll('{seconds}', remaining.toString()),
+          ),
           backgroundColor: Colors.orange,
         ),
       );
@@ -124,7 +131,9 @@ class _LoginPageState extends State<LoginPage>
         if (_failedLoginAttempts >= _maxLoginAttempts) {
           _lockoutUntil = DateTime.now().add(_lockoutDuration);
           setState(() {
-            _loginError = 'Too many failed attempts. Please wait ${_lockoutDuration.inSeconds}s before trying again.';
+            _loginError = appConfig
+                .translate('too_many_attempts')
+                .replaceAll('{seconds}', _lockoutDuration.inSeconds.toString());
           });
         } else {
           setState(() {
@@ -208,6 +217,32 @@ class _LoginPageState extends State<LoginPage>
       appBar: AppBar(
         title: Text(appConfig.translate('login')),
         actions: [
+          // Language toggle
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: ActionChip(
+              avatar: Icon(
+                Icons.translate,
+                size: 18,
+                color: appConfig.languageCode == 'en'
+                    ? const Color(0xFFE50914)
+                    : theme.colorScheme.onSurface.withOpacity(0.6),
+              ),
+              label: Text(
+                appConfig.languageCode == 'en' ? 'MY' : 'EN',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: appConfig.languageCode == 'en'
+                      ? const Color(0xFFE50914)
+                      : theme.colorScheme.onSurface.withOpacity(0.6),
+                ),
+              ),
+              onPressed: () {
+                appConfig.setLanguage(appConfig.languageCode == 'en' ? 'my' : 'en');
+              },
+            ),
+          ),
           // Theme toggle on login page
           IconButton(
             icon: Icon(
@@ -270,7 +305,7 @@ class _LoginPageState extends State<LoginPage>
             ),
             const SizedBox(height: 24),
             Text(
-              appConfig.translate('login'),
+              appConfig.translate('sign_in'),
               textAlign: TextAlign.center,
               style: theme.textTheme.titleLarge?.copyWith(
                 fontWeight: FontWeight.bold,
@@ -278,7 +313,7 @@ class _LoginPageState extends State<LoginPage>
             ),
             const SizedBox(height: 8),
             Text(
-              'Login to your account',
+              appConfig.translate('login_subtitle'),
               textAlign: TextAlign.center,
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurface.withOpacity(0.6),
@@ -322,7 +357,7 @@ class _LoginPageState extends State<LoginPage>
               ),
               validator: (val) {
                 if (val == null || val.trim().isEmpty) {
-                  return 'Please enter username';
+                  return appConfig.translate('enter_username');
                 }
                 return null;
               },
@@ -350,7 +385,7 @@ class _LoginPageState extends State<LoginPage>
               ),
               validator: (val) {
                 if (val == null || val.trim().isEmpty) {
-                  return 'Please enter password';
+                  return appConfig.translate('enter_password');
                 }
                 return null;
               },
@@ -376,7 +411,7 @@ class _LoginPageState extends State<LoginPage>
                         color: Colors.white,
                       ),
                     )
-                  : Text(appConfig.translate('login')),
+                  : Text(appConfig.translate('sign_in')),
             ),
 
             const SizedBox(height: 16),
@@ -421,7 +456,7 @@ class _LoginPageState extends State<LoginPage>
             ),
             const SizedBox(height: 24),
             Text(
-              appConfig.translate('create_account'),
+              appConfig.translate('sign_up'),
               textAlign: TextAlign.center,
               style: theme.textTheme.titleLarge?.copyWith(
                 fontWeight: FontWeight.bold,
@@ -429,7 +464,7 @@ class _LoginPageState extends State<LoginPage>
             ),
             const SizedBox(height: 8),
             Text(
-              'Create a new account to get started',
+              appConfig.translate('register_subtitle'),
               textAlign: TextAlign.center,
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurface.withOpacity(0.6),
@@ -473,14 +508,14 @@ class _LoginPageState extends State<LoginPage>
               ),
               validator: (val) {
                 if (val == null || val.trim().isEmpty) {
-                  return 'Please enter username';
+                  return appConfig.translate('enter_username');
                 }
                 if (val.trim().length < 3) {
-                  return 'Username must be at least 3 characters';
+                  return appConfig.translate('username_min_length');
                 }
                 // Check for invalid characters that would break email format
                 if (val.contains('@') || val.contains(' ')) {
-                  return 'Username cannot contain @ or spaces';
+                  return appConfig.translate('username_invalid_chars');
                 }
                 return null;
               },
@@ -494,7 +529,7 @@ class _LoginPageState extends State<LoginPage>
               decoration: InputDecoration(
                 labelText: appConfig.translate('password'),
                 prefixIcon: const Icon(Icons.lock_outline),
-                hintText: '8+ chars, uppercase, lowercase, number',
+                hintText: appConfig.translate('password_hint'),
                 suffixIcon: IconButton(
                   icon: Icon(_obscureRegPassword
                       ? Icons.visibility_off
@@ -509,19 +544,19 @@ class _LoginPageState extends State<LoginPage>
               ),
               validator: (val) {
                 if (val == null || val.trim().isEmpty) {
-                  return 'Please enter password';
+                  return appConfig.translate('enter_password');
                 }
                 if (val.trim().length < 8) {
-                  return 'Password must be at least 8 characters';
+                  return appConfig.translate('password_min_length');
                 }
                 if (!RegExp(r'[A-Z]').hasMatch(val)) {
-                  return 'Password must contain at least one uppercase letter';
+                  return appConfig.translate('password_uppercase');
                 }
                 if (!RegExp(r'[a-z]').hasMatch(val)) {
-                  return 'Password must contain at least one lowercase letter';
+                  return appConfig.translate('password_lowercase');
                 }
                 if (!RegExp(r'[0-9]').hasMatch(val)) {
-                  return 'Password must contain at least one number';
+                  return appConfig.translate('password_number');
                 }
                 return null;
               },
@@ -550,10 +585,10 @@ class _LoginPageState extends State<LoginPage>
               ),
               validator: (val) {
                 if (val == null || val.trim().isEmpty) {
-                  return 'Please confirm password';
+                  return appConfig.translate('confirm_password_empty');
                 }
                 if (val != _regPasswordController.text) {
-                  return 'Passwords do not match';
+                  return appConfig.translate('passwords_no_match');
                 }
                 return null;
               },
@@ -579,7 +614,7 @@ class _LoginPageState extends State<LoginPage>
                         color: Colors.white,
                       ),
                     )
-                  : Text(appConfig.translate('register')),
+                  : Text(appConfig.translate('sign_up')),
             ),
 
             const SizedBox(height: 16),

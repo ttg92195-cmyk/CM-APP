@@ -1107,7 +1107,7 @@ class FirestoreContentService {
   static const _tmdbUpdateFields = [
     'title', 'year', 'poster', 'backdrop', 'overview', 'rating',
     'duration', 'type', 'isAdult', 'categories', 'directors',
-    'casts', 'tmdbId', 'country',
+    'casts', 'tmdbId', 'country', 'status',
   ];
 
   Map<String, dynamic> _buildSafeUpdateMap(

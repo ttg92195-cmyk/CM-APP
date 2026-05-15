@@ -617,7 +617,7 @@ class _FilterResultPageState extends State<FilterResultPage> {
                         padding: const EdgeInsets.all(8),
                         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: 3,
-                          childAspectRatio: 0.55,
+                          childAspectRatio: 0.48,
                           crossAxisSpacing: 8,
                           mainAxisSpacing: 8,
                         ),
@@ -652,7 +652,7 @@ class _FilterResultPageState extends State<FilterResultPage> {
       padding: const EdgeInsets.all(8),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 3,
-        childAspectRatio: 0.55,
+        childAspectRatio: 0.48,
         crossAxisSpacing: 8,
         mainAxisSpacing: 8,
       ),

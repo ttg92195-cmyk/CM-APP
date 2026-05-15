@@ -74,6 +74,7 @@ class _MovieDownloadScreenState extends State<MovieDownloadScreen> {
       quality: link.quality ?? 'Standard',
       size: link.size,
       serverName: link.serverName,
+      customFileName: link.fileName,
     );
 
     if (mounted) {
@@ -198,8 +199,8 @@ class _MovieDownloadScreenState extends State<MovieDownloadScreen> {
                           serverName,
                           style: TextStyle(
                             color: isDark ? Colors.white : Colors.black87,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 16,
                           ),
                         ),
                         subtitle: Text(

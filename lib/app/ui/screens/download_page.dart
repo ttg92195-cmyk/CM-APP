@@ -5,6 +5,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/services/download_manager_service.dart';
 import 'package:cm_movies/app/core/services/saf_storage_service.dart';
+import 'package:cm_movies/app/ui/components/download_notification_banner.dart';
 
 class DownloadPage extends StatefulWidget {
   const DownloadPage({super.key});
@@ -71,6 +72,9 @@ class _DownloadPageState extends State<DownloadPage> {
       ),
       body: Column(
         children: [
+          // Download Progress Notification Banner (shows when downloads are active)
+          DownloadNotificationBanner(downloadManager: _downloadManager),
+
           // Storage Permission Banner (show if not granted)
           if (!_hasStoragePermission && Platform.isAndroid)
             _buildPermissionBanner(appConfig, theme),
@@ -1230,7 +1234,7 @@ class _DownloadPageState extends State<DownloadPage> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Up to 3 downloads can run at the same time. Additional downloads will start automatically when a slot opens.',
+                    'Up to 3 downloads can run at the same time. You can queue up to 10 downloads total. Additional downloads will start automatically when a slot opens.',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurface.withOpacity(0.5),
                     ),

@@ -12,9 +12,13 @@ class TmdbGeneratorPage extends StatefulWidget {
   State<TmdbGeneratorPage> createState() => _TmdbGeneratorPageState();
 }
 
-class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
+class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
+    with SingleTickerProviderStateMixin {
   final TmdbService _tmdbService = TmdbService();
   final FirestoreContentService _contentService = FirestoreContentService();
+
+  // Tab controller
+  late TabController _tabController;
 
   // Filter state
   String _type = 'movie'; // 'movie' or 'series'
@@ -60,7 +64,7 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
   String _syncCurrentTitle = '';
   int _syncSuccessCount = 0;
   int _syncFailureCount = 0;
-  bool _skipDescriptionUpdate = false;
+  bool _skipDescriptionUpdate = true; // Default to true for sync dashboard
   int _syncRemainingMovies = 0;
   int _syncRemainingSeries = 0;
 
@@ -69,6 +73,15 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
 
   // Filter collapse
   bool _filtersExpanded = true;
+
+  // Dashboard stats
+  int _totalMovies = 0;
+  int _totalSeries = 0;
+  int _moviesNeedSync = 0;
+  int _seriesNeedSync = 0;
+  int _ongoingSeries = 0;
+  int _endedSeries = 0;
+  bool _isStatsLoading = false;
 
   // Year list
   static const List<String> _yearOptions = [
@@ -108,16 +121,20 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     _loadGenres();
     _loadImportedTmdbIds();
-    _loadSyncRemainingCounts();
+    _loadDashboardStats();
   }
 
   @override
   void dispose() {
+    _tabController.dispose();
     _searchController.dispose();
     super.dispose();
   }
+
+  // ==================== DATA LOADING ====================
 
   Future<void> _loadGenres() async {
     try {
@@ -146,8 +163,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
 
   Future<void> _loadImportedTmdbIds() async {
     try {
-      // BUG FIX: Fetch all movies and extract tmdbId client-side.
-      // We fetch in batches if needed, and handle both int and String tmdbId types.
       final snapshot = await FirebaseFirestore.instance
           .collection('movies')
           .limit(5000)
@@ -159,7 +174,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
           for (final doc in snapshot.docs) {
             final rawTmdbId = doc.data()['tmdbId'];
             if (rawTmdbId == null) continue;
-            // Handle both int and String types for tmdbId
             final tmdbId = rawTmdbId is int
                 ? rawTmdbId
                 : int.tryParse(rawTmdbId.toString());
@@ -175,39 +189,75 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
     }
   }
 
-  /// Count how many movies/series have no lastSyncDate field (never synced)
-  Future<void> _loadSyncRemainingCounts() async {
+  /// Load comprehensive dashboard stats from Firestore in a single pass
+  Future<void> _loadDashboardStats() async {
+    setState(() => _isStatsLoading = true);
     try {
       final snapshot = await FirebaseFirestore.instance
           .collection('movies')
           .limit(5000)
           .get();
 
-      int movieCount = 0;
-      int seriesCount = 0;
+      int totalMovies = 0;
+      int totalSeries = 0;
+      int moviesNeedSync = 0;
+      int seriesNeedSync = 0;
+      int ongoingSeries = 0;
+      int endedSeries = 0;
+
       for (final doc in snapshot.docs) {
         final data = doc.data();
-        final tmdbId = data['tmdbId'];
-        if (tmdbId == null) continue;
-        if (tmdbId is! int || tmdbId <= 0) continue;
-        if (data.containsKey('lastSyncDate')) continue; // already synced
         final type = data['type']?.toString();
+        final tmdbId = data['tmdbId'];
+
         if (type == 'movie') {
-          movieCount++;
+          totalMovies++;
+          // Need sync: has tmdbId but no lastSyncDate
+          if (tmdbId != null && tmdbId is int && tmdbId > 0) {
+            if (!data.containsKey('lastSyncDate')) {
+              moviesNeedSync++;
+            }
+          }
         } else if (type == 'series') {
-          seriesCount++;
+          totalSeries++;
+          // Need sync: has tmdbId but no lastSyncDate
+          if (tmdbId != null && tmdbId is int && tmdbId > 0) {
+            if (!data.containsKey('lastSyncDate')) {
+              seriesNeedSync++;
+            }
+          }
+          // Check series status
+          final status = data['status']?.toString() ?? '';
+          if (status == 'Returning Series') {
+            ongoingSeries++;
+          } else if (status == 'Ended' || status == 'Canceled') {
+            endedSeries++;
+          }
         }
       }
+
       if (mounted) {
         setState(() {
-          _syncRemainingMovies = movieCount;
-          _syncRemainingSeries = seriesCount;
+          _totalMovies = totalMovies;
+          _totalSeries = totalSeries;
+          _moviesNeedSync = moviesNeedSync;
+          _seriesNeedSync = seriesNeedSync;
+          _ongoingSeries = ongoingSeries;
+          _endedSeries = endedSeries;
+          _syncRemainingMovies = moviesNeedSync;
+          _syncRemainingSeries = seriesNeedSync;
+          _isStatsLoading = false;
         });
       }
     } catch (e) {
-      debugPrint('Error loading sync remaining counts: $e');
+      debugPrint('Error loading dashboard stats: $e');
+      if (mounted) {
+        setState(() => _isStatsLoading = false);
+      }
     }
   }
+
+  // ==================== SEARCH & IMPORT ====================
 
   Future<void> _performSearch() async {
     setState(() {
@@ -222,7 +272,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
       final query = _searchController.text.trim();
       Map<String, dynamic> response;
 
-      // Extract original language filter for discover, always use en-US for display
       final originalLang = _selectedLanguage.isNotEmpty ? _selectedLanguage : null;
 
       if (query.isNotEmpty) {
@@ -240,16 +289,16 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
             ? await _tmdbService.discoverMovies(
                 genre: _selectedGenreId,
                 year: _selectedYear,
-                language: 'en-US', // Always English for display
-                originalLanguage: originalLang, // Filter by original language
+                language: 'en-US',
+                originalLanguage: originalLang,
                 sortBy: sortKey,
                 page: 1,
               )
             : await _tmdbService.discoverTV(
                 genre: _selectedGenreId,
                 year: _selectedYear,
-                language: 'en-US', // Always English for display
-                originalLanguage: originalLang, // Filter by original language
+                language: 'en-US',
+                originalLanguage: originalLang,
                 sortBy: sortKey,
                 page: 1,
               );
@@ -257,7 +306,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
 
       final rawResults = List<Map<String, dynamic>>.from(response['results'] ?? []);
 
-      // Filter out already-imported items so the grid only shows NEW posts
       final results = rawResults.where((item) {
         final id = item['id'];
         return id == null || !_importedTmdbIds.contains(id);
@@ -272,7 +320,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
         });
       }
 
-      // Load more pages if postLimit > 20 and filtered results are insufficient
       if (_postLimit > 20 && results.length < _postLimit) {
         await _loadMorePages();
       }
@@ -293,7 +340,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
         final query = _searchController.text.trim();
         Map<String, dynamic> response;
 
-        // Extract original language filter for discover, always use en-US for display
         final originalLang = _selectedLanguage.isNotEmpty ? _selectedLanguage : null;
 
         if (_isSearching) {
@@ -309,23 +355,22 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
               ? await _tmdbService.discoverMovies(
                   genre: _selectedGenreId,
                   year: _selectedYear,
-                  language: 'en-US', // Always English for display
-                  originalLanguage: originalLang, // Filter by original language
+                  language: 'en-US',
+                  originalLanguage: originalLang,
                   sortBy: sortKey,
                   page: page,
                 )
               : await _tmdbService.discoverTV(
                   genre: _selectedGenreId,
                   year: _selectedYear,
-                  language: 'en-US', // Always English for display
-                  originalLanguage: originalLang, // Filter by original language
+                  language: 'en-US',
+                  originalLanguage: originalLang,
                   sortBy: sortKey,
                   page: page,
                 );
         }
 
         final rawMoreResults = List<Map<String, dynamic>>.from(response['results'] ?? []);
-        // Filter out already-imported items so the grid only shows NEW posts
         final moreResults = rawMoreResults.where((item) {
           final id = item['id'];
           return id == null || !_importedTmdbIds.contains(id);
@@ -343,7 +388,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
       }
     }
 
-    // Trim to postLimit
     if (mounted && _results.length > _postLimit) {
       setState(() {
         _results = _results.sublist(0, _postLimit);
@@ -355,7 +399,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
     final selected = _selectedIds.toList();
     if (selected.isEmpty) return;
 
-    // BUG FIX: Filter out already-imported items to prevent duplicates
     final notYetImported = selected.where((id) => !_importedTmdbIds.contains(id)).toList();
     final alreadyImportedCount = selected.length - notYetImported.length;
 
@@ -420,7 +463,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
       });
 
       try {
-        // Double-check: verify not already imported in Firestore
         final existingDoc = await _contentService.findByTmdbId(tmdbId);
         if (existingDoc != null) {
           debugPrint('SKIP IMPORT: tmdbId $tmdbId ($itemTitle) already exists in Firestore (doc: ${existingDoc.id})');
@@ -432,13 +474,11 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
           continue;
         }
 
-        // Fetch full details with credits
         Map<String, dynamic> fullDetails;
         Map<String, dynamic> firestoreData;
 
         if (_type == 'movie') {
           fullDetails = await _tmdbService.getMovieDetails(tmdbId);
-          // Merge genre_ids from discover into full details if needed
           if (!fullDetails.containsKey('genre_ids') && fullDetails.containsKey('genres')) {
             fullDetails['genre_ids'] = (fullDetails['genres'] as List)
                 .map((g) => g['id'])
@@ -457,7 +497,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
 
         debugPrint('IMPORT: tmdbId=$tmdbId title=${firestoreData['title']} duration=${firestoreData['duration']}');
 
-        // Save to Firestore using FirestoreContentService
         await _contentService.addMovie(firestoreData);
 
         if (mounted) {
@@ -482,8 +521,8 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
         _selectedIds.clear();
       });
 
-      // Refresh imported status so badges update immediately
       _loadImportedTmdbIds();
+      _loadDashboardStats();
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -498,6 +537,9 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
     }
   }
 
+  // ==================== SYNC OPERATIONS ====================
+
+  /// Public: Sync Movies with confirmation dialog
   Future<void> _syncMovies() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -505,7 +547,8 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
         title: const Text('Sync Movies'),
         content: Text(
           'This will sync up to $_syncBatchSize movies from TMDB that have a tmdbId and update their data in Firestore.\n\n'
-          'Movies that have never been synced or have an older sync date are prioritized.',
+          'Movies that have never been synced or have an older sync date are prioritized.\n\n'
+          'Overview/description will NOT be updated.',
         ),
         actions: [
           TextButton(
@@ -522,9 +565,12 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
     );
 
     if (confirmed != true) return;
+    await _doSyncMovies();
+  }
 
+  /// Internal: Execute movie sync without confirmation dialog
+  Future<void> _doSyncMovies() async {
     try {
-      // Fetch movies with type='movie' and filter for tmdbId client-side
       final snapshot = await FirebaseFirestore.instance
           .collection('movies')
           .where('type', isEqualTo: 'movie')
@@ -536,7 +582,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
         return tmdbId != null && tmdbId > 0;
       }).toList();
 
-      // Sort: no lastSyncDate first, then by lastSyncDate ascending (oldest first)
       docs.sort((a, b) {
         final aSync = a.data()['lastSyncDate'] as Timestamp?;
         final bSync = b.data()['lastSyncDate'] as Timestamp?;
@@ -546,7 +591,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
         return aSync.compareTo(bSync);
       });
 
-      // Take only the batch size
       final batchDocs = docs.take(_syncBatchSize).toList();
       final totalRemaining = docs.length;
 
@@ -569,7 +613,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
         _syncRemainingMovies = totalRemaining - batchDocs.length;
       });
 
-      // Collect (docId, tmdbId, title) pairs FIRST to prevent stale references
       final syncItems = <Map<String, dynamic>>[];
       for (int i = 0; i < batchDocs.length; i++) {
         final doc = batchDocs[i];
@@ -610,7 +653,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
 
           final firestoreData = TmdbService.mapMovieToFirestore(fullDetails, _genreIdToName);
 
-          // Build SAFE update map — only TMDB fields, preserve user data
           final safeUpdate = <String, dynamic>{};
           for (final key in ['title', 'year', 'poster', 'backdrop', 'rating',
               'duration', 'isAdult', 'categories', 'directors', 'casts',
@@ -620,15 +662,11 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
             }
           }
 
-          // Conditionally include overview
-          if (!_skipDescriptionUpdate && firestoreData.containsKey('overview')) {
-            safeUpdate['overview'] = firestoreData['overview'];
-          }
+          // NEVER update overview during sync
+          // (overview is intentionally excluded from safeUpdate)
 
           debugPrint('SYNC MOVIE: safeUpdate title=${safeUpdate['title']} tmdbId=${safeUpdate['tmdbId']} duration=${safeUpdate['duration']}');
 
-          // CRITICAL: Validate document still has the same tmdbId before updating
-          // This prevents data corruption from stale references
           final currentDoc = await FirebaseFirestore.instance
               .collection('movies')
               .doc(docId)
@@ -642,7 +680,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
               setState(() => _syncFailureCount++);
               continue;
             }
-            // Use Firestore Transaction for atomic read-then-write
             await FirebaseFirestore.instance.runTransaction((transaction) async {
               final freshDoc = await transaction.get(
                 FirebaseFirestore.instance.collection('movies').doc(docId),
@@ -676,9 +713,8 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
 
       if (mounted) {
         setState(() => _isSyncing = false);
-        // Refresh imported status and remaining counts after sync
         _loadImportedTmdbIds();
-        _loadSyncRemainingCounts();
+        _loadDashboardStats();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -699,6 +735,7 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
     }
   }
 
+  /// Public: Sync Series with confirmation dialog
   Future<void> _syncSeries() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -706,7 +743,8 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
         title: const Text('Sync Series'),
         content: Text(
           'This will sync up to $_syncBatchSize series from TMDB that have a tmdbId and update their data in Firestore.\n\n'
-          'Series that have never been synced or have an older sync date are prioritized.',
+          'Series that have never been synced or have an older sync date are prioritized.\n\n'
+          'Overview/description will NOT be updated. Episode counts for ongoing seasons will be refreshed.',
         ),
         actions: [
           TextButton(
@@ -723,9 +761,12 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
     );
 
     if (confirmed != true) return;
+    await _doSyncSeries();
+  }
 
+  /// Internal: Execute series sync without confirmation dialog
+  Future<void> _doSyncSeries() async {
     try {
-      // Fetch series with type='series' and filter for tmdbId client-side
       final snapshot = await FirebaseFirestore.instance
           .collection('movies')
           .where('type', isEqualTo: 'series')
@@ -737,7 +778,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
         return tmdbId != null && tmdbId > 0;
       }).toList();
 
-      // Sort: no lastSyncDate first, then by lastSyncDate ascending (oldest first)
       docs.sort((a, b) {
         final aSync = a.data()['lastSyncDate'] as Timestamp?;
         final bSync = b.data()['lastSyncDate'] as Timestamp?;
@@ -747,7 +787,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
         return aSync.compareTo(bSync);
       });
 
-      // Take only the batch size
       final batchDocs = docs.take(_syncBatchSize).toList();
       final totalRemaining = docs.length;
 
@@ -770,7 +809,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
         _syncRemainingSeries = totalRemaining - batchDocs.length;
       });
 
-      // Collect (docId, tmdbId, title) pairs FIRST to prevent stale references
       final syncItems = <Map<String, dynamic>>[];
       for (int i = 0; i < batchDocs.length; i++) {
         final doc = batchDocs[i];
@@ -811,24 +849,20 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
 
           final firestoreData = TmdbService.mapTVToFirestore(fullDetails, _genreIdToName);
 
-          // Build SAFE update map — only TMDB fields, preserve user data
           final safeUpdate = <String, dynamic>{};
           for (final key in ['title', 'year', 'poster', 'backdrop', 'rating',
               'duration', 'isAdult', 'categories', 'directors', 'casts',
-              'tmdbId', 'country', 'seasons']) {
+              'tmdbId', 'country', 'seasons', 'status']) {
             if (firestoreData.containsKey(key)) {
               safeUpdate[key] = firestoreData[key];
             }
           }
 
-          // Conditionally include overview
-          if (!_skipDescriptionUpdate && firestoreData.containsKey('overview')) {
-            safeUpdate['overview'] = firestoreData['overview'];
-          }
+          // NEVER update overview during sync
+          // (overview is intentionally excluded from safeUpdate)
 
-          debugPrint('SYNC SERIES: safeUpdate title=${safeUpdate['title']} tmdbId=${safeUpdate['tmdbId']} duration=${safeUpdate['duration']}');
+          debugPrint('SYNC SERIES: safeUpdate title=${safeUpdate['title']} tmdbId=${safeUpdate['tmdbId']} duration=${safeUpdate['duration']} status=${safeUpdate['status']}');
 
-          // CRITICAL: Validate document still has the same tmdbId before updating
           final currentDoc = await FirebaseFirestore.instance
               .collection('movies')
               .doc(docId)
@@ -842,7 +876,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
               setState(() => _syncFailureCount++);
               continue;
             }
-            // Use Firestore Transaction for atomic read-then-write
             await FirebaseFirestore.instance.runTransaction((transaction) async {
               final freshDoc = await transaction.get(
                 FirebaseFirestore.instance.collection('movies').doc(docId),
@@ -876,9 +909,8 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
 
       if (mounted) {
         setState(() => _isSyncing = false);
-        // Refresh imported status and remaining counts after sync
         _loadImportedTmdbIds();
-        _loadSyncRemainingCounts();
+        _loadDashboardStats();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -896,6 +928,40 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
           SnackBar(content: Text('Sync error: $e'), backgroundColor: Colors.red),
         );
       }
+    }
+  }
+
+  /// Sync All: runs both movie and series sync sequentially
+  Future<void> _syncAll() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Sync All'),
+        content: Text(
+          'This will sync up to $_syncBatchSize movies AND $_syncBatchSize series from TMDB.\n\n'
+          'Metadata (rating, poster, backdrop, categories) will be updated, but overview/description will NOT be changed.\n\n'
+          'For ongoing series, episode counts will also be refreshed.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE50914)),
+            child: const Text('Sync All', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    // Run movie sync, then series sync (no extra confirmation dialogs)
+    await _doSyncMovies();
+    if (mounted && !_isSyncing) {
+      await _doSyncSeries();
     }
   }
 
@@ -934,6 +1000,8 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
     );
   }
 
+  // ==================== BUILD ====================
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -945,20 +1013,41 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
         backgroundColor: isDark ? const Color(0xFF121212) : null,
         appBar: AppBar(
           title: const Text('TMDB Generator'),
+          bottom: TabBar(
+            controller: _tabController,
+            tabs: const [
+              Tab(
+                icon: Icon(Icons.cloud_download, size: 18),
+                text: 'Import',
+              ),
+              Tab(
+                icon: Icon(Icons.sync, size: 18),
+                text: 'Sync From TMDB',
+              ),
+            ],
+            indicatorColor: const Color(0xFFE50914),
+            labelColor: const Color(0xFFE50914),
+            unselectedLabelColor: isDark ? Colors.white54 : Colors.black54,
+          ),
           actions: [
             // Search icon
             IconButton(
               icon: const Icon(Icons.search),
               onPressed: _isImporting || _isSyncing ? null : _showSearchDialog,
             ),
-            // Refresh imported status
+            // Refresh
             IconButton(
               icon: const Icon(Icons.refresh),
-              onPressed: _isImporting || _isSyncing ? null : _loadImportedTmdbIds,
-              tooltip: 'Refresh imported status',
+              onPressed: _isImporting || _isSyncing
+                  ? null
+                  : () {
+                      _loadImportedTmdbIds();
+                      _loadDashboardStats();
+                    },
+              tooltip: 'Refresh status',
             ),
-            // Selected count + Import button
-            if (_selectedIds.isNotEmpty)
+            // Selected count + Import button (only on Import tab)
+            if (_selectedIds.isNotEmpty && _tabController.index == 0)
               Padding(
                 padding: const EdgeInsets.only(right: 8),
                 child: Center(
@@ -981,17 +1070,342 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
             ? _buildImportProgress()
             : _isSyncing
                 ? _buildSyncProgress()
-                : Column(
+                : TabBarView(
+                    controller: _tabController,
                     children: [
-                      _buildFilterSection(isDark),
-                      _buildActionBar(isDark),
-                      Expanded(child: _buildResultsGrid(isDark)),
-                      _buildSyncSection(isDark),
+                      // Tab 1: Import
+                      _buildImportTab(isDark),
+                      // Tab 2: Sync Dashboard
+                      _buildSyncDashboardTab(isDark),
                     ],
                   ),
       ),
     );
   }
+
+  // ==================== IMPORT TAB ====================
+
+  Widget _buildImportTab(bool isDark) {
+    return Column(
+      children: [
+        _buildFilterSection(isDark),
+        _buildActionBar(isDark),
+        Expanded(child: _buildResultsGrid(isDark)),
+      ],
+    );
+  }
+
+  // ==================== SYNC DASHBOARD TAB ====================
+
+  Widget _buildSyncDashboardTab(bool isDark) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Row(
+            children: [
+              const Icon(Icons.dashboard, color: Color(0xFFE50914), size: 24),
+              const SizedBox(width: 10),
+              const Text(
+                'Sync Dashboard',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const Spacer(),
+              if (_isStatsLoading)
+                const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Color(0xFFE50914),
+                  ),
+                ),
+              if (!_isStatsLoading)
+                IconButton(
+                  icon: const Icon(Icons.refresh, size: 20),
+                  onPressed: _loadDashboardStats,
+                  tooltip: 'Refresh stats',
+                ),
+            ],
+          ),
+          const SizedBox(height: 20),
+
+          // Statistics Cards — 2x2 Grid
+          _buildStatsGrid(isDark),
+          const SizedBox(height: 20),
+
+          // Series Status Row
+          _buildSeriesStatusRow(isDark),
+          const SizedBox(height: 24),
+
+          // Manual Sync Section
+          _buildManualSyncSection(isDark),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatsGrid(bool isDark) {
+    return GridView.count(
+      crossAxisCount: 2,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      mainAxisSpacing: 12,
+      crossAxisSpacing: 12,
+      childAspectRatio: 1.8,
+      children: [
+        _buildStatCard(
+          isDark: isDark,
+          value: _totalMovies,
+          label: 'Total Movies',
+          icon: Icons.movie,
+          color: const Color(0xFFE50914),
+        ),
+        _buildStatCard(
+          isDark: isDark,
+          value: _totalSeries,
+          label: 'Total Series',
+          icon: Icons.tv,
+          color: const Color(0xFFE50914),
+        ),
+        _buildStatCard(
+          isDark: isDark,
+          value: _moviesNeedSync,
+          label: 'Movies Need Sync',
+          icon: Icons.sync_problem,
+          color: _moviesNeedSync > 0 ? Colors.orange : Colors.green,
+        ),
+        _buildStatCard(
+          isDark: isDark,
+          value: _seriesNeedSync,
+          label: 'Series Need Sync',
+          icon: Icons.sync_problem,
+          color: _seriesNeedSync > 0 ? Colors.orange : Colors.green,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSeriesStatusRow(bool isDark) {
+    return Row(
+      children: [
+        Expanded(
+          child: _buildStatCard(
+            isDark: isDark,
+            value: _ongoingSeries,
+            label: 'Ongoing Series',
+            icon: Icons.play_circle_filled,
+            color: Colors.blue,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _buildStatCard(
+            isDark: isDark,
+            value: _endedSeries,
+            label: 'Ended Series',
+            icon: Icons.stop_circle_outlined,
+            color: Colors.grey,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatCard({
+    required bool isDark,
+    required int value,
+    required String label,
+    required IconData icon,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isDark ? Colors.white10 : Colors.grey.shade200,
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: color, size: 18),
+              const Spacer(),
+              Text(
+                value.toString(),
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                  height: 1,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: isDark ? Colors.white54 : Colors.black54,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildManualSyncSection(bool isDark) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isDark ? Colors.white10 : Colors.grey.shade200,
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.sync, color: Color(0xFFE50914), size: 22),
+              const SizedBox(width: 10),
+              const Text(
+                'Manual Sync',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Sync will update metadata (rating, poster, backdrop) and fetch new episodes for ongoing series. '
+            'Overview/description will NOT be overwritten. Each batch processes up to $_syncBatchSize items.',
+            style: TextStyle(
+              fontSize: 13,
+              color: isDark ? Colors.white60 : Colors.black54,
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Expanded(
+                child: _buildSyncButton(
+                  label: 'Sync Series',
+                  subtitle: _seriesNeedSync > 0 ? '$_seriesNeedSync pending' : 'All synced',
+                  icon: Icons.tv,
+                  onPressed: _isSyncing ? null : _syncSeries,
+                  isDark: isDark,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _buildSyncButton(
+                  label: 'Sync Movies',
+                  subtitle: _moviesNeedSync > 0 ? '$_moviesNeedSync pending' : 'All synced',
+                  icon: Icons.movie,
+                  onPressed: _isSyncing ? null : _syncMovies,
+                  isDark: isDark,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _buildSyncButton(
+                  label: 'Sync All',
+                  subtitle: 'Movies + Series',
+                  icon: Icons.sync,
+                  onPressed: _isSyncing ? null : _syncAll,
+                  isDark: isDark,
+                  isPrimary: true,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSyncButton({
+    required String label,
+    required String subtitle,
+    required IconData icon,
+    required VoidCallback? onPressed,
+    required bool isDark,
+    bool isPrimary = false,
+  }) {
+    return ElevatedButton(
+      onPressed: onPressed,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: isPrimary ? const Color(0xFFE50914) : (isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade100),
+        foregroundColor: isPrimary ? Colors.white : (isDark ? Colors.white : Colors.black87),
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: isPrimary
+              ? BorderSide.none
+              : BorderSide(color: isDark ? Colors.white12 : Colors.grey.shade300),
+        ),
+        elevation: isPrimary ? 4 : 0,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 22),
+          const SizedBox(height: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            subtitle,
+            style: TextStyle(
+              fontSize: 10,
+              color: isPrimary ? Colors.white70 : (isDark ? Colors.white38 : Colors.black38),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==================== FILTER & RESULTS (Import Tab) ====================
 
   Widget _buildFilterSection(bool isDark) {
     final genres = _type == 'movie' ? _movieGenres : _tvGenres;
@@ -1405,7 +1819,6 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  // Poster image
                   ClipRRect(
                     borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
                     child: posterPath != null && posterPath.isNotEmpty
@@ -1474,12 +1887,12 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(Icons.star, size: 12, color: Colors.amber),
+                            const Icon(Icons.star, size: 12, color: Color(0xFFFF0000)),
                             const SizedBox(width: 2),
                             Text(
                               rating.toStringAsFixed(1),
                               style: const TextStyle(
-                                color: Colors.amber,
+                                color: Color(0xFFFF0000),
                                 fontSize: 11,
                                 fontWeight: FontWeight.bold,
                               ),
@@ -1513,7 +1926,7 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
                 ],
               ),
             ),
-            // Info section - compact for 3-column grid
+            // Info section
             Expanded(
               flex: 2,
               child: Padding(
@@ -1552,125 +1965,7 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage> {
     );
   }
 
-  Widget _buildSyncSection(bool isDark) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E1E1E) : Colors.grey.shade100,
-        border: Border(
-          top: BorderSide(
-            color: isDark ? Colors.white12 : Colors.grey.shade300,
-          ),
-        ),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.sync, color: Color(0xFFE50914), size: 18),
-              const SizedBox(width: 8),
-              const Text(
-                'Sync from TMDB',
-                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-              ),
-              const Spacer(),
-              // Skip Description Toggle
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'Skip Description',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: isDark ? Colors.white54 : Colors.black54,
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  SizedBox(
-                    height: 28,
-                    child: Switch(
-                      value: _skipDescriptionUpdate,
-                      onChanged: (val) {
-                        setState(() => _skipDescriptionUpdate = val);
-                      },
-                      activeColor: const Color(0xFFE50914),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  children: [
-                    ElevatedButton.icon(
-                      onPressed: _isSyncing ? null : _syncMovies,
-                      icon: const Icon(Icons.movie, size: 16),
-                      label: const Text('Sync Movies', style: TextStyle(fontSize: 12)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFE50914),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                    ),
-                    if (_syncRemainingMovies > 0)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text(
-                          '$_syncRemainingMovies remaining',
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: isDark ? Colors.white54 : Colors.black54,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  children: [
-                    ElevatedButton.icon(
-                      onPressed: _isSyncing ? null : _syncSeries,
-                      icon: const Icon(Icons.tv, size: 16),
-                      label: const Text('Sync Series', style: TextStyle(fontSize: 12)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFE50914),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                    ),
-                    if (_syncRemainingSeries > 0)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text(
-                          '$_syncRemainingSeries remaining',
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: isDark ? Colors.white54 : Colors.black54,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
+  // ==================== PROGRESS OVERLAYS ====================
 
   Widget _buildImportProgress() {
     final progress = _importTotal > 0 ? _importProgress / _importTotal : 0.0;

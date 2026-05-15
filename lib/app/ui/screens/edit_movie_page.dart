@@ -534,6 +534,8 @@ class _EditMoviePageState extends State<EditMoviePage> {
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text(link.serverName, style: const TextStyle(fontWeight: FontWeight.w500)),
+                                      if (link.fileName != null && link.fileName!.isNotEmpty)
+                                        Text(link.fileName!, style: TextStyle(fontSize: 11, color: isDark ? Colors.white54 : Colors.black54)),
                                       Text('${link.quality ?? ''} ${link.size ?? ''}'.trim(),
                                           style: TextStyle(fontSize: 11, color: isDark ? Colors.white38 : Colors.black38)),
                                     ],
@@ -695,6 +697,7 @@ class _EditMoviePageState extends State<EditMoviePage> {
     final urlController = TextEditingController();
     final qualityController = TextEditingController();
     final sizeController = TextEditingController();
+    final fileNameController = TextEditingController();
 
     showDialog<bool>(
       context: context,
@@ -711,6 +714,8 @@ class _EditMoviePageState extends State<EditMoviePage> {
                   items: _serverOptions.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
                   onChanged: (v) => setDialogState(() => selectedServer = v),
                 ),
+                const SizedBox(height: 8),
+                TextField(controller: fileNameController, decoration: const InputDecoration(labelText: 'File Name', hintText: 'e.g. Movie_Name_1080p.mkv')),
                 const SizedBox(height: 8),
                 TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. 4K, 1080p, 720p')),
                 const SizedBox(height: 8),
@@ -734,6 +739,7 @@ class _EditMoviePageState extends State<EditMoviePage> {
             url: urlController.text.trim(),
             quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
             size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+            fileName: fileNameController.text.trim().isEmpty ? null : fileNameController.text.trim(),
           ));
         });
       }
@@ -796,6 +802,7 @@ class _EditMoviePageState extends State<EditMoviePage> {
     final urlController = TextEditingController(text: link.url);
     final qualityController = TextEditingController(text: link.quality ?? '');
     final sizeController = TextEditingController(text: link.size ?? '');
+    final fileNameController = TextEditingController(text: link.fileName ?? '');
 
     showDialog<bool>(
       context: context,
@@ -812,6 +819,8 @@ class _EditMoviePageState extends State<EditMoviePage> {
                   items: _serverOptions.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
                   onChanged: (v) => setDialogState(() => selectedServer = v),
                 ),
+                const SizedBox(height: 8),
+                TextField(controller: fileNameController, decoration: const InputDecoration(labelText: 'File Name', hintText: 'e.g. Movie_Name_1080p.mkv')),
                 const SizedBox(height: 8),
                 TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. 4K, 1080p, 720p')),
                 const SizedBox(height: 8),
@@ -835,6 +844,7 @@ class _EditMoviePageState extends State<EditMoviePage> {
             url: urlController.text.trim(),
             quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
             size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+            fileName: fileNameController.text.trim().isEmpty ? null : fileNameController.text.trim(),
           );
         });
       }
@@ -1044,6 +1054,7 @@ class _EditMoviePageState extends State<EditMoviePage> {
     final qualityController = TextEditingController();
     final sizeController = TextEditingController();
     final urlController = TextEditingController();
+    final fileNameController = TextEditingController();
 
     showDialog<bool>(
       context: context,
@@ -1062,6 +1073,8 @@ class _EditMoviePageState extends State<EditMoviePage> {
                   items: _serverOptions.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
                   onChanged: (v) => setDialogState(() => selectedServer = v),
                 ),
+                const SizedBox(height: 8),
+                TextField(controller: fileNameController, decoration: const InputDecoration(labelText: 'File Name', hintText: 'e.g. Movie_Name_1080p.mkv')),
                 const SizedBox(height: 8),
                 TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. 4K, 1080p')),
                 const SizedBox(height: 8),
@@ -1088,6 +1101,7 @@ class _EditMoviePageState extends State<EditMoviePage> {
               url: urlController.text.trim(),
               quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
               size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+              fileName: fileNameController.text.trim().isEmpty ? null : fileNameController.text.trim(),
             ));
           } else {
             _seasons[seasonIndex].episodes.add(Episode(
@@ -1098,6 +1112,7 @@ class _EditMoviePageState extends State<EditMoviePage> {
                   url: urlController.text.trim(),
                   quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
                   size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+                  fileName: fileNameController.text.trim().isEmpty ? null : fileNameController.text.trim(),
                 ),
               ],
               watchLinks: [],
@@ -1183,6 +1198,7 @@ class _EditMoviePageState extends State<EditMoviePage> {
     final qualityController = TextEditingController();
     final sizeController = TextEditingController();
     final urlController = TextEditingController();
+    final fileNameController = TextEditingController();
 
     showDialog<bool>(
       context: context,
@@ -1199,6 +1215,8 @@ class _EditMoviePageState extends State<EditMoviePage> {
                   items: _serverOptions.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
                   onChanged: (v) => setDialogState(() => selectedServer = v),
                 ),
+                const SizedBox(height: 8),
+                TextField(controller: fileNameController, decoration: const InputDecoration(labelText: 'File Name', hintText: 'e.g. Movie_Name_1080p.mkv')),
                 const SizedBox(height: 8),
                 TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. 720p, 1080p')),
                 const SizedBox(height: 8),
@@ -1222,6 +1240,7 @@ class _EditMoviePageState extends State<EditMoviePage> {
             url: urlController.text.trim(),
             quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
             size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+            fileName: fileNameController.text.trim().isEmpty ? null : fileNameController.text.trim(),
           ));
         });
       }
@@ -1285,6 +1304,7 @@ class _EditMoviePageState extends State<EditMoviePage> {
     final qualityController = TextEditingController(text: link.quality ?? '');
     final sizeController = TextEditingController(text: link.size ?? '');
     final urlController = TextEditingController(text: link.url);
+    final fileNameController = TextEditingController(text: link.fileName ?? '');
 
     showDialog<bool>(
       context: context,
@@ -1301,6 +1321,8 @@ class _EditMoviePageState extends State<EditMoviePage> {
                   items: _serverOptions.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
                   onChanged: (v) => setDialogState(() => selectedServer = v),
                 ),
+                const SizedBox(height: 8),
+                TextField(controller: fileNameController, decoration: const InputDecoration(labelText: 'File Name', hintText: 'e.g. Movie_Name_1080p.mkv')),
                 const SizedBox(height: 8),
                 TextField(controller: qualityController, decoration: const InputDecoration(labelText: 'Quality', hintText: 'e.g. 4K, 1080p')),
                 const SizedBox(height: 8),
@@ -1324,6 +1346,7 @@ class _EditMoviePageState extends State<EditMoviePage> {
             url: urlController.text.trim(),
             quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
             size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+            fileName: fileNameController.text.trim().isEmpty ? null : fileNameController.text.trim(),
           );
         });
       }

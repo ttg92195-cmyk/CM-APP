@@ -96,8 +96,8 @@ class _SeriesWatchScreenState extends State<SeriesWatchScreen> {
                           season.name,
                           style: TextStyle(
                             color: isDark ? Colors.white : Colors.black87,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 16,
                           ),
                         ),
                         subtitle: Text(
@@ -115,6 +115,8 @@ class _SeriesWatchScreenState extends State<SeriesWatchScreen> {
                               children: [
                                 // Episode button
                                 InkWell(
+                                  splashColor: Colors.transparent,
+                                  highlightColor: Colors.transparent,
                                   onTap: episode.watchLinks.isNotEmpty
                                       ? () {
                                           setState(() {
@@ -147,8 +149,8 @@ class _SeriesWatchScreenState extends State<SeriesWatchScreen> {
                                             episode.name,
                                             style: TextStyle(
                                               color: episode.watchLinks.isNotEmpty ? bodyTextColor : metaTextColor,
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w500,
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.w600,
                                             ),
                                           ),
                                         ),
@@ -174,7 +176,7 @@ class _SeriesWatchScreenState extends State<SeriesWatchScreen> {
                                         cardBgColor: cardBgColor,
                                       )),
                                 ],
-                                const Divider(height: 1, thickness: 0.5),
+                                const SizedBox.shrink(),
                               ],
                             );
                           }),

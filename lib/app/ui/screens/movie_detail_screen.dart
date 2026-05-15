@@ -747,13 +747,14 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                                 fontWeight: FontWeight.w600)),
                         const SizedBox(height: 8),
                         SizedBox(
-                          height: 110,
+                          height: 120,
                           child: ListView.builder(
                             scrollDirection: Axis.horizontal,
                             clipBehavior: Clip.none,
                             itemCount: detail.casts.length,
                             itemBuilder: (context, index) {
                               final cast = detail.casts[index];
+                              final hasProfile = cast.fullProfileUrl.isNotEmpty;
                               return GestureDetector(
                                 onTap: () {
                                   Navigator.push(
@@ -767,51 +768,48 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                                   padding: const EdgeInsets.only(right: 14),
                                   child: Column(
                                     children: [
-                                      CircleAvatar(
-                                        radius: 34,
-                                        backgroundColor: isDark
-                                            ? const Color(0xFF1E1E1E)
-                                            : Colors.grey.shade300,
+                                      Container(
+                                        width: 68,
+                                        height: 68,
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          gradient: hasProfile
+                                              ? null
+                                              : LinearGradient(
+                                                  begin: Alignment.topLeft,
+                                                  end: Alignment.bottomRight,
+                                                  colors: isDark
+                                                      ? [const Color(0xFF3A3A3A), const Color(0xFF2A2A2A)]
+                                                      : [Colors.grey.shade400, Colors.grey.shade300],
+                                                ),
+                                          color: hasProfile
+                                              ? (isDark ? const Color(0xFF1E1E1E) : Colors.grey.shade300)
+                                              : null,
+                                        ),
                                         child: ClipOval(
-                                          child: cast.fullProfileUrl.isNotEmpty
+                                          child: hasProfile
                                               ? CachedNetworkImage(
                                                   imageUrl: cast.fullProfileUrl,
                                                   fit: BoxFit.cover,
                                                   width: 68,
                                                   height: 68,
                                                   placeholder: (context, url) =>
-                                                      const Center(
-                                                          child:
-                                                              CircularProgressIndicator(
-                                                                  strokeWidth: 2)),
-                                                  errorWidget: (context, url, error) =>
                                                       Center(
-                                                    child: Text(
-                                                      cast.name.isNotEmpty
-                                                          ? cast.name[0].toUpperCase()
-                                                          : '?',
-                                                      style: TextStyle(
-                                                          color: isDark
-                                                              ? Colors.white54
-                                                              : Colors.black54,
-                                                          fontSize: 24,
-                                                          fontWeight: FontWeight.bold),
-                                                    ),
-                                                  ),
+                                                        child: SizedBox(
+                                                          width: 20,
+                                                          height: 20,
+                                                          child: CircularProgressIndicator(
+                                                            strokeWidth: 2,
+                                                            valueColor: AlwaysStoppedAnimation<Color>(
+                                                              const Color(0xFFE50914).withOpacity(0.6),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                  errorWidget: (context, url, error) =>
+                                                      _buildFallbackAvatar(cast.name, isDark),
                                                 )
-                                              : Center(
-                                                  child: Text(
-                                                    cast.name.isNotEmpty
-                                                        ? cast.name[0].toUpperCase()
-                                                        : '?',
-                                                    style: TextStyle(
-                                                        color: isDark
-                                                            ? Colors.white54
-                                                            : Colors.black54,
-                                                        fontSize: 24,
-                                                        fontWeight: FontWeight.bold),
-                                                  ),
-                                                ),
+                                              : _buildFallbackAvatar(cast.name, isDark),
                                         ),
                                       ),
                                       const SizedBox(height: 6),
@@ -946,6 +944,57 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                     color: bodyTextColor,
                     fontSize: 13,
                     height: 1.4)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Beautiful fallback avatar for cast members without profile photos
+  /// Shows a gradient circle with a person silhouette icon + initial letter
+  Widget _buildFallbackAvatar(String name, bool isDark) {
+    final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
+    return Container(
+      width: 68,
+      height: 68,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: isDark
+              ? [const Color(0xFF3A3A3A), const Color(0xFF252525)]
+              : [Colors.grey.shade400, Colors.grey.shade300],
+        ),
+      ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // Person silhouette icon (subtle background)
+          Icon(
+            Icons.person,
+            size: 36,
+            color: isDark
+                ? Colors.white.withOpacity(0.15)
+                : Colors.white.withOpacity(0.5),
+          ),
+          // Initial letter overlay
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: const Color(0xFFE50914).withOpacity(isDark ? 0.85 : 0.9),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              initial,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ),
         ],
       ),
