@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
@@ -21,7 +22,15 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   final FirestoreContentService _contentService = FirestoreContentService();
   late TabController _tabController;
 
-  List<Movie> _allPosts = [];
+  // Pagination state
+  static const int _pageSize = 30;
+  int _currentPage = 1;
+  bool _hasMore = true;
+  bool _isLoadingPage = false;
+  List<DocumentSnapshot> _pageLastDocs = []; // lastDoc for each loaded page
+  Map<int, List<Movie>> _pageCache = {}; // cached posts per page
+
+  List<Movie> _allPosts = []; // accumulated posts for search/filter
   List<Movie> _filteredPosts = [];
   List<TagAndGenres> _genres = [];
   List<TagAndGenres> _tags = [];
@@ -43,7 +52,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
-    _loadData();
+    _loadInitialData();
   }
 
   @override
@@ -52,21 +61,38 @@ class _AdminPanelPageState extends State<AdminPanelPage>
     super.dispose();
   }
 
-  Future<void> _loadData() async {
+  /// Load initial data: first page of posts + genres/tags/collections
+  Future<void> _loadInitialData() async {
     setState(() => _isLoading = true);
     try {
+      // Reset pagination state
+      _currentPage = 1;
+      _hasMore = true;
+      _pageLastDocs = [];
+      _pageCache = {};
+      _allPosts = [];
+
       final results = await Future.wait([
-        _contentService.getAllPosts(limit: 100),
+        _contentService.getAllPosts(limit: _pageSize),
         _contentService.getGenres(),
         _contentService.getTags(),
         _contentService.getCollections(),
       ]);
 
       if (mounted) {
-        final posts = (results[0] as Map<String, dynamic>)['movies'] as List<Movie>;
+        final postsData = results[0] as Map<String, dynamic>;
+        final posts = postsData['movies'] as List<Movie>;
+        final hasMore = postsData['hasMore'] as bool;
+        final lastDoc = postsData['lastDoc'] as DocumentSnapshot?;
+
         setState(() {
-          _allPosts = posts;
-          _filteredPosts = posts;
+          _pageCache[1] = posts;
+          _allPosts = List.from(posts);
+          _filteredPosts = List.from(posts);
+          _hasMore = hasMore;
+          if (lastDoc != null) {
+            _pageLastDocs = [lastDoc];
+          }
           _genres = results[1] as List<TagAndGenres>;
           _tags = results[2] as List<TagAndGenres>;
           _collections = results[3] as List<TagAndGenres>;
@@ -76,6 +102,98 @@ class _AdminPanelPageState extends State<AdminPanelPage>
     } catch (e) {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  /// Load a specific page of posts
+  Future<void> _loadPage(int page) async {
+    if (page < 1) return;
+    if (_isLoadingPage) return;
+
+    // If page is cached, just switch to it
+    if (_pageCache.containsKey(page)) {
+      setState(() {
+        _currentPage = page;
+        _applyFilters();
+      });
+      return;
+    }
+
+    // Can only load next page if we have the previous page's last doc
+    if (page > 1 && _pageLastDocs.length < page - 1) return;
+
+    // Can't go beyond available pages
+    if (page > 1 && !_hasMore && _pageCache[page - 1] != null) {
+      // We've reached the end
+      return;
+    }
+
+    setState(() => _isLoadingPage = true);
+
+    try {
+      DocumentSnapshot? startAfter;
+      if (page > 1 && _pageLastDocs.length >= page - 1) {
+        startAfter = _pageLastDocs[page - 2]; // last doc of previous page
+      }
+
+      final result = await _contentService.getAllPosts(
+        limit: _pageSize,
+        startAfter: startAfter,
+      );
+
+      if (mounted) {
+        final posts = result['movies'] as List<Movie>;
+        final hasMore = result['hasMore'] as bool;
+        final lastDoc = result['lastDoc'] as DocumentSnapshot?;
+
+        setState(() {
+          _pageCache[page] = posts;
+          _hasMore = hasMore;
+          if (lastDoc != null) {
+            // Ensure we have lastDocs for all pages up to this one
+            while (_pageLastDocs.length < page) {
+              if (_pageLastDocs.length == page - 1) {
+                _pageLastDocs.add(lastDoc);
+              } else {
+                // This shouldn't happen, but handle gracefully
+                _pageLastDocs.add(lastDoc);
+              }
+            }
+          }
+          // Accumulate posts for search/filter
+          _allPosts = [];
+          for (int i = 1; i <= _pageCache.keys.reduce((a, b) => a > b ? a : b); i++) {
+            if (_pageCache.containsKey(i)) {
+              _allPosts.addAll(_pageCache[i]!);
+            }
+          }
+          _currentPage = page;
+          _applyFilters();
+          _isLoadingPage = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoadingPage = false);
+    }
+  }
+
+  /// Go to next page
+  void _nextPage() {
+    if (_hasMore || _pageCache.containsKey(_currentPage + 1)) {
+      _loadPage(_currentPage + 1);
+    }
+  }
+
+  /// Go to previous page
+  void _prevPage() {
+    if (_currentPage > 1) {
+      _loadPage(_currentPage - 1);
+    }
+  }
+
+  /// Get total number of pages we know about
+  int get _knownPages {
+    final maxCached = _pageCache.keys.fold(0, (a, b) => a > b ? a : b);
+    return _hasMore ? maxCached + 1 : maxCached;
   }
 
   void _filterPosts(String query) {
@@ -121,7 +239,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
 
   Future<void> _bulkDeleteSelected() async {
     if (_selectedPostIds.isEmpty) return;
-    final count = _selectedPostIds.length;
+    final count = _selectedPostIds.size;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -155,7 +273,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
         } catch (_) {}
       }
       _selectedPostIds.clear();
-      await _loadData();
+      await _loadInitialData();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Deleted $deleted post${deleted > 1 ? 's' : ''} successfully')),
@@ -183,7 +301,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
 
     if (confirmed == true) {
       await _contentService.deleteMovie(id);
-      _loadData();
+      _loadInitialData();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Deleted successfully')));
       }
@@ -196,8 +314,21 @@ class _AdminPanelPageState extends State<AdminPanelPage>
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
+    // Get current page posts
+    final currentPagePosts = _pageCache[_currentPage] ?? [];
     final movies = _filteredPosts.where((p) => p.type != 'series').toList();
     final series = _filteredPosts.where((p) => p.type == 'series').toList();
+
+    // For tab view, use filtered posts from current page
+    final currentAllPosts = _searchQuery.isNotEmpty || _filterGenre != null || _filterYear != null
+        ? _filteredPosts
+        : currentPagePosts;
+    final currentMovies = _searchQuery.isNotEmpty || _filterGenre != null || _filterYear != null
+        ? movies
+        : currentPagePosts.where((p) => p.type != 'series').toList();
+    final currentSeries = _searchQuery.isNotEmpty || _filterGenre != null || _filterYear != null
+        ? series
+        : currentPagePosts.where((p) => p.type == 'series').toList();
 
     return Scaffold(
       appBar: AppBar(
@@ -206,10 +337,10 @@ class _AdminPanelPageState extends State<AdminPanelPage>
           controller: _tabController,
           isScrollable: true,
           tabs: [
-            Tab(text: 'All (${_filteredPosts.length})'),
-            Tab(text: 'Movies (${movies.length})'),
-            Tab(text: 'Series (${series.length})'),
-            Tab(text: 'Genres/Tags'),
+            Tab(text: 'All (${currentAllPosts.length})'),
+            Tab(text: 'Movies (${currentMovies.length})'),
+            Tab(text: 'Series (${currentSeries.length})'),
+            const Tab(text: 'Genres/Tags'),
           ],
         ),
       ),
@@ -218,9 +349,9 @@ class _AdminPanelPageState extends State<AdminPanelPage>
           : TabBarView(
               controller: _tabController,
               children: [
-                _buildPostsTab(_filteredPosts, isDark),
-                _buildPostsTab(movies, isDark),
-                _buildPostsTab(series, isDark),
+                _buildPostsTab(currentAllPosts, isDark),
+                _buildPostsTab(currentMovies, isDark),
+                _buildPostsTab(currentSeries, isDark),
                 _buildGenresTagsTab(isDark),
               ],
             ),
@@ -254,7 +385,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => const AddMoviePage(initialType: 'movie')),
-                ).then((_) => _loadData());
+                ).then((_) => _loadInitialData());
               },
             ),
             ListTile(
@@ -265,7 +396,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => const AddSeriesPage()),
-                ).then((_) => _loadData());
+                ).then((_) => _loadInitialData());
               },
             ),
           ],
@@ -327,18 +458,148 @@ class _AdminPanelPageState extends State<AdminPanelPage>
         ),
         // Filter bar
         _buildFilterBar(isDark),
+        // Posts list
         Expanded(
-          child: posts.isEmpty
-              ? const Center(child: Text('No posts found.'))
-              : ListView.builder(
-                  itemCount: posts.length,
-                  itemBuilder: (context, index) {
-                    final post = posts[index];
-                    return _buildPostListItem(post, isDark);
-                  },
-                ),
+          child: _isLoadingPage
+              ? const Center(
+                  child: SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              : posts.isEmpty
+                  ? const Center(child: Text('No posts found.'))
+                  : ListView.builder(
+                      itemCount: posts.length,
+                      itemBuilder: (context, index) {
+                        final post = posts[index];
+                        return _buildPostListItem(post, isDark);
+                      },
+                    ),
         ),
+        // Pagination controls - only show when not searching/filtering
+        if (_searchQuery.isEmpty && _filterGenre == null && _filterYear == null)
+          _buildPaginationControls(isDark),
       ],
+    );
+  }
+
+  Widget _buildPaginationControls(bool isDark) {
+    final knownPages = _knownPages;
+    final currentPage = _currentPage;
+
+    // Calculate which page numbers to show
+    List<int> pageNumbers = [];
+    if (knownPages <= 7) {
+      // Show all pages if 7 or fewer
+      for (int i = 1; i <= knownPages; i++) {
+        pageNumbers.add(i);
+      }
+    } else {
+      // Show: 1 ... currentPage-1 currentPage currentPage+1 ... lastKnown
+      pageNumbers.add(1);
+      if (currentPage > 3) pageNumbers.add(-1); // -1 represents ellipsis
+      for (int i = currentPage - 1; i <= currentPage + 1; i++) {
+        if (i > 1 && i < knownPages) pageNumbers.add(i);
+      }
+      if (currentPage < knownPages - 2) pageNumbers.add(-2); // -2 represents ellipsis
+      pageNumbers.add(knownPages);
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade100,
+        border: Border(
+          top: BorderSide(
+            color: isDark ? Colors.white12 : Colors.grey.shade300,
+            width: 0.5,
+          ),
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // Previous button
+            IconButton(
+              onPressed: currentPage > 1 ? _prevPage : null,
+              icon: const Icon(Icons.chevron_left),
+              iconSize: 22,
+              padding: const EdgeInsets.all(4),
+              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+              style: IconButton.styleFrom(
+                foregroundColor: currentPage > 1
+                    ? const Color(0xFFE50914)
+                    : (isDark ? Colors.white24 : Colors.grey.shade400),
+              ),
+            ),
+            const SizedBox(width: 4),
+            // Page numbers
+            ...pageNumbers.map((pageNum) {
+              if (pageNum < 0) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Text(
+                    '...',
+                    style: TextStyle(
+                      color: isDark ? Colors.white38 : Colors.black38,
+                      fontSize: 14,
+                    ),
+                  ),
+                );
+              }
+              final isCurrentPage = pageNum == currentPage;
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: Material(
+                  color: isCurrentPage
+                      ? const Color(0xFFE50914)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                  child: InkWell(
+                    onTap: () => _loadPage(pageNum),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      width: 36,
+                      height: 36,
+                      alignment: Alignment.center,
+                      child: Text(
+                        '$pageNum',
+                        style: TextStyle(
+                          color: isCurrentPage
+                              ? Colors.white
+                              : (isDark ? Colors.white70 : Colors.black87),
+                          fontWeight: isCurrentPage ? FontWeight.bold : FontWeight.normal,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }),
+            const SizedBox(width: 4),
+            // Next button
+            IconButton(
+              onPressed: _hasMore || _pageCache.containsKey(currentPage + 1)
+                  ? _nextPage
+                  : null,
+              icon: const Icon(Icons.chevron_right),
+              iconSize: 22,
+              padding: const EdgeInsets.all(4),
+              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+              style: IconButton.styleFrom(
+                foregroundColor: _hasMore || _pageCache.containsKey(currentPage + 1)
+                    ? const Color(0xFFE50914)
+                    : (isDark ? Colors.white24 : Colors.grey.shade400),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -526,11 +787,11 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                       if (post.year != null && post.year!.isNotEmpty)
                         Text(post.year!, style: TextStyle(fontSize: 12, color: isDark ? Colors.white54 : Colors.black54)),
                       if (post.year != null && post.year!.isNotEmpty)
-                        const Text(' • ', style: TextStyle(fontSize: 12)),
+                        const Text(' \u2022 ', style: TextStyle(fontSize: 12)),
                       if (post.rating != null && post.rating!.isNotEmpty) ...[
                         const Icon(Icons.star, size: 12, color: Color(0xFFFF0000)),
                         Text(post.rating!, style: const TextStyle(fontSize: 12, color: Color(0xFFFF0000))),
-                        const Text(' • ', style: TextStyle(fontSize: 12)),
+                        const Text(' \u2022 ', style: TextStyle(fontSize: 12)),
                       ],
                       Text(
                         post.timeAgo.isNotEmpty ? post.timeAgo : 'Unknown',
@@ -580,7 +841,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                     Navigator.push(
                       context,
                       MaterialPageRoute(builder: (_) => EditMoviePage(movieId: post.id)),
-                    ).then((_) => _loadData());
+                    ).then((_) => _loadInitialData());
                   },
                 ),
                 IconButton(
@@ -679,7 +940,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
         } else if (genresTagsSubTab == 2) {
           await _contentService.addCollection(controller.text.trim());
         }
-        _loadData();
+        _loadInitialData();
       }
     });
   }
@@ -701,7 +962,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
       if (type == 'genre') await _contentService.updateGenre(item.id, result);
       else if (type == 'tag') await _contentService.updateTag(item.id, result);
       else await _contentService.updateCollection(item.id, result);
-      _loadData();
+      _loadInitialData();
     }
   }
 
@@ -721,7 +982,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
       if (type == 'genre') await _contentService.deleteGenre(item.id);
       else if (type == 'tag') await _contentService.deleteTag(item.id);
       else await _contentService.deleteCollection(item.id);
-      _loadData();
+      _loadInitialData();
     }
   }
 }
