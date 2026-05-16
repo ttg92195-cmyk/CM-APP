@@ -83,6 +83,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   // CRITICAL: Flag to prevent post-disposal crashes
   bool _isDisposed = false;
 
+  // Global lock: prevent creating a new Player while one is still being disposed
+  // This is the main cause of the re-entry crash — native libmpv needs time
+  // to fully release resources before a new Player can be created safely.
+  static bool _isPlayerDisposing = false;
+
   // Hardware/Software decoding fallback
   bool _useSoftwareDecoding = false;
   int _retryCount = 0;
@@ -218,9 +223,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     _isExiting = true; // Prevent double-exit
 
     try {
-      // 1. Pause player immediately to stop native engine processing
-      //    This reduces the chance of native crash after dispose
+      // 1. Stop and pause player immediately to release native resources
+      //    stop() releases the media stream and frees decoder hardware (MediaCodec),
+      //    which is critical for preventing native crashes on re-entry.
       if (!_isDisposed) {
+        try { _player.stop(); } catch (_) {}
         try { _player.pause(); } catch (_) {}
       }
 
@@ -283,8 +290,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
     _streamSubscriptions.clear();
 
-    // FIX: Pause player BEFORE disposing to reduce native crash risk.
+    // FIX: Stop player BEFORE disposing to reduce native crash risk.
     // media_kit's libmpv engine can crash if disposed while actively decoding.
+    // We use stop() instead of pause() because stop() releases the media stream
+    // and frees native decoder resources, while pause() keeps them allocated.
+    // This is critical for re-entry — if decoder resources aren't freed,
+    // creating a new Player will conflict with the old one and crash the app.
+    _isPlayerDisposing = true; // Lock to prevent new Player creation while disposing
+    try { _player.stop(); } catch (_) {}
     try { _player.pause(); } catch (_) {}
 
     // Save position using last known values (doesn't read from player)
@@ -292,6 +305,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
     // Dispose player — wrap in try-catch because native crash may throw
     try { _player.dispose(); } catch (e) { debugPrint('Player dispose error: $e'); }
+
+    // Release the global lock after a short delay to allow native cleanup.
+    // libmpv's native cleanup is async — it needs time to release decoder
+    // hardware (MediaCodec), GPU surfaces, and demuxer resources.
+    // Without this delay, re-entering the player and creating a new Player
+    // immediately can cause a native crash (SIGSEGV) that kills the app.
+    Future.delayed(const Duration(milliseconds: 500), () {
+      _isPlayerDisposing = false;
+    });
 
     // Reset brightness to system default
     try { ScreenBrightness().resetScreenBrightness(); } catch (_) {}
@@ -523,6 +545,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           });
         }
         return;
+      }
+
+      // FIX: Wait for any previous Player to finish disposing before creating a new one.
+      // This is critical for the re-entry crash fix — if we create a new Player while
+      // the old one's native libmpv resources are still being released, the native engine
+      // will crash (SIGSEGV), killing the entire app.
+      // The lock is set in dispose() and released after 500ms delay.
+      int waitCount = 0;
+      while (_isPlayerDisposing && waitCount < 20) {
+        await Future.delayed(const Duration(milliseconds: 100));
+        waitCount++;
+        if (_isDisposed) return; // Widget was disposed while waiting
       }
 
       // ==============================================================
@@ -877,10 +911,30 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
     if (isCodecError && _retryCount < _maxRetries && !_useSoftwareDecoding) {
       _retryCount++;
-      _player.dispose();
+
+      // FIX: Cancel all stream subscriptions BEFORE disposing the player.
+      // Without this, stream callbacks fire on the old (disposed) player,
+      // causing setState() on invalid state → unhandled exception → app crash.
+      for (final sub in _streamSubscriptions) {
+        try { sub.cancel(); } catch (_) {}
+      }
+      _streamSubscriptions.clear();
+
+      // Stop the player to release media resources, then dispose
+      try { _player.stop(); } catch (_) {}
+      try { _player.pause(); } catch (_) {}
+      try { _player.dispose(); } catch (_) {}
+
       _useSoftwareDecoding = true;
       _hasVideoOutput = false;
-      _initializePlayer();
+
+      // FIX: Add a delay before re-initializing to let native libmpv release resources.
+      // Without this, the new Player conflicts with the old one's native state → crash.
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (mounted && !_isDisposed) {
+          _initializePlayer();
+        }
+      });
     } else if (mounted) {
       setState(() {
         _isInitialized = true;
