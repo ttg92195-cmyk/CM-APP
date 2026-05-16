@@ -65,9 +65,13 @@ class TrendingMovieComponent extends StatelessWidget {
             itemCount: movies.length,
             itemBuilder: (context, index) {
               final movie = movies[index];
-              return MovieCard(
-                movie: movie,
-                onTap: () => onMovieTap(movie),
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: MovieCard(
+                  movie: movie,
+                  cardWidth: 130,
+                  onTap: () => onMovieTap(movie),
+                ),
               );
             },
           ),

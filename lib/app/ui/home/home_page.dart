@@ -38,9 +38,25 @@ class _HomePageState extends State<HomePage> {
   final GlobalKey<State<MoviesPage>> _moviesKey = GlobalKey();
   final GlobalKey<State<SeriesPage>> _seriesKey = GlobalKey();
 
+  // Tab pages - created once to preserve state across tab switches
+  late final List<Widget> _bottomNavPages;
+
   // Double-back-to-exit: prevent accidental app exit from root route
   bool _canExit = false;
   Timer? _exitTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _bottomNavPages = [
+      HomeScreen(onNavigateToTab: (index) {
+        setState(() => _currentIndex = index);
+      }),
+      MoviesPage(key: _moviesKey),
+      SeriesPage(key: _seriesKey),
+      const SettingsPage(),
+    ];
+  }
 
   @override
   void dispose() {
@@ -54,14 +70,7 @@ class _HomePageState extends State<HomePage> {
     final theme = Theme.of(context);
 
     // Bottom Nav pages (4 main tabs: Home, Movies, Series, Settings)
-    final List<Widget> bottomNavPages = [
-      HomeScreen(onNavigateToTab: (index) {
-        setState(() => _currentIndex = index);
-      }),
-      MoviesPage(key: _moviesKey),
-      SeriesPage(key: _seriesKey),
-      const SettingsPage(),
-    ];
+    // Pages are created once in initState to preserve state across tab switches
 
     return PopScope(
       // Prevent accidental app exit: require double-back press
@@ -124,7 +133,7 @@ class _HomePageState extends State<HomePage> {
         children: [
           IndexedStack(
             index: _currentIndex,
-            children: bottomNavPages,
+            children: _bottomNavPages,
           ),
           // Floating download progress indicator - shows when downloads are active
           Positioned(

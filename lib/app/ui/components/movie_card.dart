@@ -6,11 +6,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 class MovieCard extends StatefulWidget {
   final Movie movie;
   final VoidCallback onTap;
+  final double? cardWidth; // Optional fixed width for horizontal lists
 
   const MovieCard({
     super.key,
     required this.movie,
     required this.onTap,
+    this.cardWidth,
   });
 
   @override
@@ -52,9 +54,7 @@ class _MovieCardState extends State<MovieCard> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    return GestureDetector(
-      onTap: widget.onTap,
-      child: Column(
+    Widget cardContent = Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -295,7 +295,16 @@ class _MovieCardState extends State<MovieCard> {
                 ),
               ),
           ],
-        ),
+        );
+
+    return GestureDetector(
+      onTap: widget.onTap,
+      child: widget.cardWidth != null
+          ? SizedBox(
+              width: widget.cardWidth,
+              child: cardContent,
+            )
+          : cardContent,
     );
   }
 
