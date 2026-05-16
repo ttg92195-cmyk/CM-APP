@@ -270,3 +270,41 @@ Files Modified:
 - lib/app/ui/screens/genres_tags_collections_page.dart
 - lib/app/ui/screens/edit_movie_page.dart
 - lib/app/ui/screens/video_player_screen.dart
+
+---
+
+Task ID: 9
+Agent: download-notification-agent
+Task: Implement system-level download notifications
+
+Work Log:
+- Read existing download_manager_service.dart to understand DownloadTask model, status enum, and all download lifecycle hooks
+- Read pubspec.yaml to identify existing dependencies
+- Read AndroidManifest.xml to check current permissions
+- Read main.dart to understand app initialization flow
+- Added flutter_local_notifications: ^17.0.0 to pubspec.yaml
+- Created new file: download_notification_service.dart with singleton pattern
+- Added POST_NOTIFICATIONS permission to AndroidManifest.xml for Android 13+
+- Integrated DownloadNotificationService into DownloadManagerService at all lifecycle points:
+  - init(): Initialize notification service + request permission
+  - startDownload(): Show notification on download start
+  - Progress update loop: Update notification with progress/speed/ETA
+  - Download completed: Show completion notification (auto-dismisses after 5s)
+  - Download failed (all failure paths): Show failure notification (auto-dismisses after 10s)
+  - pauseDownload(): Cancel notification
+  - removeTask(): Cancel notification
+  - All DioException pause paths: Cancel notification
+  - All DioException failure paths: Show failure notification
+  - Generic catch failure paths: Show failure notification
+
+Stage Summary:
+- New file: lib/app/core/services/download_notification_service.dart — singleton service managing system notifications
+- Modified: pubspec.yaml — added flutter_local_notifications: ^17.0.0
+- Modified: lib/app/core/services/download_manager_service.dart — integrated notification service at 12 lifecycle points
+- Modified: android/app/src/main/AndroidManifest.xml — added POST_NOTIFICATIONS permission
+- Notification channel: 'downloads' / 'Downloads' with low importance (no sound during progress)
+- Notifications show: movie title, quality, progress %, speed, ETA during download
+- Ongoing (non-dismissible) notifications during active downloads
+- Auto-dismissing completion (5s) and failure (10s) notifications
+- Throttled notification updates (max 2x per second) to avoid performance impact
+- Unique notification IDs per task via stable hash of task ID
