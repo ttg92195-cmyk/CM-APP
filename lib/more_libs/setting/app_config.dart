@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -590,6 +589,7 @@ class AppConfig extends ChangeNotifier {
         'age_gate_cancel': 'Go Back',
         'back': 'Back',
         'press_back_again_exit': 'Press back again to exit',
+        'storage_permission_required': 'Storage permission is required to access downloads',
         'confirm_password': 'Confirm Password',
         'create_account': 'Create Account',
         'already_have_account': 'Already have an account?',
@@ -767,7 +767,8 @@ class AppConfig extends ChangeNotifier {
       'age_gate_confirm': '18 နှစ်နှင့်အထက်ဖြစ်ပါသည်',
       'age_gate_cancel': 'နောက်သို့ပြန်သွားရန်',
       'back': 'နောက်သို့',
-      'press_back_again_exit': 'ထွက်ရန် နောက်တစ်ကြိမ်နိုပ်ပါ',
+      'press_back_again_exit': 'ထွက်ရန် နောက်တစ်ကြိမ်နိုပါ',
+      'storage_permission_required': 'ဒေါင်းလုဒ်များကို အသုံးပြုရန် သိုလှောင်မှု ခွင့်ပြုချက် လိုအပ်ပါသည်',
       'confirm_password': 'စကားဝှက် အတည်ပြုရန်',
       'create_account': 'အကောင့်သစ် ဖွင့်ရန်',
       'already_have_account': 'အကောင့်ရှိပြီးသားလား?',
