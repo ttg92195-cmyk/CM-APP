@@ -1714,21 +1714,63 @@ class DownloadManagerService extends ChangeNotifier {
             .map((x) => DownloadTask.fromMap(x as Map<String, dynamic>))
             .toList();
 
-        // Reset downloading tasks to paused on restart (so they can be resumed)
+        // Reset downloading/idle tasks to paused on restart (so they can be resumed)
         // Also reset speed/ETA since they're not meaningful after restart
         for (int i = 0; i < _tasks.length; i++) {
-          if (_tasks[i].status == DownloadStatus.downloading) {
+          if (_tasks[i].status == DownloadStatus.downloading ||
+              _tasks[i].status == DownloadStatus.idle) {
             _tasks[i] = _tasks[i].copyWith(
               status: DownloadStatus.paused,
               speedBytesPerSec: 0.0,
               etaSeconds: null,
+              errorMessage: _tasks[i].status == DownloadStatus.idle
+                  ? null // Clear queued message
+                  : _tasks[i].errorMessage,
             );
           }
         }
+
+        // Recalculate active download count from actual task states
+        _activeDownloadCount = _tasks.where((t) =>
+            t.status == DownloadStatus.downloading).length;
+
         notifyListeners();
       }
     } catch (e) {
       debugPrint('Error loading download tasks: $e');
+    }
+  }
+
+  /// Recover orphaned downloads — called when app resumes from background.
+  /// Detects tasks stuck in "downloading" status without an active Dio stream,
+  /// and resets them to "paused" so the user can resume them.
+  void recoverOrphanedDownloads() {
+    bool changed = false;
+    for (int i = 0; i < _tasks.length; i++) {
+      if (_tasks[i].status == DownloadStatus.downloading &&
+          !_cancelTokens.containsKey(_tasks[i].id)) {
+        // Task is marked as downloading but has no active cancel token
+        // (meaning the Dio stream died while the app was in background)
+        debugPrint('Recovering orphaned download: ${_tasks[i].id}');
+        _tasks[i] = _tasks[i].copyWith(
+          status: DownloadStatus.paused,
+          speedBytesPerSec: 0.0,
+          etaSeconds: null,
+        );
+        changed = true;
+      }
+    }
+    // Recalculate active download count
+    final actualActive = _tasks.where((t) =>
+        t.status == DownloadStatus.downloading).length;
+    if (_activeDownloadCount != actualActive) {
+      debugPrint('Fixing active download count: $_activeDownloadCount -> $actualActive');
+      _activeDownloadCount = actualActive;
+      changed = true;
+    }
+    if (changed) {
+      _saveTasks();
+      notifyListeners();
     }
   }
 }

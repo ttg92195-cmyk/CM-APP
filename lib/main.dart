@@ -9,6 +9,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/ui/home/home_page.dart';
+import 'package:cm_movies/app/core/services/download_manager_service.dart';
 import 'package:cm_movies/app/ui/screens/login_page.dart';
 import 'firebase_options.dart';
 
@@ -126,6 +127,9 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       try {
+        // Recover orphaned downloads (stuck in "downloading" after app was in background)
+        DownloadManagerService.instance.recoverOrphanedDownloads();
+
         // App came back to foreground — check session timeout
         final appConfig = Provider.of<AppConfig>(context, listen: false);
         if (appConfig.isLoggedIn && appConfig.checkSessionTimeout()) {
