@@ -257,7 +257,6 @@ class HelpSupportPage extends StatelessWidget {
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         iconColor: isDark ? const Color(0xFFE50914) : theme.colorScheme.primary,
         collapsedIconColor: theme.colorScheme.onSurface.withOpacity(0.5),
-        dividerColor: Colors.transparent,
         shape: const RoundedRectangleBorder(side: BorderSide.none),
         collapsedShape: const RoundedRectangleBorder(side: BorderSide.none),
         title: Text(
