@@ -421,7 +421,7 @@ class _DownloadPageState extends State<DownloadPage> {
 
   Widget _buildActiveTaskCard(DownloadTask task, AppConfig appConfig, ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
-    final accentColor = const Color(0xFFE50914);
+    final accentColor = theme.colorScheme.primary;
     final metaTextColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
     final cardBgColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
     final isDownloading = task.status == DownloadStatus.downloading;

@@ -27,7 +27,7 @@ class PrivacyPolicyPage extends StatelessWidget {
                   Icon(
                     Icons.privacy_tip_rounded,
                     size: 56,
-                    color: isDark ? const Color(0xFFE50914) : theme.colorScheme.primary,
+                    color: theme.colorScheme.primary,
                   ),
                   const SizedBox(height: 12),
                   Text(
@@ -269,7 +269,7 @@ class PrivacyPolicyPage extends StatelessWidget {
                 ),
                 child: Icon(
                   icon,
-                  color: isDark ? const Color(0xFFE50914) : theme.colorScheme.primary,
+                  color: theme.colorScheme.primary,
                   size: 22,
                 ),
               ),

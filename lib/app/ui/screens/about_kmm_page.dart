@@ -35,7 +35,7 @@ class AboutKmmPage extends StatelessWidget {
               child: Icon(
                 Icons.play_circle_fill,
                 size: 56,
-                color: isDark ? const Color(0xFFE50914) : theme.colorScheme.primary,
+                color: theme.colorScheme.primary,
               ),
             ),
             const SizedBox(height: 16),
@@ -43,7 +43,7 @@ class AboutKmmPage extends StatelessWidget {
               'KMM',
               style: theme.textTheme.headlineMedium?.copyWith(
                 fontWeight: FontWeight.bold,
-                color: isDark ? const Color(0xFFE50914) : theme.colorScheme.primary,
+                color: theme.colorScheme.primary,
               ),
             ),
             const SizedBox(height: 4),
@@ -277,7 +277,7 @@ class AboutKmmPage extends StatelessWidget {
             ),
             child: Icon(
               icon,
-              color: isDark ? const Color(0xFFE50914) : theme.colorScheme.primary,
+              color: theme.colorScheme.primary,
               size: 24,
             ),
           ),
@@ -340,7 +340,7 @@ class AboutKmmPage extends StatelessWidget {
       children: [
         Icon(
           icon,
-          color: isDark ? const Color(0xFFE50914) : theme.colorScheme.primary,
+          color: theme.colorScheme.primary,
           size: 20,
         ),
         const SizedBox(width: 12),

@@ -131,7 +131,7 @@ class _MovieDownloadScreenState extends State<MovieDownloadScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final accentColor = const Color(0xFFE50914);
+    final accentColor = Theme.of(context).colorScheme.primary;
     final bgColor = isDark ? const Color(0xFF121212) : const Color(0xFFF5F5F5);
     final cardBgColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
     final metaTextColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;

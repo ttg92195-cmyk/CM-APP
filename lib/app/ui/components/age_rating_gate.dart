@@ -118,7 +118,7 @@ class _AgeGateDialogState extends State<_AgeGateDialog>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final accentColor = const Color(0xFFE50914);
+    final accentColor = theme.colorScheme.primary;
 
     return FadeTransition(
       opacity: _fadeAnimation,

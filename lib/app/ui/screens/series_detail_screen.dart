@@ -264,7 +264,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
     final detail = _seriesDetail!;
     final isDark = theme.brightness == Brightness.dark;
 
-    final accentColor = const Color(0xFFE50914);
+    final accentColor = theme.colorScheme.primary;
     final bodyTextColor = isDark ? Colors.white70 : Colors.black87;
     final metaTextColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
     final bgColor = isDark ? const Color(0xFF121212) : const Color(0xFFF5F5F5);

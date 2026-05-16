@@ -27,7 +27,7 @@ class HelpSupportPage extends StatelessWidget {
                   Icon(
                     Icons.help_center_rounded,
                     size: 64,
-                    color: isDark ? const Color(0xFFE50914) : theme.colorScheme.primary,
+                    color: theme.colorScheme.primary,
                   ),
                   const SizedBox(height: 12),
                   Text(
@@ -157,7 +157,7 @@ class HelpSupportPage extends StatelessWidget {
                     children: [
                       Icon(
                         Icons.email_outlined,
-                        color: isDark ? const Color(0xFFE50914) : theme.colorScheme.primary,
+                        color: theme.colorScheme.primary,
                         size: 24,
                       ),
                       const SizedBox(width: 12),
@@ -175,9 +175,7 @@ class HelpSupportPage extends StatelessWidget {
                             Text(
                               'guyg20985@gmail.com',
                               style: theme.textTheme.bodyMedium?.copyWith(
-                                color: isDark
-                                    ? const Color(0xFFE50914)
-                                    : theme.colorScheme.primary,
+                                color: theme.colorScheme.primary,
                               ),
                             ),
                           ],
@@ -255,7 +253,7 @@ class HelpSupportPage extends StatelessWidget {
       child: ExpansionTile(
         tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        iconColor: isDark ? const Color(0xFFE50914) : theme.colorScheme.primary,
+        iconColor: theme.colorScheme.primary,
         collapsedIconColor: theme.colorScheme.onSurface.withOpacity(0.5),
         shape: const RoundedRectangleBorder(side: BorderSide.none),
         collapsedShape: const RoundedRectangleBorder(side: BorderSide.none),
@@ -299,7 +297,7 @@ class HelpSupportPage extends StatelessWidget {
         children: [
           Icon(
             icon,
-            color: isDark ? const Color(0xFFE50914) : theme.colorScheme.primary,
+            color: theme.colorScheme.primary,
             size: 24,
           ),
           const SizedBox(width: 14),
