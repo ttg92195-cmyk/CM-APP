@@ -83,7 +83,9 @@ class TrendingMovieComponent extends StatelessWidget {
 
 /// Skeleton loading widget for a single movie card with shimmer pulse
 class MovieCardSkeleton extends StatefulWidget {
-  const MovieCardSkeleton({super.key});
+  final double? cardWidth; // Optional fixed width for horizontal lists
+
+  const MovieCardSkeleton({super.key, this.cardWidth});
 
   @override
   State<MovieCardSkeleton> createState() => _MovieCardSkeletonState();
@@ -114,12 +116,7 @@ class _MovieCardSkeletonState extends State<MovieCardSkeleton>
     final isDark = theme.brightness == Brightness.dark;
     final baseColor = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE0E0E0);
 
-    return FadeTransition(
-      opacity: Tween<double>(begin: 0.4, end: 1.0).animate(_controller),
-      child: Container(
-        width: 130,
-        margin: const EdgeInsets.symmetric(horizontal: 4),
-        child: Column(
+    Widget skeletonContent = Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -138,7 +135,7 @@ class _MovieCardSkeletonState extends State<MovieCardSkeleton>
             // Title skeleton
             Container(
               height: 12,
-              width: 100,
+              width: double.infinity,
               decoration: BoxDecoration(
                 color: baseColor,
                 borderRadius: BorderRadius.circular(4),
@@ -155,8 +152,20 @@ class _MovieCardSkeletonState extends State<MovieCardSkeleton>
               ),
             ),
           ],
-        ),
-      ),
+        );
+
+    return FadeTransition(
+      opacity: Tween<double>(begin: 0.4, end: 1.0).animate(_controller),
+      child: widget.cardWidth != null
+          ? Container(
+              width: widget.cardWidth,
+              margin: const EdgeInsets.symmetric(horizontal: 4),
+              child: skeletonContent,
+            )
+          : Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: skeletonContent,
+            ),
     );
   }
 }
@@ -191,7 +200,7 @@ class TrendingMovieSkeleton extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 12),
             itemCount: count,
             itemBuilder: (context, index) {
-              return const MovieCardSkeleton();
+              return const MovieCardSkeleton(cardWidth: 130);
             },
           ),
         ),
