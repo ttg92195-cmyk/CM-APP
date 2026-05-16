@@ -239,7 +239,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
 
   Future<void> _bulkDeleteSelected() async {
     if (_selectedPostIds.isEmpty) return;
-    final count = _selectedPostIds.size;
+    final count = _selectedPostIds.length;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
