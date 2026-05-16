@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:cm_movies/app/core/services/saf_storage_service.dart';
+import 'package:cm_movies/app/core/services/download_notification_service.dart';
 import 'package:open_filex/open_filex.dart';
 
 /// Enum for download status
@@ -308,6 +309,10 @@ class DownloadManagerService extends ChangeNotifier {
     await _loadTasks();
     await _migrateOldDownloads();
     await fixExistingTaskPaths();
+    // Initialize download notification service
+    await DownloadNotificationService.instance.init();
+    // Request notification permission for Android 13+
+    await DownloadNotificationService.instance.requestPermission();
   }
 
   /// Auto-migrate download files from old public directory to new scoped storage.
@@ -869,6 +874,7 @@ class DownloadManagerService extends ChangeNotifier {
         );
         await _saveTasks();
         notifyListeners();
+        DownloadNotificationService.instance.showDownloadFailed(_tasks[idx]);
       }
       return;
     }
@@ -885,6 +891,7 @@ class DownloadManagerService extends ChangeNotifier {
           );
           await _saveTasks();
           notifyListeners();
+          DownloadNotificationService.instance.showDownloadFailed(_tasks[idx]);
         }
         return;
       }
@@ -902,6 +909,9 @@ class DownloadManagerService extends ChangeNotifier {
       errorMessage: null,
     );
     notifyListeners();
+
+    // Show system notification for download start
+    DownloadNotificationService.instance.showDownloadStarted(task);
 
     // Stall detection state
     DateTime? _stallDetectedAt;
@@ -1075,6 +1085,8 @@ class DownloadManagerService extends ChangeNotifier {
               if (shouldNotify) {
                 _lastNotifyTime = now;
                 notifyListeners();
+                // Update system notification with progress
+                DownloadNotificationService.instance.updateDownloadProgress(_tasks[idx]);
               }
             }
           }
@@ -1123,6 +1135,8 @@ class DownloadManagerService extends ChangeNotifier {
 
           await _saveTasks();
           notifyListeners();
+          // Show system notification for download completion
+          DownloadNotificationService.instance.showDownloadCompleted(_tasks[idx]);
         }
       } on DioException catch (e) {
         final idx = _tasks.indexWhere((t) => t.id == taskId);
@@ -1141,6 +1155,8 @@ class DownloadManagerService extends ChangeNotifier {
             );
             await _saveTasks();
             notifyListeners();
+            // Cancel notification when paused
+            DownloadNotificationService.instance.cancelNotification(taskId);
             return;
           }
           // Stall or other auto-cancel - attempt auto-reconnect
@@ -1160,6 +1176,7 @@ class DownloadManagerService extends ChangeNotifier {
               );
               await _saveTasks();
               notifyListeners();
+              DownloadNotificationService.instance.cancelNotification(taskId);
               return;
             }
             // Save current progress before retrying
@@ -1175,6 +1192,7 @@ class DownloadManagerService extends ChangeNotifier {
           );
           await _saveTasks();
           notifyListeners();
+          DownloadNotificationService.instance.showDownloadFailed(_tasks[idx]);
           return;
         }
 
@@ -1189,6 +1207,7 @@ class DownloadManagerService extends ChangeNotifier {
           );
           await _saveTasks();
           notifyListeners();
+          DownloadNotificationService.instance.cancelNotification(taskId);
           return;
         }
         final isRetryable = e.type == DioExceptionType.connectionTimeout ||
@@ -1209,6 +1228,7 @@ class DownloadManagerService extends ChangeNotifier {
             );
             await _saveTasks();
             notifyListeners();
+            DownloadNotificationService.instance.cancelNotification(taskId);
             return;
           }
           await _saveTasks();
@@ -1224,6 +1244,7 @@ class DownloadManagerService extends ChangeNotifier {
         );
         await _saveTasks();
         notifyListeners();
+        DownloadNotificationService.instance.showDownloadFailed(_tasks[idx]);
       } catch (e) {
         final idx = _tasks.indexWhere((t) => t.id == taskId);
         if (idx != -1) {
@@ -1235,6 +1256,7 @@ class DownloadManagerService extends ChangeNotifier {
           );
           await _saveTasks();
           notifyListeners();
+          DownloadNotificationService.instance.showDownloadFailed(_tasks[idx]);
         }
       }
     }
@@ -1302,6 +1324,8 @@ class DownloadManagerService extends ChangeNotifier {
       );
       _saveTasks(); // Don't await - fire and forget for quick UI response
       notifyListeners();
+      // Cancel the notification when paused
+      DownloadNotificationService.instance.cancelNotification(taskId);
     }
   }
 
@@ -1342,6 +1366,9 @@ class DownloadManagerService extends ChangeNotifier {
     // Remove from queue if pending
     _pendingQueue.remove(taskId);
     _pausedByUser.remove(taskId);
+
+    // Cancel notification for this task
+    DownloadNotificationService.instance.cancelNotification(taskId);
 
     // Delete file if not keeping it
     if (!keepFile) {

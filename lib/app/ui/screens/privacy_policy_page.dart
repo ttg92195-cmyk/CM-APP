@@ -164,7 +164,7 @@ class PrivacyPolicyPage extends StatelessWidget {
               [
                 'KMM is not intended for use by children under the age of 13, and we do not knowingly collect personal information from children under 13. If we become aware that we have inadvertently collected personal data from a child under 13, we will take immediate steps to delete such information from our servers.',
                 '',
-                'Parents or guardians who believe that their child has provided personal information to us should contact us immediately at support@kmmovies.app, and we will take prompt action to remove the data.',
+                'Parents or guardians who believe that their child has provided personal information to us should contact us immediately at guyg20985@gmail.com, and we will take prompt action to remove the data.',
                 '',
                 'Some content within KMM may be rated for mature audiences (18+). We implement an age verification gate for such content, requiring users to confirm they are 18 years or older before accessing restricted material. This feature is a content advisory tool and not a substitute for parental supervision.',
               ],
@@ -196,8 +196,8 @@ class PrivacyPolicyPage extends StatelessWidget {
               [
                 'If you have any questions, concerns, or requests regarding this Privacy Policy or our data practices, please do not hesitate to contact us:',
                 '',
-                '• Email: support@kmmovies.app',
-                '• Website: www.kmmovies.app',
+                '• Email: guyg20985@gmail.com',
+                '• Website: kumastreamv1.vercel.app',
                 '',
                 'We are committed to addressing your concerns promptly and will respond to all privacy-related inquiries within 30 days. For account deletion requests, data access requests, or data correction needs, please include your username and a detailed description of your request.',
                 '',

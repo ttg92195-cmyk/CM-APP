@@ -215,7 +215,7 @@ class _LoginPageState extends State<LoginPage>
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(appConfig.translate('login')),
+        title: Text(appConfig.translate('login_and_register')),
         actions: [
           // Language toggle
           Padding(

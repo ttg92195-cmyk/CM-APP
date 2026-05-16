@@ -109,21 +109,6 @@ class SettingsPage extends StatelessWidget {
           },
         ),
 
-        // About KMM (new)
-        ListTile(
-          leading: const Icon(Icons.movie_outlined),
-          title: Text(appConfig.translate('about_kmm')),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => const AboutKmmPage(),
-              ),
-            );
-          },
-        ),
-
         // Privacy and Policy (new — navigates to standalone page)
         ListTile(
           leading: const Icon(Icons.privacy_tip_outlined),

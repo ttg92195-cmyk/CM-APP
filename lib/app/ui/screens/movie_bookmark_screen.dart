@@ -117,13 +117,13 @@ class _MovieBookmarkScreenState extends State<MovieBookmarkScreen> {
               : RefreshIndicator(
                   onRefresh: _loadBookmarks,
                   child: GridView.builder(
-                    padding: const EdgeInsets.all(8),
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
                     gridDelegate:
                         const SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: 3,
-                      childAspectRatio: 0.48,
-                      crossAxisSpacing: 8,
-                      mainAxisSpacing: 8,
+                      childAspectRatio: 0.53,
+                      crossAxisSpacing: 6,
+                      mainAxisSpacing: 6,
                     ),
                     itemCount: _bookmarks.length,
                     itemBuilder: (context, index) {

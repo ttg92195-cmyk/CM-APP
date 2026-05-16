@@ -852,14 +852,14 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
           final safeUpdate = <String, dynamic>{};
           for (final key in ['title', 'year', 'poster', 'backdrop', 'rating',
               'duration', 'isAdult', 'categories', 'directors', 'casts',
-              'tmdbId', 'country', 'seasons', 'status']) {
+              'tmdbId', 'country', 'status']) {
             if (firestoreData.containsKey(key)) {
               safeUpdate[key] = firestoreData[key];
             }
           }
 
-          // NEVER update overview during sync
-          // (overview is intentionally excluded from safeUpdate)
+          // NEVER update overview, seasons, downloadLinks, watchLinks during sync
+          // (these are intentionally excluded to preserve user's custom data)
 
           debugPrint('SYNC SERIES: safeUpdate title=${safeUpdate['title']} tmdbId=${safeUpdate['tmdbId']} duration=${safeUpdate['duration']} status=${safeUpdate['status']}');
 
@@ -1758,10 +1758,10 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
     }
 
     return GridView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 3,
-        childAspectRatio: 0.48,
+        childAspectRatio: 0.53,
         crossAxisSpacing: 6,
         mainAxisSpacing: 6,
       ),

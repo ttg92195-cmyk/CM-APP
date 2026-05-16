@@ -66,7 +66,8 @@ void main() async {
     SystemChrome.setSystemUIOverlayStyle(
       const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
-        statusBarIconBrightness: Brightness.light,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
       ),
     );
     SystemChrome.setPreferredOrientations([
@@ -176,13 +177,20 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
   }
 
   Widget _buildSplashScreen() {
-    // Force light mode during splash — white bg, dark text, red accents
+    // Adaptive splash: follows the app's theme mode (dark/light)
+    final appConfig = Provider.of<AppConfig>(context);
+    final isDark = appConfig.themeMode == ThemeMode.dark;
+
+    final bgColor = isDark ? const Color(0xFF121212) : Colors.white;
+    final textColor = isDark ? Colors.white : const Color(0xFF212121);
+    final iconBgColor = const Color(0xFFE50914).withOpacity(isDark ? 0.2 : 0.15);
+
     return Theme(
-      data: ThemeData.light(useMaterial3: true).copyWith(
-        scaffoldBackgroundColor: Colors.white,
+      data: (isDark ? ThemeData.dark(useMaterial3: true) : ThemeData.light(useMaterial3: true)).copyWith(
+        scaffoldBackgroundColor: bgColor,
       ),
       child: Scaffold(
-        backgroundColor: Colors.white,
+        backgroundColor: bgColor,
         body: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -191,7 +199,7 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: const Color(0xFFE50914).withOpacity(0.15),
+                  color: iconBgColor,
                 ),
                 child: const Icon(
                   Icons.play_circle_fill,
@@ -200,10 +208,10 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
                 ),
               ),
               const SizedBox(height: 20),
-              const Text(
+              Text(
                 'KMM',
                 style: TextStyle(
-                  color: Color(0xFF212121),
+                  color: textColor,
                   fontSize: 28,
                   fontWeight: FontWeight.bold,
                 ),

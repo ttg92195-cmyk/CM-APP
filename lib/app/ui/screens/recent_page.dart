@@ -85,14 +85,14 @@ class _RecentPageState extends State<RecentPage> {
                     physics: const AlwaysScrollableScrollPhysics(),
                     slivers: [
                       SliverPadding(
-                        padding: const EdgeInsets.all(8),
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
                         sliver: SliverGrid(
                           gridDelegate:
                               const SliverGridDelegateWithFixedCrossAxisCount(
                             crossAxisCount: 3,
-                            childAspectRatio: 0.48,
-                            crossAxisSpacing: 8,
-                            mainAxisSpacing: 8,
+                            childAspectRatio: 0.53,
+                            crossAxisSpacing: 6,
+                            mainAxisSpacing: 6,
                           ),
                           delegate: SliverChildBuilderDelegate(
                             (context, index) {
@@ -138,12 +138,12 @@ class _RecentPageState extends State<RecentPage> {
 
   Widget _buildSkeletonLoading() {
     return GridView.builder(
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 3,
-        childAspectRatio: 0.48,
-        crossAxisSpacing: 8,
-        mainAxisSpacing: 8,
+        childAspectRatio: 0.53,
+        crossAxisSpacing: 6,
+        mainAxisSpacing: 6,
       ),
       itemCount: 6,
       itemBuilder: (context, index) {

@@ -38,6 +38,8 @@ dependencies:
   firebase_auth: ^5.3.1
   cloud_firestore: ^5.4.4
   firebase_app_check: ^0.3.0
+  # System-level download progress notifications
+  flutter_local_notifications: ^17.0.0
 
 dev_dependencies:
   flutter_launcher_icons: ^0.13.1

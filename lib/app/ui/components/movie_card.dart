@@ -54,10 +54,7 @@ class _MovieCardState extends State<MovieCard> {
 
     return GestureDetector(
       onTap: widget.onTap,
-      child: Container(
-        width: 130,
-        margin: const EdgeInsets.symmetric(horizontal: 4),
-        child: Column(
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -299,7 +296,6 @@ class _MovieCardState extends State<MovieCard> {
               ),
           ],
         ),
-      ),
     );
   }
 

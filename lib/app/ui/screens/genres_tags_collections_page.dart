@@ -614,12 +614,12 @@ class _FilterResultPageState extends State<FilterResultPage> {
                         ),
                       )
                     : GridView.builder(
-                        padding: const EdgeInsets.all(8),
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
                         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: 3,
-                          childAspectRatio: 0.48,
-                          crossAxisSpacing: 8,
-                          mainAxisSpacing: 8,
+                          childAspectRatio: 0.53,
+                          crossAxisSpacing: 6,
+                          mainAxisSpacing: 6,
                         ),
                         itemCount: _filteredMovies.length + (_isLoadingMore ? 6 : 0),
                         itemBuilder: (context, index) {
@@ -649,12 +649,12 @@ class _FilterResultPageState extends State<FilterResultPage> {
 
   Widget _buildSkeletonGrid() {
     return GridView.builder(
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 3,
-        childAspectRatio: 0.48,
-        crossAxisSpacing: 8,
-        mainAxisSpacing: 8,
+        childAspectRatio: 0.53,
+        crossAxisSpacing: 6,
+        mainAxisSpacing: 6,
       ),
       itemCount: 9,
       itemBuilder: (context, index) {

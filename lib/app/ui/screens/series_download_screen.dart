@@ -193,7 +193,7 @@ class _SeriesDownloadScreenState extends State<SeriesDownloadScreen> {
                             color: accentColor.withOpacity(0.15),
                             borderRadius: BorderRadius.circular(8),
                           ),
-                          child: Icon(Icons.video_library, color: accentColor, size: 22),
+                          child: Icon(Icons.file_download, color: accentColor, size: 22),
                         ),
                         title: Text(season.name,
                             style: TextStyle(

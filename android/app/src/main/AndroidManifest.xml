@@ -12,6 +12,8 @@
         android:maxSdkVersion="32" />
     <!-- Android 13+: Granular media permission for videos (replaces READ_EXTERNAL_STORAGE) -->
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <!-- Android 13+: Required for showing notifications (download progress) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Android 11+: Uses scoped storage (app-specific external directory).
          No MANAGE_EXTERNAL_STORAGE needed - avoids Google Play Store rejection.
          Downloads are saved to app-specific external storage which is accessible
