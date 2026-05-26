@@ -188,9 +188,10 @@ class _HomePageState extends State<HomePage> {
         color: isDark ? const Color(0xFF121212) : Colors.white,
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFFE50914).withOpacity(0.1),
-            blurRadius: 8,
+            color: isDark ? Colors.black26 : Colors.grey.shade300,
+            blurRadius: 4,
             spreadRadius: 0,
+            offset: const Offset(0, -1),
           ),
         ],
       ),

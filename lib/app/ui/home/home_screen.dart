@@ -40,7 +40,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoadingTags = true;
   String? _error;
 
-  static const int _homeLimit = 10; // Show 10 posts per section on Home
+  static const int _homeLimit = 8; // Show 8 posts per section on Home (4x2 grid)
 
   @override
   void initState() {

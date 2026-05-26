@@ -93,6 +93,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   int _retryCount = 0;
   static const int _maxRetries = 2;
 
+  // MX Player-style: Video output mode fallback
+  // Mode 0: GPU rendering (best quality, may fail on 4K/low-end devices)
+  // Mode 1: GPU with downscaling (4K → 1080p, works on most devices)
+  // Mode 2: Software rendering (fallback, works everywhere but slower)
+  int _videoOutputMode = 0;
+
+  // Black screen detection: if no video output after timeout, try fallback
+  Timer? _blackScreenDetectionTimer;
+  bool _blackScreenFallbackAttempted = false;
+
   // Device info for adaptive configuration
   // Performance tier: 0=ultra-low (≤2GB), 1=low (2-3GB), 2=mid (3-4GB), 3=high (>4GB)
   int _perfTier = 3;
@@ -280,6 +290,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     _brightnessIndicatorTimer?.cancel();
     _seekAnimationTimer?.cancel();
     _positionSaveTimer?.cancel();
+    _blackScreenDetectionTimer?.cancel();
 
     // FIX: Cancel ALL stream subscriptions explicitly to prevent
     // stream events from firing after the widget is disposed.
@@ -590,21 +601,61 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           break;
       }
 
-      // Hardware decoding: ALWAYS prefer hardware (MediaCodec) on Android.
-      // 'auto' = try HW first, auto-fallback to SW if codec unsupported.
-      // 'auto-safe' = same but also handles surface/format issues.
-      // On Android 10+ (SDK 29+), HW decoding is very stable — use 'auto'.
-      // On older devices, 'auto-safe' is more reliable.
+      // MX Player-style video output mode selection:
+      // Mode 0: GPU rendering with hardware decoding (best quality)
+      //         - Works great for 480p-1080p on all devices
+      //         - May fail (black screen) for 4K on low-end/older devices
+      // Mode 1: GPU rendering with downscaling (4K → 1080p output)
+      //         - Uses HW decoder but downscales output for GPU compatibility
+      //         - Good balance: HW decode speed + GPU compatibility
+      // Mode 2: Software rendering (CPU-based, fallback)
+      //         - Works everywhere but uses more CPU/battery
+      //         - Last resort when GPU rendering completely fails
+
       final bool useHWAccel = !_useSoftwareDecoding;
       final String hwdecValue = _useSoftwareDecoding
           ? 'no'
           : (_androidVersion >= 29 ? 'auto' : 'auto-safe');
 
+      // Select video output mode based on current fallback state
+      String voValue;
+      int? outputWidth;
+      int? outputHeight;
+
+      switch (_videoOutputMode) {
+        case 0:
+          // Mode 0: GPU rendering at native resolution (best quality)
+          voValue = 'gpu';
+          // No output width/height — render at native resolution
+          break;
+        case 1:
+          // Mode 1: GPU rendering with downscaling for 4K content
+          // This is like MX Player's "HW+" mode — HW decoder + downscaled output
+          voValue = 'gpu';
+          if (_isLowEndDevice || _perfTier <= 1) {
+            // Low-end device: downscale to 720p for best compatibility
+            outputWidth = 1280;
+            outputHeight = 720;
+          } else {
+            // Mid/high device: downscale 4K to 1080p (still looks great)
+            outputWidth = 1920;
+            outputHeight = 1080;
+          }
+          break;
+        default:
+          // Mode 2: Software rendering (CPU fallback)
+          // Like MX Player's "SW" mode
+          voValue = 'libmpv';
+          break;
+      }
+
+      debugPrint('Video output mode: $_videoOutputMode, vo: $voValue, hwdec: $hwdecValue, '
+          'output: ${outputWidth ?? 'native'}x${outputHeight ?? 'native'}');
+
       _player = Player(
         configuration: PlayerConfiguration(
           bufferSize: bufferSizeBytes,
           title: 'CM Movies Player',
-          // Do NOT set vo here — VideoController handles it
           logLevel: MPVLogLevel.error,
         ),
       );
@@ -612,14 +663,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       _controller = VideoController(
         _player,
         configuration: VideoControllerConfiguration(
-          vo: 'gpu',
+          vo: voValue,
           hwdec: hwdecValue,
           enableHardwareAcceleration: useHWAccel,
           androidAttachSurfaceAfterVideoParameters: true,
-          // Do NOT set width/height — let video render at native resolution
-          // This preserves full quality for 480p, 720p, 1080p, 2K, 4K videos.
-          // Performance is managed via mpv-level tuning (frame drop, skip filters)
-          // instead of downscaling the output.
+          // MX Player-style: Set output dimensions only in Mode 1 (downscale)
+          // Mode 0: native resolution (no downscaling = best quality)
+          // Mode 1: downscale 4K → 1080p/720p for GPU compatibility
+          // Mode 2: software rendering (no dimensions needed)
+          width: outputWidth,
+          height: outputHeight,
         ),
       );
 
@@ -690,11 +743,24 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       await _player.play();
 
       // CRITICAL: Apply performance tuning AFTER open/play.
-      // NativePlayer.setProperty() awaits waitForVideoControllerInitializationIfAttached,
-      // which only completes after video parameters are available (i.e., after open()).
-      // Calling it BEFORE open() causes it to HANG indefinitely, freezing the app.
-      // We run it non-blocking (fire-and-forget) with a timeout so it never blocks UI.
       _applyPerformanceTuningNonBlocking();
+
+      // MX Player-style: Start black screen detection timer.
+      // If no video output appears within 3 seconds (audio plays but screen is black),
+      // automatically try the next video output mode (GPU → GPU+Downscale → SW).
+      // This handles the common 4K black screen issue on low-end/older devices.
+      if (!_blackScreenFallbackAttempted && _videoOutputMode < 2) {
+        _blackScreenDetectionTimer?.cancel();
+        _blackScreenDetectionTimer = Timer(const Duration(seconds: 3), () {
+          if (_isDisposed || !mounted) return;
+          // If still no video output after 3 seconds, try fallback mode
+          if (!_hasVideoOutput && !_isBuffering) {
+            debugPrint('BLACK SCREEN DETECTED: No video output after 3s. '
+                'Trying fallback mode ${_videoOutputMode + 1}');
+            _tryVideoOutputFallback();
+          }
+        });
+      }
 
       if (mounted) {
         setState(() {
@@ -898,6 +964,44 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     _applyPerformanceTuningNonBlocking();
   }
 
+  /// MX Player-style: Try next video output mode when black screen detected
+  /// or when GPU rendering fails. Modes: 0=GPU native → 1=GPU downscale → 2=SW
+  void _tryVideoOutputFallback() {
+    if (_isDisposed || !mounted) return;
+    if (_videoOutputMode >= 2) return; // Already at SW mode, no more fallbacks
+
+    _blackScreenFallbackAttempted = true;
+
+    // Cancel stream subscriptions and clean up current player
+    for (final sub in _streamSubscriptions) {
+      try { sub.cancel(); } catch (_) {}
+    }
+    _streamSubscriptions.clear();
+
+    try { _player.stop(); } catch (_) {}
+    try { _player.pause(); } catch (_) {}
+    try { _player.dispose(); } catch (_) {}
+
+    // Move to next video output mode
+    _videoOutputMode++;
+    _hasVideoOutput = false;
+
+    // If mode 2 (SW), also enable software decoding
+    if (_videoOutputMode >= 2) {
+      _useSoftwareDecoding = true;
+    }
+
+    debugPrint('Video output fallback: switching to mode $_videoOutputMode '
+        '(${_videoOutputMode == 0 ? 'GPU native' : _videoOutputMode == 1 ? 'GPU downscale' : 'SW'})');
+
+    // Delay before re-initializing to allow native cleanup
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (mounted && !_isDisposed) {
+        _initializePlayer();
+      }
+    });
+  }
+
   void _handlePlayerError(String error) {
     final isCodecError = error.contains('codec') ||
         error.contains('Could not open') ||
@@ -909,12 +1013,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         error.contains('not supported') ||
         error.contains('failed to initialize');
 
-    if (isCodecError && _retryCount < _maxRetries && !_useSoftwareDecoding) {
+    // MX Player-style: Also treat GPU/render errors as needing output fallback
+    final isRenderError = error.contains('gpu') ||
+        error.contains('vulkan') ||
+        error.contains('opengl') ||
+        error.contains('surface') ||
+        error.contains('EGL') ||
+        error.contains('renderer');
+
+    if ((isCodecError || isRenderError) && _retryCount < _maxRetries) {
       _retryCount++;
 
-      // FIX: Cancel all stream subscriptions BEFORE disposing the player.
-      // Without this, stream callbacks fire on the old (disposed) player,
-      // causing setState() on invalid state → unhandled exception → app crash.
+      // Cancel all stream subscriptions BEFORE disposing the player.
       for (final sub in _streamSubscriptions) {
         try { sub.cancel(); } catch (_) {}
       }
@@ -925,11 +1035,23 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       try { _player.pause(); } catch (_) {}
       try { _player.dispose(); } catch (_) {}
 
-      _useSoftwareDecoding = true;
       _hasVideoOutput = false;
 
-      // FIX: Add a delay before re-initializing to let native libmpv release resources.
-      // Without this, the new Player conflicts with the old one's native state → crash.
+      if (isRenderError && _videoOutputMode < 2) {
+        // GPU render error: try next output mode
+        _videoOutputMode++;
+        if (_videoOutputMode >= 2) {
+          _useSoftwareDecoding = true;
+        }
+      } else if (isCodecError && !_useSoftwareDecoding) {
+        // Codec error: switch to SW decoding
+        _useSoftwareDecoding = true;
+        if (_videoOutputMode < 2) {
+          _videoOutputMode = 2; // Go directly to SW mode for codec issues
+        }
+      }
+
+      // Delay before re-initializing to allow native cleanup
       Future.delayed(const Duration(milliseconds: 300), () {
         if (mounted && !_isDisposed) {
           _initializePlayer();
@@ -1293,8 +1415,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               ),
             ),
 
-          // ====== LAYER 7: SW badge + Performance mode indicator ======
-          if (_useSoftwareDecoding && _hasVideoOutput)
+          // ====== LAYER 7: SW badge + Performance mode indicator + Video output mode ======
+          if (_hasVideoOutput)
             Positioned(
               top: 48,
               right: 8,
@@ -1307,11 +1429,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
-                    _ecoMode
-                        ? 'SW · ECO'
-                        : 'SW',
-                    style: const TextStyle(
-                        color: Colors.orange,
+                    _videoOutputMode == 2
+                        ? (_ecoMode ? 'SW · ECO' : 'SW')
+                        : _videoOutputMode == 1
+                            ? (_ecoMode ? 'HW+ · ECO' : 'HW+')
+                            : (_ecoMode ? 'HW · ECO' : 'HW'),
+                    style: TextStyle(
+                        color: _videoOutputMode == 2
+                            ? Colors.orange
+                            : _videoOutputMode == 1
+                                ? Colors.amber
+                                : Colors.greenAccent,
                         fontSize: 10,
                         fontWeight: FontWeight.w600),
                   ),

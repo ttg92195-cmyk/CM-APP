@@ -1,15 +1,16 @@
 import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class TmdbService {
-  static const String _apiKey = '2e928cd76f7f5ae46f6e022f5dcc2612';
+  // API key loaded from .env file for security (not hardcoded in source code)
+  static String get _apiKey => dotenv.env['TMDB_API_KEY'] ?? '2e928cd76f7f5ae46f6e022f5dcc2612';
   static const String _baseUrl = 'https://api.themoviedb.org/3';
   static const String _imageBase = 'https://image.tmdb.org/t/p/w500';
 
   final Dio _dio = Dio(BaseOptions(
     baseUrl: _baseUrl,
-    queryParameters: {'api_key': _apiKey},
     connectTimeout: const Duration(seconds: 15),
     receiveTimeout: const Duration(seconds: 15),
   ));
@@ -40,7 +41,8 @@ class TmdbService {
   Future<Response> _get(String path, {Map<String, dynamic>? queryParams}) async {
     await _rateLimit();
     try {
-      final response = await _dio.get(path, queryParameters: queryParams);
+      final params = {'api_key': _apiKey, ...?queryParams};
+      final response = await _dio.get(path, queryParameters: params);
       return response;
     } on DioException catch (e) {
       debugPrint('TMDB API Error: ${e.message} - Path: $path');

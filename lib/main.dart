@@ -52,16 +52,31 @@ void main() async {
       debugPrint('Firebase initialization error: $e');
     }
 
-    // Initialize Firebase App Check — use Debug provider always for now
-    // because Play Integrity requires SHA-256 fingerprint registration
-    // in Firebase Console (not yet set up).
-    // TODO: Switch to Play Integrity when SHA-256 is registered
+    // Initialize Firebase App Check with Play Integrity (production) + Debug fallback.
+    // Play Integrity: Validates that requests come from the genuine app installed
+    // from Google Play Store. Blocks unauthorized clients from accessing Firestore.
+    // Debug provider: Used as fallback during development (debug builds only).
+    // To enable Play Integrity for production:
+    //   1. Get your app's SHA-256 fingerprint from your keystore:
+    //      keytool -list -v -keystore your-key.jks -alias your-alias
+    //   2. Add SHA-256 fingerprint in Firebase Console → Project Settings → App Check
+    //   3. Enable Play Integrity in Firebase Console → App Check → Apps
     try {
       await FirebaseAppCheck.instance.activate(
-        androidProvider: AndroidProvider.debug,
+        androidProvider: AndroidProvider.playIntegrity,
+        appleProvider: AppleProvider.deviceCheck,
       );
+      debugPrint('App Check activated: Play Integrity mode (production)');
     } catch (e) {
-      debugPrint('App Check activation error: $e');
+      debugPrint('App Check Play Integrity failed, trying debug fallback: $e');
+      try {
+        await FirebaseAppCheck.instance.activate(
+          androidProvider: AndroidProvider.debug,
+        );
+        debugPrint('App Check activated: Debug mode (fallback)');
+      } catch (e2) {
+        debugPrint('App Check activation error: $e2');
+      }
     }
 
     SystemChrome.setSystemUIOverlayStyle(

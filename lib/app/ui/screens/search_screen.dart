@@ -356,6 +356,7 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Widget _buildTypeSelector(AppConfig appConfig, StateSetter setModalState) {
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
     final types = [
       {'value': null, 'label': appConfig.translate('type_all')},
       {'value': 'movie', 'label': appConfig.translate('type_movie')},
@@ -376,15 +377,15 @@ class _SearchScreenState extends State<SearchScreen> {
             });
           },
           selectedColor: const Color(0xFFE50914).withOpacity(0.2),
-          backgroundColor: theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
+          backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
           labelStyle: TextStyle(
-            color: isSelected ? const Color(0xFFE50914) : theme.colorScheme.onSurface.withOpacity(0.7),
+            color: isSelected ? const Color(0xFFE50914) : (isDark ? Colors.white70 : Colors.black87),
             fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
           ),
           side: BorderSide(
             color: isSelected
                 ? const Color(0xFFE50914)
-                : theme.colorScheme.onSurface.withOpacity(0.15),
+                : (isDark ? Colors.white24 : Colors.grey.shade400),
           ),
         );
       }).toList(),
@@ -392,6 +393,7 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _buildGenreSelector(AppConfig appConfig, ThemeData theme, StateSetter setModalState) {
+    final isDark = theme.brightness == Brightness.dark;
     if (_genres.isEmpty) {
       return Text(
         appConfig.translate('loading'),
@@ -415,16 +417,16 @@ class _SearchScreenState extends State<SearchScreen> {
             });
           },
           selectedColor: const Color(0xFFE50914).withOpacity(0.2),
-          backgroundColor: theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
+          backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
           labelStyle: TextStyle(
-            color: isSelected ? const Color(0xFFE50914) : theme.colorScheme.onSurface.withOpacity(0.7),
+            color: isSelected ? const Color(0xFFE50914) : (isDark ? Colors.white70 : Colors.black87),
             fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
             fontSize: 13,
           ),
           side: BorderSide(
             color: isSelected
                 ? const Color(0xFFE50914)
-                : theme.colorScheme.onSurface.withOpacity(0.15),
+                : (isDark ? Colors.white24 : Colors.grey.shade400),
           ),
         );
       }).toList(),
@@ -432,6 +434,7 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _buildYearSelector(AppConfig appConfig, ThemeData theme, StateSetter setModalState) {
+    final isDark = theme.brightness == Brightness.dark;
     if (_years.isEmpty) {
       return Text(
         appConfig.translate('loading'),
@@ -462,15 +465,15 @@ class _SearchScreenState extends State<SearchScreen> {
               });
             },
             selectedColor: const Color(0xFFE50914).withOpacity(0.2),
-            backgroundColor: theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
+            backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
             labelStyle: TextStyle(
-              color: isSelected ? const Color(0xFFE50914) : theme.colorScheme.onSurface.withOpacity(0.7),
+              color: isSelected ? const Color(0xFFE50914) : isDark ? Colors.white70 : Colors.black87,
               fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
             ),
             side: BorderSide(
               color: isSelected
                   ? const Color(0xFFE50914)
-                  : theme.colorScheme.onSurface.withOpacity(0.15),
+                  : isDark ? Colors.white24 : Colors.grey.shade400,
             ),
           );
         },
@@ -479,6 +482,7 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _buildRatingSelector(AppConfig appConfig, ThemeData theme, StateSetter setModalState) {
+    final isDark = theme.brightness == Brightness.dark;
     final ratings = ['5', '6', '7', '8', '9'];
 
     return Wrap(
@@ -495,15 +499,15 @@ class _SearchScreenState extends State<SearchScreen> {
             });
           },
           selectedColor: const Color(0xFFE50914).withOpacity(0.2),
-          backgroundColor: theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
+          backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
           labelStyle: TextStyle(
-            color: _selectedRating == null ? const Color(0xFFE50914) : theme.colorScheme.onSurface.withOpacity(0.7),
+            color: _selectedRating == null ? const Color(0xFFE50914) : isDark ? Colors.white70 : Colors.black87,
             fontWeight: _selectedRating == null ? FontWeight.bold : FontWeight.normal,
           ),
           side: BorderSide(
             color: _selectedRating == null
                 ? const Color(0xFFE50914)
-                : theme.colorScheme.onSurface.withOpacity(0.15),
+                : isDark ? Colors.white24 : Colors.grey.shade400,
           ),
         ),
         ...ratings.map((rating) {
@@ -517,15 +521,15 @@ class _SearchScreenState extends State<SearchScreen> {
               });
             },
             selectedColor: const Color(0xFFE50914).withOpacity(0.2),
-            backgroundColor: theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
+            backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
             labelStyle: TextStyle(
-              color: isSelected ? const Color(0xFFE50914) : theme.colorScheme.onSurface.withOpacity(0.7),
+              color: isSelected ? const Color(0xFFE50914) : isDark ? Colors.white70 : Colors.black87,
               fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
             ),
             side: BorderSide(
               color: isSelected
                   ? const Color(0xFFE50914)
-                  : theme.colorScheme.onSurface.withOpacity(0.15),
+                  : isDark ? Colors.white24 : Colors.grey.shade400,
             ),
           );
         }),
@@ -534,6 +538,8 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _buildSortSelector(AppConfig appConfig, StateSetter setModalState) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
     final theme = Theme.of(context);
     final sortOptions = [
       {'value': 'latest', 'label': appConfig.translate('sort_latest'), 'icon': Icons.schedule},
@@ -557,12 +563,12 @@ class _SearchScreenState extends State<SearchScreen> {
               decoration: BoxDecoration(
                 color: isSelected
                     ? const Color(0xFFE50914).withOpacity(0.15)
-                    : theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
+                    : isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
                   color: isSelected
                       ? const Color(0xFFE50914)
-                      : theme.colorScheme.onSurface.withOpacity(0.15),
+                      : isDark ? Colors.white24 : Colors.grey.shade400,
                 ),
               ),
               child: Column(
@@ -582,7 +588,7 @@ class _SearchScreenState extends State<SearchScreen> {
                       fontSize: 11,
                       color: isSelected
                           ? const Color(0xFFE50914)
-                          : theme.colorScheme.onSurface.withOpacity(0.7),
+                          : isDark ? Colors.white70 : Colors.black87,
                       fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                     ),
                   ),
@@ -641,7 +647,7 @@ class _SearchScreenState extends State<SearchScreen> {
                           borderSide: BorderSide.none,
                         ),
                         filled: true,
-                        fillColor: theme.colorScheme.surfaceContainerHighest.withOpacity(0.5),
+                        fillColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
                         contentPadding: const EdgeInsets.symmetric(vertical: 10),
                         isDense: true,
                       ),
@@ -657,7 +663,7 @@ class _SearchScreenState extends State<SearchScreen> {
                         decoration: BoxDecoration(
                           color: _hasActiveFilters
                               ? const Color(0xFFE50914).withOpacity(0.15)
-                              : theme.colorScheme.surfaceContainerHighest.withOpacity(0.5),
+                              : isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
                           borderRadius: BorderRadius.circular(12),
                           border: _hasActiveFilters
                               ? Border.all(color: const Color(0xFFE50914), width: 1.5)

@@ -22,6 +22,16 @@ class TrendingMovieComponent extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final appConfig = Provider.of<AppConfig>(context, listen: false);
+    final screenWidth = MediaQuery.of(context).size.width;
+
+    // 4 cards per row: calculate card width dynamically
+    final horizontalPadding = 12.0;
+    final cardPadding = 4.0;
+    final availableWidth = screenWidth - (horizontalPadding * 2);
+    final cardWidth = (availableWidth - (cardPadding * 2 * 4)) / 4;
+
+    // Show 8 posts (2 rows x 4 columns) for grid layout
+    final displayMovies = movies.length > 8 ? movies.sublist(0, 8) : movies;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -57,23 +67,21 @@ class TrendingMovieComponent extends StatelessWidget {
             ],
           ),
         ),
-        SizedBox(
-          height: 230,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            itemCount: movies.length,
-            itemBuilder: (context, index) {
-              final movie = movies[index];
-              return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
+        // 4-column grid layout (2 rows of 4)
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+          child: Wrap(
+            spacing: cardPadding * 2,
+            runSpacing: 8,
+            children: displayMovies.map((movie) {
+              return SizedBox(
+                width: cardWidth,
                 child: MovieCard(
                   movie: movie,
-                  cardWidth: 130,
                   onTap: () => onMovieTap(movie),
                 ),
               );
-            },
+            }).toList(),
           ),
         ),
       ],

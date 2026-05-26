@@ -212,6 +212,22 @@ class _LoginPageState extends State<LoginPage>
   Widget build(BuildContext context) {
     final appConfig = Provider.of<AppConfig>(context);
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    // Input decoration style for both light and dark modes
+    final inputDecoration = InputDecoration(
+      filled: true,
+      fillColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade100,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none,
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Color(0xFFE50914), width: 1.5),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -348,12 +364,9 @@ class _LoginPageState extends State<LoginPage>
             // Username field
             TextFormField(
               controller: _usernameController,
-              decoration: InputDecoration(
+              decoration: inputDecoration.copyWith(
                 labelText: appConfig.translate('username'),
                 prefixIcon: const Icon(Icons.person_outline),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
               ),
               validator: (val) {
                 if (val == null || val.trim().isEmpty) {
@@ -368,7 +381,7 @@ class _LoginPageState extends State<LoginPage>
             TextFormField(
               controller: _passwordController,
               obscureText: _obscurePassword,
-              decoration: InputDecoration(
+              decoration: inputDecoration.copyWith(
                 labelText: appConfig.translate('password'),
                 prefixIcon: const Icon(Icons.lock_outline),
                 suffixIcon: IconButton(
@@ -378,9 +391,6 @@ class _LoginPageState extends State<LoginPage>
                   onPressed: () {
                     setState(() => _obscurePassword = !_obscurePassword);
                   },
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
                 ),
               ),
               validator: (val) {
@@ -499,12 +509,9 @@ class _LoginPageState extends State<LoginPage>
             // Username
             TextFormField(
               controller: _regUsernameController,
-              decoration: InputDecoration(
+              decoration: inputDecoration.copyWith(
                 labelText: appConfig.translate('username'),
                 prefixIcon: const Icon(Icons.person_outline),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
               ),
               validator: (val) {
                 if (val == null || val.trim().isEmpty) {
@@ -526,7 +533,7 @@ class _LoginPageState extends State<LoginPage>
             TextFormField(
               controller: _regPasswordController,
               obscureText: _obscureRegPassword,
-              decoration: InputDecoration(
+              decoration: inputDecoration.copyWith(
                 labelText: appConfig.translate('password'),
                 prefixIcon: const Icon(Icons.lock_outline),
                 hintText: appConfig.translate('password_hint'),
@@ -537,9 +544,6 @@ class _LoginPageState extends State<LoginPage>
                   onPressed: () {
                     setState(() => _obscureRegPassword = !_obscureRegPassword);
                   },
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
                 ),
               ),
               validator: (val) {
@@ -567,7 +571,7 @@ class _LoginPageState extends State<LoginPage>
             TextFormField(
               controller: _regConfirmPasswordController,
               obscureText: _obscureRegConfirmPassword,
-              decoration: InputDecoration(
+              decoration: inputDecoration.copyWith(
                 labelText: appConfig.translate('confirm_password'),
                 prefixIcon: const Icon(Icons.lock_outline),
                 suffixIcon: IconButton(
@@ -578,9 +582,6 @@ class _LoginPageState extends State<LoginPage>
                     setState(() => _obscureRegConfirmPassword =
                         !_obscureRegConfirmPassword);
                   },
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
                 ),
               ),
               validator: (val) {

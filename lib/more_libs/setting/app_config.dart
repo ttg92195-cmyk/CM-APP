@@ -42,7 +42,7 @@ class AppConfig extends ChangeNotifier {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   ThemeMode _themeMode = ThemeMode.light; // Default to Light Mode
-  String _languageCode = 'my';
+  String _languageCode = 'en';
   Map<String, String> _translations = {};
   bool _downloadEnabled = true;
   Map<String, dynamic>? _currentUser;
@@ -154,7 +154,7 @@ class AppConfig extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     final themeIndex = prefs.getInt(_themeKey) ?? ThemeMode.light.index; // Default Light Mode
     _themeMode = ThemeMode.values[themeIndex];
-    _languageCode = prefs.getString(_langKey) ?? 'my';
+    _languageCode = prefs.getString(_langKey) ?? 'en';
     _downloadEnabled = prefs.getBool(_downloadEnabledKey) ?? true;
     await _loadTranslations();
     notifyListeners();
