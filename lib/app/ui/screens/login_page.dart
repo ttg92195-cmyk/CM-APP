@@ -287,14 +287,14 @@ class _LoginPageState extends State<LoginPage>
       body: TabBarView(
         controller: _tabController,
         children: [
-          _buildLoginTab(appConfig, theme),
-          _buildRegisterTab(appConfig, theme),
+          _buildLoginTab(appConfig, theme, inputDecoration),
+          _buildRegisterTab(appConfig, theme, inputDecoration),
         ],
       ),
     );
   }
 
-  Widget _buildLoginTab(AppConfig appConfig, ThemeData theme) {
+  Widget _buildLoginTab(AppConfig appConfig, ThemeData theme, InputDecoration inputDecoration) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Form(
@@ -439,7 +439,7 @@ class _LoginPageState extends State<LoginPage>
     );
   }
 
-  Widget _buildRegisterTab(AppConfig appConfig, ThemeData theme) {
+  Widget _buildRegisterTab(AppConfig appConfig, ThemeData theme, InputDecoration inputDecoration) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Form(

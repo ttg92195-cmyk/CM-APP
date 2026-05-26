@@ -540,7 +540,6 @@ class _SearchScreenState extends State<SearchScreen> {
   Widget _buildSortSelector(AppConfig appConfig, StateSetter setModalState) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final theme = Theme.of(context);
     final sortOptions = [
       {'value': 'latest', 'label': appConfig.translate('sort_latest'), 'icon': Icons.schedule},
       {'value': 'rating', 'label': appConfig.translate('sort_rating'), 'icon': Icons.star},
@@ -605,6 +604,7 @@ class _SearchScreenState extends State<SearchScreen> {
   Widget build(BuildContext context) {
     final appConfig = Provider.of<AppConfig>(context);
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
 
     return Scaffold(
       body: SafeArea(
