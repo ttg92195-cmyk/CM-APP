@@ -27,8 +27,7 @@ class SettingsPage extends StatelessWidget {
             return theme.brightness == Brightness.dark ? Colors.white38 : Colors.black38;
           }),
         ),
-        listTileTheme: ListTileThemeData(
-          splashColor: Colors.transparent,
+        listTileTheme: const ListTileThemeData(
           highlightColor: Colors.transparent,
         ),
       ),
