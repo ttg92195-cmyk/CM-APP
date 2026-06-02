@@ -272,6 +272,8 @@ class _LoginPageState extends State<LoginPage>
         ],
         bottom: TabBar(
           controller: _tabController,
+          splashFactory: NoSplash.splashFactory,
+          overlayColor: WidgetStateProperty.all(Colors.transparent),
           tabs: [
             Tab(
               icon: const Icon(Icons.login),

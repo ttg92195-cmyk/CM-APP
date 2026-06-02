@@ -287,6 +287,8 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
             floating: false,
             leadingWidth: 46,
             backgroundColor: isDark ? const Color(0xFF121212) : bgColor,
+            scrolledUnderElevation: 0,
+            surfaceTintColor: Colors.transparent,
             centerTitle: true,
             title: Text(
               detail.title,

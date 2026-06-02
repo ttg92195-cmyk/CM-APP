@@ -272,6 +272,8 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
       appBarTheme: const AppBarTheme(
         backgroundColor: kDarkSurface,
         elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
         centerTitle: true,
         titleTextStyle: TextStyle(
           color: Colors.white,
@@ -403,6 +405,8 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
       appBarTheme: const AppBarTheme(
         backgroundColor: Colors.white,
         elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
         centerTitle: true,
         titleTextStyle: TextStyle(
           color: Colors.black87,

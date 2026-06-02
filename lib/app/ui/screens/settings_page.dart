@@ -13,7 +13,26 @@ class SettingsPage extends StatelessWidget {
     final appConfig = Provider.of<AppConfig>(context);
     final theme = Theme.of(context);
 
-    return ListView(
+    return Theme(
+      data: theme.copyWith(
+        splashFactory: NoSplash.splashFactory,
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        radioTheme: RadioThemeData(
+          splashRadius: 0,
+          fillColor: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.selected)) {
+              return const Color(0xFFE50914);
+            }
+            return theme.brightness == Brightness.dark ? Colors.white38 : Colors.black38;
+          }),
+        ),
+        listTileTheme: ListTileThemeData(
+          splashColor: Colors.transparent,
+          highlightColor: Colors.transparent,
+        ),
+      ),
+      child: ListView(
       children: [
         // Theme Section
         Padding(
@@ -124,6 +143,7 @@ class SettingsPage extends StatelessWidget {
           },
         ),
       ],
+    ),
     );
   }
 }

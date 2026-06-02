@@ -329,6 +329,8 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
             floating: false,
             leadingWidth: 46,
             backgroundColor: isDark ? const Color(0xFF121212) : bgColor,
+            scrolledUnderElevation: 0,
+            surfaceTintColor: Colors.transparent,
             centerTitle: true,
             title: AnimatedOpacity(
               opacity: 1.0,

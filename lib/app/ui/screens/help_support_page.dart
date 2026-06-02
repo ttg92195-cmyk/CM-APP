@@ -250,14 +250,20 @@ class HelpSupportPage extends StatelessWidget {
             : theme.colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(12),
       ),
-      child: ExpansionTile(
-        tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        iconColor: theme.colorScheme.primary,
-        collapsedIconColor: theme.colorScheme.onSurface.withOpacity(0.5),
-        shape: const RoundedRectangleBorder(side: BorderSide.none),
-        collapsedShape: const RoundedRectangleBorder(side: BorderSide.none),
-        title: Text(
+      child: Theme(
+        data: theme.copyWith(
+          splashFactory: NoSplash.splashFactory,
+          highlightColor: Colors.transparent,
+          splashColor: Colors.transparent,
+        ),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          iconColor: theme.colorScheme.primary,
+          collapsedIconColor: theme.colorScheme.onSurface.withOpacity(0.5),
+          shape: const RoundedRectangleBorder(side: BorderSide.none),
+          collapsedShape: const RoundedRectangleBorder(side: BorderSide.none),
+          title: Text(
           question,
           style: theme.textTheme.bodyMedium?.copyWith(
             fontWeight: FontWeight.w600,
@@ -272,6 +278,7 @@ class HelpSupportPage extends StatelessWidget {
             ),
           ),
         ],
+      ),
       ),
     );
   }
