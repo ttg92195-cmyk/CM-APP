@@ -22,16 +22,10 @@ class TrendingMovieComponent extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final appConfig = Provider.of<AppConfig>(context, listen: false);
-    final screenWidth = MediaQuery.of(context).size.width;
 
-    // 3 cards per row: slightly smaller cards for a balanced look
-    final horizontalPadding = 10.0;
-    final cardPadding = 4.0;
-    final availableWidth = screenWidth - (horizontalPadding * 2);
-    final cardWidth = (availableWidth - (cardPadding * 2 * 3)) / 3;
-
-    // Show 6 posts (2 rows x 3 columns) for grid layout
-    final displayMovies = movies.length > 6 ? movies.sublist(0, 6) : movies;
+    // Show 10 movies max for horizontal scroll
+    final displayMovies = movies.length > 10 ? movies.sublist(0, 10) : movies;
+    const cardWidth = 120.0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -67,21 +61,21 @@ class TrendingMovieComponent extends StatelessWidget {
             ],
           ),
         ),
-        // 3-column grid layout (2 rows of 3)
-        Padding(
-          padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
-          child: Wrap(
-            spacing: cardPadding * 2,
-            runSpacing: 6,
-            children: displayMovies.map((movie) {
-              return SizedBox(
-                width: cardWidth,
-                child: MovieCard(
-                  movie: movie,
-                  onTap: () => onMovieTap(movie),
-                ),
+        // Horizontal scrollable list
+        SizedBox(
+          height: 230,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            itemCount: displayMovies.length,
+            itemBuilder: (context, index) {
+              final movie = displayMovies[index];
+              return MovieCard(
+                movie: movie,
+                cardWidth: cardWidth,
+                onTap: () => onMovieTap(movie),
               );
-            }).toList(),
+            },
           ),
         ),
       ],

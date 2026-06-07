@@ -103,6 +103,8 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
         title: Text(appConfig.translate('genres_tags_collections')),
         bottom: TabBar(
           controller: _tabController,
+          splashFactory: NoSplash.splashFactory,
+          overlayColor: WidgetStateProperty.all(Colors.transparent),
           tabs: [
             Tab(text: appConfig.translate('genres')),
             Tab(text: appConfig.translate('tags')),

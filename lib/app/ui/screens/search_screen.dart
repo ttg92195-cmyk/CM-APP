@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
@@ -26,6 +27,12 @@ class _SearchScreenState extends State<SearchScreen> {
   bool _isLoading = false;
   bool _hasSearched = false;
 
+  // Pagination state for infinite scroll
+  DocumentSnapshot? _lastDoc;
+  bool _hasMore = true;
+  bool _isLoadingMore = false;
+  Set<String> _seenIds = {};
+
   // Filter state
   String? _selectedGenre;
   String? _selectedType; // 'movie' or 'series'
@@ -41,6 +48,7 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_onScroll);
     _searchController.addListener(() {
       setState(() {}); // Rebuild to show/hide clear button
       // Debounced auto-search: wait 400ms after user stops typing
@@ -106,6 +114,11 @@ class _SearchScreenState extends State<SearchScreen> {
       return;
     }
 
+    // Reset pagination state for new search
+    _lastDoc = null;
+    _hasMore = true;
+    _seenIds.clear();
+
     setState(() {
       _isLoading = true;
       _hasSearched = true;
@@ -119,11 +132,18 @@ class _SearchScreenState extends State<SearchScreen> {
         year: _selectedYear,
         rating: _selectedRating,
         sortBy: _sortBy,
-        limit: 50,
+        limit: 20,
       );
       if (mounted) {
+        final movies = result['movies'] as List<Movie>;
+        // Track IDs to prevent duplicates
+        for (final m in movies) {
+          _seenIds.add(m.id);
+        }
         setState(() {
-          _results = result['movies'] as List<Movie>;
+          _results = movies;
+          _lastDoc = result['lastDoc'] as DocumentSnapshot?;
+          _hasMore = (result['hasMore'] as bool? ?? false) && movies.length >= 20;
           _isLoading = false;
         });
       }
@@ -145,9 +165,59 @@ class _SearchScreenState extends State<SearchScreen> {
       _selectedYear = null;
       _selectedRating = null;
       _sortBy = 'latest';
+      _lastDoc = null;
+      _hasMore = true;
+      _seenIds.clear();
     });
     if (_searchController.text.isNotEmpty || _hasSearched) {
       _search();
+    }
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 200) {
+      _loadMore();
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (_isLoadingMore || !_hasMore || _isLoading) return;
+    setState(() => _isLoadingMore = true);
+    try {
+      final query = _searchController.text.trim();
+      final result = await _contentService.searchMoviesWithFilters(
+        keyword: query.isEmpty ? null : query,
+        genre: _selectedGenre,
+        type: _selectedType,
+        year: _selectedYear,
+        rating: _selectedRating,
+        sortBy: _sortBy,
+        limit: 20,
+        startAfter: _lastDoc,
+      );
+      if (mounted) {
+        final newMovies = result['movies'] as List<Movie>;
+        // Deduplicate by ID
+        final dedupedMovies = <Movie>[];
+        for (final m in newMovies) {
+          if (!_seenIds.contains(m.id)) {
+            _seenIds.add(m.id);
+            dedupedMovies.add(m);
+          }
+        }
+        setState(() {
+          _results.addAll(dedupedMovies);
+          _lastDoc = result['lastDoc'] as DocumentSnapshot?;
+          _hasMore = (result['hasMore'] as bool? ?? false) && newMovies.isNotEmpty;
+          _isLoadingMore = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Load more error: $e');
+      if (mounted) {
+        setState(() => _isLoadingMore = false);
+      }
     }
   }
 
@@ -831,6 +901,7 @@ class _SearchScreenState extends State<SearchScreen> {
                               ),
                             )
                           : GridView.builder(
+                              controller: _scrollController,
                               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
                               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                                 crossAxisCount: 3,
@@ -838,8 +909,11 @@ class _SearchScreenState extends State<SearchScreen> {
                                 crossAxisSpacing: 6,
                                 mainAxisSpacing: 6,
                               ),
-                              itemCount: _results.length,
+                              itemCount: _results.length + (_isLoadingMore ? 6 : 0),
                               itemBuilder: (context, index) {
+                                if (index >= _results.length) {
+                                  return const Center(child: CircularProgressIndicator());
+                                }
                                 final movie = _results[index];
                                 return MovieCard(
                                   movie: movie,

@@ -182,7 +182,13 @@ class _MovieDownloadScreenState extends State<MovieDownloadScreen> {
                         color: cardBgColor,
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: ExpansionTile(
+                      child: Theme(
+                        data: Theme.of(context).copyWith(
+                          splashFactory: NoSplash.splashFactory,
+                          splashColor: Colors.transparent,
+                          highlightColor: Colors.transparent,
+                        ),
+                        child: ExpansionTile(
                         tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
                         childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
                         collapsedIconColor: metaTextColor,
@@ -221,6 +227,7 @@ class _MovieDownloadScreenState extends State<MovieDownloadScreen> {
                                 cardBgColor: cardBgColor,
                               )),
                         ],
+                      ),
                       ),
                     ),
                   );

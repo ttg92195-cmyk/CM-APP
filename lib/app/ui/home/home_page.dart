@@ -202,12 +202,7 @@ class _HomePageState extends State<HomePage> {
           height: 64,
           labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
           surfaceTintColor: Colors.transparent,
-          overlayColor: WidgetStateProperty.resolveWith<Color?>((states) {
-            if (states.contains(WidgetState.pressed)) {
-              return selectedColor.withOpacity(0.08);
-            }
-            return Colors.transparent;
-          }),
+          overlayColor: WidgetStateProperty.all(Colors.transparent),
           iconTheme: WidgetStateProperty.resolveWith<IconThemeData?>((states) {
             final isSelected = states.contains(WidgetState.selected);
             return IconThemeData(
