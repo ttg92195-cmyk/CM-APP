@@ -577,6 +577,7 @@ class FirestoreContentService {
     String? rating, // e.g. '7', '8' - minimum rating
     String? sortBy, // 'latest', 'rating', 'name'
     int limit = 50,
+    DocumentSnapshot? startAfter,
   }) async {
     try {
       Query query = _moviesRef;
@@ -599,6 +600,11 @@ class FirestoreContentService {
         if (genre == null || genre.isEmpty) {
           query = query.orderBy('createdAt', descending: true);
         }
+      }
+
+      // Apply cursor-based pagination
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
       }
 
       query = query.limit(limit);
@@ -657,8 +663,8 @@ class FirestoreContentService {
 
       return {
         'movies': filtered.take(limit).toList(),
-        'hasMore': filtered.length > limit,
-        'lastDoc': null,
+        'hasMore': allMovies.length >= limit || filtered.length > limit,
+        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
       };
     } catch (e) {
       debugPrint('searchMoviesWithFilters failed: $e');
@@ -706,7 +712,7 @@ class FirestoreContentService {
         return {
           'movies': filtered.take(limit).toList(),
           'hasMore': filtered.length > limit,
-          'lastDoc': null,
+          'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
         };
       } catch (e2) {
         debugPrint('searchMoviesWithFilters fallback also failed: $e2');
