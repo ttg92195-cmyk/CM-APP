@@ -70,6 +70,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
         final movie = Movie(
           id: detail.id,
           title: detail.title,
+          titleLowercase: detail.title.toLowerCase(),
           slug: detail.slug,
           year: detail.year,
           poster: detail.poster,
@@ -150,6 +151,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
     final movie = Movie(
       id: _seriesDetail!.id,
       title: _seriesDetail!.title,
+      titleLowercase: _seriesDetail!.title.toLowerCase(),
       slug: _seriesDetail!.slug,
       year: _seriesDetail!.year,
       poster: _seriesDetail!.poster,
@@ -178,6 +180,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
     final movie = Movie(
       id: _seriesDetail!.id,
       title: _seriesDetail!.title,
+      titleLowercase: _seriesDetail!.title.toLowerCase(),
       slug: _seriesDetail!.slug,
       year: _seriesDetail!.year,
       poster: _seriesDetail!.poster,

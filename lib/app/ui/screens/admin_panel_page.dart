@@ -116,7 +116,9 @@ class _AdminPanelPageState extends State<AdminPanelPage>
           _genres = results[1] as List<TagAndGenres>;
           _tags = results[2] as List<TagAndGenres>;
           _collections = results[3] as List<TagAndGenres>;
-          _bannerImageUrls = List<String>.from(results[4]);
+          _bannerImageUrls = results[4] is List
+              ? List<String>.from((results[4] as List).whereType<String>())
+              : [];
           _isLoading = false;
         });
       }
