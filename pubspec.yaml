@@ -37,6 +37,8 @@ dependencies:
   cloud_firestore: ^5.4.4
   firebase_app_check: ^0.3.0
   firebase_messaging: ^15.1.0
+  # OneSignal — free push notifications (no Cloud Functions / no Blaze plan needed)
+  onesignal_flutter: ^5.2.0
   # System-level download progress notifications
   flutter_local_notifications: ^17.0.0
 

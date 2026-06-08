@@ -117,33 +117,35 @@ class _AdminNotificationPageState extends State<AdminNotificationPage> {
             : null,
         sentBy: user.email ?? user.uid,
         sentAt: DateTime.now(),
-        isSent: false, // Cloud Function will update this
+        isSent: false, // Will be updated after OneSignal confirms
       );
 
-      // Save to Firestore — Cloud Function will trigger and send FCM push
+      // Save to Firestore for history tracking
       final docRef = await FirebaseFirestore.instance
           .collection('notifications')
           .add(notification.toFirestore());
 
-      // Also try direct FCM send via Cloud Function HTTP endpoint (if deployed)
-      try {
-        await FcmNotificationService().sendNotificationViaCloudFunction(
-          notificationId: docRef.id,
-          title: notification.title,
-          body: notification.body,
-          movieId: notification.movieId,
-          movieSlug: notification.movieSlug,
-        );
-      } catch (e) {
-        debugPrint('Cloud Function send failed (may not be deployed yet): $e');
-        // Not critical — Cloud Function trigger will still work if deployed
-      }
+      // Send push notification via OneSignal REST API (free, no server needed)
+      final sent = await FcmNotificationService().sendNotificationToAll(
+        title: notification.title,
+        body: notification.body,
+        movieId: notification.movieId,
+        movieSlug: notification.movieSlug,
+      );
+
+      // Update Firestore with send status
+      await FirebaseFirestore.instance
+          .collection('notifications')
+          .doc(docRef.id)
+          .update({'isSent': sent});
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Notification sent successfully!'),
-            backgroundColor: Colors.green,
+            content: Text(sent
+                ? 'Notification sent successfully!'
+                : 'Notification saved but push failed. Check OneSignal config.'),
+            backgroundColor: sent ? Colors.green : Colors.orange,
             behavior: SnackBarBehavior.floating,
           ),
         );

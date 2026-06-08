@@ -58,11 +58,11 @@ void main() async {
         cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
       );
 
-      // Initialize FCM push notifications
+      // Initialize OneSignal push notifications (free, no Cloud Functions needed)
       try {
         await FcmNotificationService().initialize();
       } catch (e) {
-        debugPrint('FCM initialization error: $e');
+        debugPrint('OneSignal initialization error: $e');
       }
     } catch (e) {
       debugPrint('Firebase initialization error: $e');
