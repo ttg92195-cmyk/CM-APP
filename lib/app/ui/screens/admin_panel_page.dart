@@ -10,6 +10,7 @@ import 'package:cm_movies/app/core/models/tag_and_genres.dart';
 import 'package:cm_movies/app/ui/screens/add_movie_page.dart';
 import 'package:cm_movies/app/ui/screens/add_series_page.dart';
 import 'package:cm_movies/app/ui/screens/edit_movie_page.dart';
+import 'package:cm_movies/app/ui/screens/admin_notification_page.dart';
 
 class AdminPanelPage extends StatefulWidget {
   const AdminPanelPage({super.key});
@@ -68,7 +69,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 5, vsync: this);
+    _tabController = TabController(length: 6, vsync: this);
     _loadInitialData();
   }
 
@@ -404,6 +405,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
             Tab(text: 'Series (${currentSeries.length})'),
             const Tab(text: 'Genres/Tags'),
             const Tab(text: 'Banner'),
+            const Tab(text: 'Notify'),
           ],
         ),
       ),
@@ -417,6 +419,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                 _buildPostsTab(currentSeries, isDark),
                 _buildGenresTagsTab(isDark),
                 _buildBannerTab(isDark),
+                const AdminNotificationPage(),
               ],
             ),
       floatingActionButton: FloatingActionButton(
@@ -424,9 +427,10 @@ class _AdminPanelPageState extends State<AdminPanelPage>
           final index = _tabController.index;
           if (index <= 2) {
             _showAddOptions();
-          } else {
+          } else if (index == 3) {
             _addGenreTagDialog();
           }
+          // Tab 4 (Banner) and Tab 5 (Notify) have their own UI — no FAB action needed
         },
         backgroundColor: const Color(0xFFE50914),
         child: const Icon(Icons.add, color: Colors.white),
