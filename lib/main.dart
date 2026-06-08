@@ -11,6 +11,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/ui/home/home_page.dart';
 import 'package:cm_movies/app/core/services/download_manager_service.dart';
+import 'package:cm_movies/app/core/services/fcm_notification_service.dart';
 import 'package:cm_movies/app/ui/screens/login_page.dart';
 import 'firebase_options.dart';
 
@@ -55,6 +56,13 @@ void main() async {
         persistenceEnabled: true,
         cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
       );
+
+      // Initialize FCM push notifications
+      try {
+        await FcmNotificationService().initialize();
+      } catch (e) {
+        debugPrint('FCM initialization error: $e');
+      }
     } catch (e) {
       debugPrint('Firebase initialization error: $e');
     }

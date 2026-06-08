@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -54,6 +55,16 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   final TextEditingController _bannerUrl2Controller = TextEditingController();
   final TextEditingController _bannerUrl3Controller = TextEditingController();
 
+  // Search debouncer
+  Timer? _searchDebounceTimer;
+  static const Duration _searchDebounceDuration = Duration(milliseconds: 500);
+
+  // Global search state (decoupled from pagination)
+  bool _isSearching = false;
+  List<Movie> _globalSearchResults = [];
+  bool _isSearchingLoading = false;
+  final TextEditingController _searchController = TextEditingController();
+
   @override
   void initState() {
     super.initState();
@@ -64,6 +75,8 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   @override
   void dispose() {
     _tabController.dispose();
+    _searchDebounceTimer?.cancel();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -205,19 +218,58 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   }
 
   void _filterPosts(String query) {
-    setState(() {
-      _searchQuery = query;
-      _applyFilters();
+    _searchDebounceTimer?.cancel();
+
+    if (query.trim().isEmpty) {
+      // Not searching — reset to paginated view
+      setState(() {
+        _isSearching = false;
+        _globalSearchResults = [];
+        _searchQuery = '';
+        _applyFilters();
+      });
+      return;
+    }
+
+    // Debounce: wait 500ms after user stops typing
+    _searchDebounceTimer = Timer(_searchDebounceDuration, () {
+      _performGlobalSearch(query.trim());
     });
   }
 
-  void _applyFilters() {
-    _filteredPosts = _allPosts.where((post) {
-      // Search query filter
-      if (_searchQuery.isNotEmpty &&
-          !post.title.toLowerCase().contains(_searchQuery.toLowerCase())) {
-        return false;
+  /// Perform global search across entire Firestore database (decoupled from pagination)
+  Future<void> _performGlobalSearch(String keyword) async {
+    setState(() {
+      _isSearching = true;
+      _isSearchingLoading = true;
+      _searchQuery = keyword;
+    });
+
+    try {
+      final results = await _contentService.searchAllPosts(keyword);
+      if (mounted) {
+        setState(() {
+          _globalSearchResults = results;
+          _isSearchingLoading = false;
+          _applyFilters();
+        });
       }
+    } catch (e) {
+      debugPrint('Global search error: $e');
+      if (mounted) {
+        setState(() {
+          _globalSearchResults = [];
+          _isSearchingLoading = false;
+        });
+      }
+    }
+  }
+
+  void _applyFilters() {
+    // When searching globally, filter from global search results instead of page cache
+    final sourceList = _isSearching ? _globalSearchResults : _allPosts;
+    
+    _filteredPosts = sourceList.where((post) {
       // Genre filter
       if (_filterGenre != null && _filterGenre!.isNotEmpty) {
         if (!post.categories.any((c) =>
@@ -456,10 +508,20 @@ class _AdminPanelPageState extends State<AdminPanelPage>
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
           child: TextField(
+            controller: _searchController,
             onChanged: _filterPosts,
             decoration: InputDecoration(
               hintText: 'Search posts...',
               prefixIcon: const Icon(Icons.search),
+              suffixIcon: _searchController.text.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear, size: 20),
+                      onPressed: () {
+                        _searchController.clear();
+                        _filterPosts('');
+                      },
+                    )
+                  : null,
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               contentPadding: const EdgeInsets.symmetric(vertical: 8),
               isDense: true,
@@ -470,7 +532,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
         _buildFilterBar(isDark),
         // Posts list
         Expanded(
-          child: _isLoadingPage
+          child: _isSearchingLoading
               ? const Center(
                   child: SizedBox(
                     width: 24,
@@ -478,18 +540,36 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
                 )
-              : posts.isEmpty
-                  ? const Center(child: Text('No posts found.'))
-                  : ListView.builder(
-                      itemCount: posts.length,
-                      itemBuilder: (context, index) {
-                        final post = posts[index];
-                        return _buildPostListItem(post, isDark);
-                      },
-                    ),
+              : _isSearching
+                  ? (_filteredPosts.isEmpty
+                      ? const Center(child: Text('No posts found.'))
+                      : ListView.builder(
+                          itemCount: _filteredPosts.length,
+                          itemBuilder: (context, index) {
+                            final post = _filteredPosts[index];
+                            return _buildPostListItem(post, isDark);
+                          },
+                        ))
+                  : _isLoadingPage
+                      ? const Center(
+                          child: SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      : posts.isEmpty
+                          ? const Center(child: Text('No posts found.'))
+                          : ListView.builder(
+                              itemCount: posts.length,
+                              itemBuilder: (context, index) {
+                                final post = posts[index];
+                                return _buildPostListItem(post, isDark);
+                              },
+                            ),
         ),
-        // Pagination controls - only show when not searching/filtering
-        if (_searchQuery.isEmpty && _filterGenre == null && _filterYear == null)
+        // Pagination controls — only show when NOT searching
+        if (!_isSearching && _searchQuery.isEmpty && _filterGenre == null && _filterYear == null)
           _buildPaginationControls(isDark),
       ],
     );
