@@ -126,8 +126,7 @@ class _MovieCardState extends State<MovieCard> {
                   ),
 
                 // IMDb Rating Badge - bottom right corner
-                if (widget.movie.rating != null && widget.movie.rating!.isNotEmpty)
-                  Positioned(
+                Positioned(
                     bottom: 6,
                     right: 6,
                     child: Container(
@@ -147,13 +146,13 @@ class _MovieCardState extends State<MovieCard> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           const Icon(
-                            Icons.star,
+                            Icons.local_fire_department,
                             size: 10,
-                            color: Color(0xFFFF0000),
+                            color: Color(0xFFFF4444),
                           ),
                           const SizedBox(width: 3),
                           Text(
-                            widget.movie.rating!,
+                            _formatRating(widget.movie.rating),
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 10,
@@ -306,6 +305,14 @@ class _MovieCardState extends State<MovieCard> {
             )
           : cardContent,
     );
+  }
+
+  /// Format rating: show "N/A" if null, empty, or 0.0
+  static String _formatRating(String? rating) {
+    if (rating == null || rating.trim().isEmpty) return 'N/A';
+    final parsed = double.tryParse(rating);
+    if (parsed == null || parsed == 0.0) return 'N/A';
+    return rating;
   }
 
   /// Get standardized quality label from resolution string

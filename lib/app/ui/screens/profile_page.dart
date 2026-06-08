@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
+import 'package:cm_movies/app/core/services/device_management_service.dart';
 import 'package:cm_movies/app/ui/screens/watchlist_screen.dart';
 import 'package:cm_movies/app/ui/screens/movie_bookmark_screen.dart';
 
@@ -22,12 +23,65 @@ class _ProfilePageState extends State<ProfilePage> {
   bool _obscureConfirm = true;
   bool _isChangingPwd = false;
 
+  // Device Management
+  final DeviceManagementService _deviceService = DeviceManagementService();
+  List<DeviceInfo> _devices = [];
+  bool _isLoadingDevices = true;
+  bool _isRemovingDevice = false;
+
   @override
   void dispose() {
     _oldPasswordController.dispose();
     _newPasswordController.dispose();
     _confirmPasswordController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadDevices() async {
+    final appConfig = Provider.of<AppConfig>(context, listen: false);
+    final uid = appConfig.currentUser?['uid'] as String?;
+    if (uid == null) {
+      if (mounted) setState(() => _isLoadingDevices = false);
+      return;
+    }
+    final devices = await _deviceService.getDevices(uid);
+    if (mounted) {
+      setState(() {
+        _devices = devices;
+        _isLoadingDevices = false;
+      });
+    }
+  }
+
+  Future<void> _removeDevice(String deviceId) async {
+    setState(() => _isRemovingDevice = true);
+    final appConfig = Provider.of<AppConfig>(context, listen: false);
+    final uid = appConfig.currentUser?['uid'] as String?;
+    if (uid == null) return;
+
+    final success = await _deviceService.removeDevice(uid, deviceId);
+    if (mounted) {
+      if (success) {
+        setState(() {
+          _devices.removeWhere((d) => d.deviceId == deviceId);
+          _isRemovingDevice = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Device removed successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      } else {
+        setState(() => _isRemovingDevice = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to remove device'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _handleChangePassword() async {
@@ -119,6 +173,35 @@ class _ProfilePageState extends State<ProfilePage> {
     }
   }
 
+  String _formatDeviceDate(DateTime date) {
+    return '${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
+  }
+
+  void _confirmRemoveDevice(DeviceInfo device) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remove Device'),
+        content: Text('Are you sure you want to remove "${device.deviceName}"?\n\n'
+            'This device will need to log in again to access the account.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _removeDevice(device.deviceId);
+            },
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFE50914)),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final appConfig = Provider.of<AppConfig>(context);
@@ -165,6 +248,11 @@ class _ProfilePageState extends State<ProfilePage> {
     final username = appConfig.currentUsername ?? 'User';
     final isAdmin = appConfig.isCurrentUserAdmin;
     final regDate = appConfig.currentUser?['registrationDate'] as String? ?? '';
+
+    // Load devices if not yet loaded
+    if (_isLoadingDevices) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _loadDevices());
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -372,6 +460,108 @@ class _ProfilePageState extends State<ProfilePage> {
                 },
               ),
             ),
+
+            const SizedBox(height: 24),
+
+            // Connected Devices Section
+            Text(
+              'Connected Devices',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            if (_isLoadingDevices)
+              const Card(
+                child: Padding(
+                  padding: EdgeInsets.all(20),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+              )
+            else if (_devices.isEmpty)
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Row(
+                    children: [
+                      Icon(Icons.devices, color: theme.colorScheme.onSurface.withOpacity(0.3), size: 28),
+                      const SizedBox(width: 12),
+                      Text(
+                        'No devices registered',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onSurface.withOpacity(0.5),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else ...[
+              ..._devices.map((device) {
+                return Card(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFE50914).withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(
+                            Icons.phone_android,
+                            color: Color(0xFFE50914),
+                            size: 20,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                device.deviceName,
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Logged in: ${_formatDeviceDate(device.loginTime)}',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: theme.colorScheme.onSurface.withOpacity(0.5),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        _isRemovingDevice
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : IconButton(
+                                icon: Icon(
+                                  Icons.delete_outline,
+                                  color: Colors.red.shade400,
+                                  size: 20,
+                                ),
+                                onPressed: () => _confirmRemoveDevice(device),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                tooltip: 'Remove device',
+                              ),
+                      ],
+                    ),
+                  ),
+                );
+              }),
+            ],
 
             const SizedBox(height: 24),
 

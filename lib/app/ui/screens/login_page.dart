@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/services/bookmark_service.dart';
+import 'package:cm_movies/app/core/services/device_management_service.dart';
+import 'package:cm_movies/app/ui/components/device_limit_dialog.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -106,6 +108,36 @@ class _LoginPageState extends State<LoginPage>
     if (mounted) {
       setState(() => _isLoggingIn = false);
       if (success) {
+        // Device limit check
+        final user = FirebaseAuth.instance.currentUser;
+        if (user != null) {
+          final deviceService = DeviceManagementService();
+          final deviceResult = await deviceService.checkDeviceLimit(user.uid);
+
+          if (!deviceResult.allowed) {
+            // Sign out the user since device limit is reached
+            await FirebaseAuth.instance.signOut();
+
+            if (mounted) {
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (ctx) => DeviceLimitDialog(
+                  limitResult: deviceResult,
+                  uid: user.uid,
+                  onDeviceRemoved: () {
+                    // After device is removed, the user can try logging in again
+                  },
+                ),
+              );
+            }
+            return;
+          }
+
+          // Register the current device
+          await deviceService.registerDevice(user.uid);
+        }
+
         // L2: Reset failed attempts on successful login
         _failedLoginAttempts = 0;
         _lockoutUntil = null;
@@ -231,7 +263,7 @@ class _LoginPageState extends State<LoginPage>
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(appConfig.translate('login_and_register')),
+        title: const Text('KMM'),
         actions: [
           // Language toggle
           Padding(

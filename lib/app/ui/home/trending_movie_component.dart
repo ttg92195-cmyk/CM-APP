@@ -56,6 +56,8 @@ class TrendingMovieComponent extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     minimumSize: Size.zero,
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    splashFactory: NoSplash.splashFactory,
+                    overlayColor: WidgetStateProperty.all(Colors.transparent),
                   ),
                 ),
             ],
@@ -70,10 +72,13 @@ class TrendingMovieComponent extends StatelessWidget {
             itemCount: displayMovies.length,
             itemBuilder: (context, index) {
               final movie = displayMovies[index];
-              return MovieCard(
-                movie: movie,
-                cardWidth: cardWidth,
-                onTap: () => onMovieTap(movie),
+              return Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: MovieCard(
+                  movie: movie,
+                  cardWidth: cardWidth,
+                  onTap: () => onMovieTap(movie),
+                ),
               );
             },
           ),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
@@ -22,6 +23,8 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final FirestoreContentService _contentService = FirestoreContentService();
   final RecentService _recentService = RecentService();
+  final PageController _bannerController = PageController();
+  int _currentBannerIndex = 0;
 
   List<Movie> _trendingMovies = [];
   List<Movie> _trendingTvShows = [];
@@ -46,6 +49,12 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _bannerController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -266,6 +275,10 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Banner Slider (Featured Movies Carousel)
+          _buildBannerSlider(appConfig, theme),
+
+          const SizedBox(height: 8),
           // Movies Section
           if (_allMovies.isNotEmpty)
             TrendingMovieComponent(
@@ -445,5 +458,149 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
     );
+  }
+
+  /// Banner Slider — Featured Movies Carousel at top of Home
+  Widget _buildBannerSlider(AppConfig appConfig, ThemeData theme) {
+    final isDark = theme.brightness == Brightness.dark;
+    // Use trending movies as featured items for the banner
+    final featuredMovies = _trendingMovies.length > 5
+        ? _trendingMovies.sublist(0, 5)
+        : _trendingMovies;
+
+    if (featuredMovies.isEmpty) return const SizedBox.shrink();
+
+    return SizedBox(
+      height: 200,
+      child: Stack(
+        alignment: Alignment.bottomCenter,
+        children: [
+          // PageView for sliding banners
+          PageView.builder(
+            controller: _bannerController,
+            itemCount: featuredMovies.length,
+            onPageChanged: (index) {
+              setState(() => _currentBannerIndex = index);
+            },
+            itemBuilder: (context, index) {
+              final movie = featuredMovies[index];
+              return GestureDetector(
+                onTap: () => _navigateToDetail(movie),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    // Backdrop/Poster image
+                    if (movie.fullPosterUrl.isNotEmpty)
+                      CachedNetworkImage(
+                        imageUrl: movie.fullPosterUrl,
+                        fit: BoxFit.cover,
+                        placeholder: (_, __) => Container(
+                          color: isDark ? const Color(0xFF1A1A1A) : Colors.grey.shade300,
+                        ),
+                        errorWidget: (_, __, ___) => Container(
+                          color: isDark ? const Color(0xFF1A1A1A) : Colors.grey.shade300,
+                          child: const Icon(Icons.movie, color: Colors.white24, size: 48),
+                        ),
+                      )
+                    else
+                      Container(
+                        color: isDark ? const Color(0xFF1A1A1A) : Colors.grey.shade300,
+                      ),
+
+                    // Gradient overlay for text readability
+                    Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.transparent,
+                            Colors.black.withOpacity(0.7),
+                          ],
+                          stops: const [0.4, 1.0],
+                        ),
+                      ),
+                    ),
+
+                    // Movie title + rating at bottom
+                    Positioned(
+                      left: 16,
+                      right: 16,
+                      bottom: 24,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            movie.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              shadows: [Shadow(color: Colors.black54, blurRadius: 4)],
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              if (movie.year != null && movie.year!.isNotEmpty) ...[
+                                Text(
+                                  movie.year!,
+                                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                                ),
+                                const SizedBox(width: 8),
+                              ],
+                              if (movie.rating != null && movie.rating!.isNotEmpty) ...[
+                                const Icon(Icons.local_fire_department, size: 14, color: Color(0xFFFF4444)),
+                                const SizedBox(width: 2),
+                                Text(
+                                  _formatBannerRating(movie.rating),
+                                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+
+          // Dot indicators
+          Positioned(
+            bottom: 8,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(featuredMovies.length, (index) {
+                final isActive = index == _currentBannerIndex;
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  width: isActive ? 20 : 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: isActive ? const Color(0xFFE50914) : Colors.white54,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                );
+              }),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Format rating for banner: show "N/A" if null, empty, or 0.0
+  String _formatBannerRating(String? rating) {
+    if (rating == null || rating.trim().isEmpty) return 'N/A';
+    final parsed = double.tryParse(rating);
+    if (parsed == null || parsed == 0.0) return 'N/A';
+    return rating;
   }
 }

@@ -569,6 +569,8 @@ class FirestoreContentService {
 
   /// Search movies with multiple filters (client-side for reliability)
   /// Supports: keyword, genre, type, year, rating, and sorting
+  /// Advanced search: supports Name + Year combined search (e.g., "Kung Fu Panda 2008")
+  /// by splitting query into tokens and matching all tokens against title/year
   Future<Map<String, dynamic>> searchMoviesWithFilters({
     String? keyword,
     String? genre,
@@ -580,6 +582,25 @@ class FirestoreContentService {
     DocumentSnapshot? startAfter,
   }) async {
     try {
+      // Determine if we need keyword-based search (more extensive fetching)
+      final hasKeyword = keyword != null && keyword.trim().isNotEmpty;
+
+      if (hasKeyword) {
+        // For keyword searches, we need to fetch more documents to find matches
+        // especially for old movies that may not appear in the first batch
+        return _searchWithKeyword(
+          keyword: keyword!,
+          genre: genre,
+          type: type,
+          year: year,
+          rating: rating,
+          sortBy: sortBy,
+          limit: limit,
+          startAfter: startAfter,
+        );
+      }
+
+      // No keyword — just filter-based browsing with pagination
       Query query = _moviesRef;
 
       // Apply server-side filters where possible
@@ -596,7 +617,6 @@ class FirestoreContentService {
       } else if (sortBy == 'name') {
         query = query.orderBy('title');
       } else {
-        // Default: latest first - only if no genre filter (needs composite index)
         if (genre == null || genre.isEmpty) {
           query = query.orderBy('createdAt', descending: true);
         }
@@ -619,14 +639,6 @@ class FirestoreContentService {
 
       // Client-side filtering for fields that can't be queried together in Firestore
       var filtered = allMovies;
-
-      // Keyword filter
-      if (keyword != null && keyword.trim().isNotEmpty) {
-        final lowerKeyword = keyword.toLowerCase().trim();
-        filtered = filtered
-            .where((m) => m.title.toLowerCase().contains(lowerKeyword))
-            .toList();
-      }
 
       // Type filter (client-side fallback if not applied server-side)
       if (type != null && type.isNotEmpty && genre != null && genre.isNotEmpty) {
@@ -663,65 +675,151 @@ class FirestoreContentService {
 
       return {
         'movies': filtered.take(limit).toList(),
-        'hasMore': allMovies.length >= limit || filtered.length > limit,
+        'hasMore': allMovies.length >= limit,
         'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
       };
     } catch (e) {
       debugPrint('searchMoviesWithFilters failed: $e');
-      // Fallback: fetch all and filter entirely client-side
-      try {
-        final snapshot = await _moviesRef.limit(limit).get();
-        var allMovies = snapshot.docs
-            .map((doc) => Movie.fromMap(
-                  doc.data() as Map<String, dynamic>,
-                  docId: doc.id,
-                ))
-            .toList();
+      return {
+        'movies': <Movie>[],
+        'hasMore': false,
+        'lastDoc': null,
+      };
+    }
+  }
 
-        var filtered = allMovies;
+  /// Internal: keyword-based search that fetches more documents to find old movies too
+  /// Supports advanced token-based search: "Kung Fu Panda 2008" matches title AND year
+  Future<Map<String, dynamic>> _searchWithKeyword({
+    required String keyword,
+    String? genre,
+    String? type,
+    String? year,
+    String? rating,
+    String? sortBy,
+    int limit = 20,
+    DocumentSnapshot? startAfter,
+  }) async {
+    // Split keyword into tokens for advanced search
+    final rawTokens = keyword.toLowerCase().trim().split(RegExp(r'\s+'));
+    // Separate year-like tokens (4 digits) from name tokens
+    final yearTokens = <String>[];
+    final nameTokens = <String>[];
+    for (final token in rawTokens) {
+      if (RegExp(r'^\d{4}$').hasMatch(token)) {
+        yearTokens.add(token);
+      } else {
+        nameTokens.add(token);
+      }
+    }
 
-        if (keyword != null && keyword.trim().isNotEmpty) {
-          final lowerKeyword = keyword.toLowerCase().trim();
-          filtered = filtered
-              .where((m) => m.title.toLowerCase().contains(lowerKeyword))
-              .toList();
-        }
-        if (genre != null && genre.isNotEmpty) {
-          filtered = filtered
-              .where((m) => m.categories.contains(genre))
-              .toList();
-        }
-        if (type != null && type.isNotEmpty) {
-          filtered = filtered.where((m) => m.type == type).toList();
-        }
-        if (year != null && year.isNotEmpty) {
-          filtered = filtered.where((m) => m.year == year).toList();
-        }
-        if (rating != null && rating.isNotEmpty) {
-          final minRating = double.tryParse(rating) ?? 0.0;
-          filtered = filtered.where((m) {
-            final movieRating = double.tryParse(m.rating ?? '0') ?? 0.0;
-            return movieRating >= minRating;
-          }).toList();
-        }
+    // Build a comprehensive search query
+    // Fetch a large batch to ensure old movies are included
+    final fetchLimit = (limit * 3).clamp(60, 200);
 
-        // Default sort: latest first
+    try {
+      // Try Firestore prefix search first (efficient for new movies)
+      final lowerKeyword = keyword.toLowerCase().trim();
+      final upperKeyword = lowerKeyword + '\uf8ff';
+      final prefixSnapshot = await _moviesRef
+          .where('title', isGreaterThanOrEqualTo: lowerKeyword)
+          .where('title', isLessThanOrEqualTo: upperKeyword)
+          .orderBy('title')
+          .limit(fetchLimit)
+          .get();
+
+      final prefixMovies = prefixSnapshot.docs
+          .map((doc) => Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              ))
+          .toList();
+
+      // Also fetch recent movies to find older ones
+      Query broaderQuery = _moviesRef.orderBy('createdAt', descending: true);
+      if (startAfter != null) {
+        broaderQuery = broaderQuery.startAfterDocument(startAfter);
+      }
+      broaderQuery = broaderQuery.limit(fetchLimit);
+
+      final broaderSnapshot = await broaderQuery.get();
+      final broaderMovies = broaderSnapshot.docs
+          .map((doc) => Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              ))
+          .toList();
+
+      // Combine results, deduplicating by ID
+      final seenIds = <String>{};
+      final allMovies = <Movie>[];
+
+      for (final m in [...prefixMovies, ...broaderMovies]) {
+        if (!seenIds.contains(m.id)) {
+          seenIds.add(m.id);
+          allMovies.add(m);
+        }
+      }
+
+      // Apply token-based advanced filtering
+      var filtered = allMovies.where((m) {
+        // All name tokens must be contained in the movie title
+        final lowerTitle = m.title.toLowerCase();
+        final nameMatch = nameTokens.isEmpty ||
+            nameTokens.every((token) => lowerTitle.contains(token));
+
+        // If year tokens present, at least one must match the movie year
+        final yearMatch = yearTokens.isEmpty ||
+            (m.year != null && yearTokens.contains(m.year!.toLowerCase()));
+
+        return nameMatch && yearMatch;
+      }).toList();
+
+      // Apply additional filters
+      if (genre != null && genre.isNotEmpty) {
+        filtered = filtered.where((m) => m.categories.contains(genre)).toList();
+      }
+      if (type != null && type.isNotEmpty) {
+        filtered = filtered.where((m) => m.type == type).toList();
+      }
+      if (year != null && year.isNotEmpty) {
+        filtered = filtered.where((m) => m.year == year).toList();
+      }
+      if (rating != null && rating.isNotEmpty) {
+        final minRating = double.tryParse(rating) ?? 0.0;
+        filtered = filtered.where((m) {
+          final movieRating = double.tryParse(m.rating ?? '0') ?? 0.0;
+          return movieRating >= minRating;
+        }).toList();
+      }
+
+      // Sort results
+      if (sortBy == 'rating') {
+        filtered.sort((a, b) =>
+            (double.tryParse(b.rating ?? '0') ?? 0.0)
+            .compareTo(double.tryParse(a.rating ?? '0') ?? 0.0));
+      } else if (sortBy == 'name') {
+        filtered.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+      } else {
         filtered.sort((a, b) => (b.createdAt ?? DateTime(2000))
             .compareTo(a.createdAt ?? DateTime(2000)));
-
-        return {
-          'movies': filtered.take(limit).toList(),
-          'hasMore': filtered.length > limit,
-          'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
-        };
-      } catch (e2) {
-        debugPrint('searchMoviesWithFilters fallback also failed: $e2');
-        return {
-          'movies': <Movie>[],
-          'hasMore': false,
-          'lastDoc': null,
-        };
       }
+
+      final hasMore = filtered.length > limit ||
+          broaderMovies.length >= fetchLimit;
+
+      return {
+        'movies': filtered.take(limit).toList(),
+        'hasMore': hasMore,
+        'lastDoc': broaderSnapshot.docs.isNotEmpty ? broaderSnapshot.docs.last : null,
+      };
+    } catch (e) {
+      debugPrint('_searchWithKeyword failed: $e');
+      return {
+        'movies': <Movie>[],
+        'hasMore': false,
+        'lastDoc': null,
+      };
     }
   }
 

@@ -471,12 +471,11 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                                             fontSize: 13)),
                                     const SizedBox(width: 8),
                                   ],
-                                  if (detail.rating != null &&
-                                      detail.rating!.isNotEmpty) ...[
-                                    Icon(Icons.star,
+                                  ...[
+                                    Icon(Icons.local_fire_department,
                                         size: 16, color: accentColor),
                                     const SizedBox(width: 3),
-                                    Text(detail.rating!,
+                                    Text(_formatRating(detail.rating),
                                         style: TextStyle(
                                             color: accentColor,
                                             fontSize: 13,
@@ -922,6 +921,14 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
         ],
       ),
     );
+  }
+
+  /// Format rating: show "N/A" if null, empty, or 0.0
+  String _formatRating(String? rating) {
+    if (rating == null || rating.trim().isEmpty) return 'N/A';
+    final parsed = double.tryParse(rating);
+    if (parsed == null || parsed == 0.0) return 'N/A';
+    return rating;
   }
 
   Widget _detailRow(String label, String value, Color bodyTextColor, Color metaTextColor) {

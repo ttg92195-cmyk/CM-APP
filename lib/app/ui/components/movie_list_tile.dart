@@ -92,10 +92,10 @@ class MovieListTile extends StatelessWidget {
         child: Row(
           children: [
             if (movie.rating != null && movie.rating!.isNotEmpty) ...[
-              const Icon(Icons.star, size: 14, color: Color(0xFFFF0000)),
+              const Icon(Icons.local_fire_department, size: 14, color: Color(0xFFFF4444)),
               const SizedBox(width: 2),
               Text(
-                movie.rating!,
+                _formatRating(movie.rating),
                 style: theme.textTheme.labelSmall?.copyWith(
                   color: const Color(0xFFFFC107),
                   fontWeight: FontWeight.bold,
@@ -134,5 +134,13 @@ class MovieListTile extends StatelessWidget {
       ),
       trailing: const Icon(Icons.chevron_right, size: 20),
     );
+  }
+
+  /// Format rating: show "N/A" if null, empty, or 0.0
+  static String _formatRating(String? rating) {
+    if (rating == null || rating.trim().isEmpty) return 'N/A';
+    final parsed = double.tryParse(rating);
+    if (parsed == null || parsed == 0.0) return 'N/A';
+    return rating;
   }
 }
