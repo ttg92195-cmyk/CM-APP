@@ -126,12 +126,16 @@ class _AdminNotificationPageState extends State<AdminNotificationPage> {
           .add(notification.toFirestore());
 
       // Send push notification via OneSignal REST API (free, no server needed)
-      final sent = await FcmNotificationService().sendNotificationToAll(
+      final result = await FcmNotificationService().sendNotificationToAll(
         title: notification.title,
         body: notification.body,
         movieId: notification.movieId,
         movieSlug: notification.movieSlug,
       );
+
+      final sent = result['success'] == true;
+      final errorMsg = result['error'] as String?;
+      final recipients = result['recipients'] as int?;
 
       // Update Firestore with send status
       await FirebaseFirestore.instance
@@ -143,10 +147,11 @@ class _AdminNotificationPageState extends State<AdminNotificationPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(sent
-                ? 'Notification sent successfully!'
-                : 'Notification saved but push failed. Check OneSignal config.'),
+                ? 'Notification sent to $recipients device(s)!'
+                : 'Push failed: ${errorMsg ?? "Unknown error"}'),
             backgroundColor: sent ? Colors.green : Colors.orange,
             behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: sent ? 3 : 6),
           ),
         );
         // Clear form

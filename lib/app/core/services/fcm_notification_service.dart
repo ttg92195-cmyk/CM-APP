@@ -159,8 +159,11 @@ class FcmNotificationService {
   /// Send push notification to all users via OneSignal REST API.
   /// No server needed — calls OneSignal directly from the admin app.
   ///
-  /// Returns true if the notification was sent successfully.
-  Future<bool> sendNotificationToAll({
+  /// Returns a map with:
+  /// - 'success': bool — whether the notification was sent
+  /// - 'error': String? — error message if failed
+  /// - 'recipients': int? — number of recipients if successful
+  Future<Map<String, dynamic>> sendNotificationToAll({
     required String title,
     required String body,
     String? movieId,
@@ -170,15 +173,18 @@ class FcmNotificationService {
       if (_oneSignalRestApiKey == null || _oneSignalRestApiKey!.isEmpty ||
           _oneSignalRestApiKey == 'YOUR_ONE_SIGNAL_REST_API_KEY_HERE') {
         debugPrint('OneSignal: REST API Key not configured');
-        return false;
+        return {'success': false, 'error': 'OneSignal REST API Key not configured in .env'};
       }
 
       if (_oneSignalAppId == null || _oneSignalAppId!.isEmpty) {
         debugPrint('OneSignal: App ID not configured');
-        return false;
+        return {'success': false, 'error': 'OneSignal App ID not configured in .env'};
       }
 
       // Build OneSignal notification payload
+      // NOTE: Removed 'android_channel_id' — it requires a channel created
+      // in OneSignal dashboard. Without it, OneSignal uses the default channel.
+      // NOTE: Removed 'small_icon' — default app icon is used automatically.
       final payload = <String, dynamic>{
         'app_id': _oneSignalAppId,
         'included_segments': ['Subscribed Users'], // Send to all subscribed users
@@ -188,10 +194,9 @@ class FcmNotificationService {
           'movieId': movieId ?? '',
           'movieSlug': movieSlug ?? '',
         },
-        'android_channel_id': 'movie_notifications',
-        'priority': 10, // High priority
-        'small_icon': '@mipmap/ic_launcher',
       };
+
+      debugPrint('OneSignal: Sending notification to app_id: $_oneSignalAppId');
 
       // Call OneSignal REST API using Dio
       final dio = Dio();
@@ -208,16 +213,38 @@ class FcmNotificationService {
 
       if (response.statusCode == 200) {
         final data = response.data;
+        final recipients = data['recipients'] ?? 0;
         debugPrint('OneSignal: Notification sent successfully! ID: ${data['id']}');
-        debugPrint('OneSignal: Recipients: ${data['recipients']}');
-        return true;
+        debugPrint('OneSignal: Recipients: $recipients');
+        return {'success': true, 'recipients': recipients, 'error': null};
       } else {
-        debugPrint('OneSignal: Send failed (${response.statusCode}): ${response.data}');
-        return false;
+        final errorMsg = 'HTTP ${response.statusCode}: ${response.data}';
+        debugPrint('OneSignal: Send failed — $errorMsg');
+        return {'success': false, 'error': errorMsg};
       }
+    } on DioException catch (e) {
+      // Log detailed OneSignal API error for debugging
+      final statusCode = e.response?.statusCode;
+      final responseData = e.response?.data;
+      String errorMsg;
+
+      if (statusCode == 400) {
+        errorMsg = 'Bad Request — ${responseData?['errors']?.join(', ') ?? responseData}';
+      } else if (statusCode == 401) {
+        errorMsg = 'Unauthorized — REST API Key is invalid. Check OneSignal dashboard → Settings → Keys & IDs';
+      } else if (statusCode == 404) {
+        errorMsg = 'App not found — Check ONE_SIGNAL_APP_ID in .env';
+      } else {
+        errorMsg = 'HTTP $statusCode: $responseData';
+      }
+
+      debugPrint('OneSignal: API Error — Status: $statusCode');
+      debugPrint('OneSignal: API Error — Response: $responseData');
+      debugPrint('OneSignal: API Error — Message: ${e.message}');
+      return {'success': false, 'error': errorMsg};
     } catch (e) {
       debugPrint('OneSignal: Error sending notification: $e');
-      return false;
+      return {'success': false, 'error': e.toString()};
     }
   }
 
