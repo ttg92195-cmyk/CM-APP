@@ -57,7 +57,7 @@ class TrendingMovieComponent extends StatelessWidget {
                     minimumSize: Size.zero,
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     splashFactory: NoSplash.splashFactory,
-                    overlayColor: WidgetStateProperty.all(Colors.transparent),
+                    overlayColor: Colors.transparent,
                   ),
                 ),
             ],
