@@ -188,25 +188,50 @@ class FirestoreContentService {
   }
 
   /// Search all posts (for admin panel)
+  /// Uses 'title_lowercase' field for case-insensitive prefix search
   Future<List<Movie>> searchAllPosts(String keyword) async {
     if (keyword.trim().isEmpty) return [];
 
-    final lowerKeyword = keyword.toLowerCase();
+    final lowerKeyword = keyword.toLowerCase().trim();
     final upperKeyword = lowerKeyword + '\uf8ff';
 
-    final snapshot = await _moviesRef
-        .where('title', isGreaterThanOrEqualTo: lowerKeyword)
-        .where('title', isLessThanOrEqualTo: upperKeyword)
-        .orderBy('title')
-        .limit(50)
-        .get();
+    try {
+      // Primary: search on 'title_lowercase' field (case-insensitive prefix match)
+      final snapshot = await _moviesRef
+          .where('title_lowercase', isGreaterThanOrEqualTo: lowerKeyword)
+          .where('title_lowercase', isLessThanOrEqualTo: upperKeyword)
+          .orderBy('title_lowercase')
+          .limit(50)
+          .get();
 
-    return snapshot.docs
-        .map((doc) => Movie.fromMap(
-              doc.data() as Map<String, dynamic>,
-              docId: doc.id,
-            ))
-        .toList();
+      return snapshot.docs
+          .map((doc) => Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              ))
+          .toList();
+    } catch (e) {
+      // Fallback: if title_lowercase index doesn't exist, try old 'title' field
+      debugPrint('searchAllPosts with title_lowercase failed, trying fallback: $e');
+      try {
+        final snapshot = await _moviesRef
+            .where('title', isGreaterThanOrEqualTo: lowerKeyword)
+            .where('title', isLessThanOrEqualTo: upperKeyword)
+            .orderBy('title')
+            .limit(50)
+            .get();
+
+        return snapshot.docs
+            .map((doc) => Movie.fromMap(
+                  doc.data() as Map<String, dynamic>,
+                  docId: doc.id,
+                ))
+            .toList();
+      } catch (e2) {
+        debugPrint('searchAllPosts fallback also failed: $e2');
+        return [];
+      }
+    }
   }
 
   /// Get trending movies
@@ -492,7 +517,7 @@ class FirestoreContentService {
     }
   }
 
-  /// Search movies by keyword using Firestore prefix search + client-side fallback
+  /// Search movies by keyword using Firestore prefix search on 'title_lowercase' + client-side fallback
   Future<Map<String, dynamic>> searchMovies(
     String keyword, {
     int limit = 20,
@@ -503,14 +528,14 @@ class FirestoreContentService {
       return {'movies': <Movie>[], 'hasMore': false, 'lastDoc': null};
     }
 
-    // Primary approach: Firestore prefix search (server-side, efficient)
+    // Primary approach: Firestore prefix search on 'title_lowercase' (case-insensitive)
     try {
       final upperKeyword = lowerKeyword + '\uf8ff';
       final snapshot = await _moviesRef
-          .where('title', isGreaterThanOrEqualTo: lowerKeyword)
-          .where('title', isLessThanOrEqualTo: upperKeyword)
-          .orderBy('title')
-          .limit(limit * 2) // Fetch extra to account for case mismatches
+          .where('title_lowercase', isGreaterThanOrEqualTo: lowerKeyword)
+          .where('title_lowercase', isLessThanOrEqualTo: upperKeyword)
+          .orderBy('title_lowercase')
+          .limit(limit * 2)
           .get();
 
       var results = snapshot.docs
@@ -520,10 +545,9 @@ class FirestoreContentService {
               ))
           .toList();
 
-      // Firestore prefix search is case-sensitive, so also do a
-      // case-insensitive contains filter client-side as enhancement
+      // Client-side contains filter as enhancement (catches partial matches)
       final filtered = results
-          .where((m) => m.title.toLowerCase().contains(lowerKeyword))
+          .where((m) => m.titleLowercase.contains(lowerKeyword))
           .toList();
 
       // If prefix search found enough results, return them
@@ -536,7 +560,6 @@ class FirestoreContentService {
       }
 
       // If prefix search didn't find enough, supplement with a broader search
-      // but limit to 50 docs to avoid excessive reads
       final broaderSnapshot = await _moviesRef.limit(50).get();
       final broaderMovies = broaderSnapshot.docs
           .map((doc) => Movie.fromMap(
@@ -548,7 +571,7 @@ class FirestoreContentService {
       // Combine results, avoiding duplicates
       final seenIds = results.map((m) => m.id).toSet();
       final additionalMovies = broaderMovies
-          .where((m) => !seenIds.contains(m.id) && m.title.toLowerCase().contains(lowerKeyword))
+          .where((m) => !seenIds.contains(m.id) && m.titleLowercase.contains(lowerKeyword))
           .toList();
 
       final combined = [...filtered, ...additionalMovies];
@@ -558,12 +581,41 @@ class FirestoreContentService {
         'lastDoc': null,
       };
     } catch (e) {
-      debugPrint('searchMovies failed: $e');
-      return {
-        'movies': <Movie>[],
-        'hasMore': false,
-        'lastDoc': null,
-      };
+      // Fallback: try old 'title' field if title_lowercase index doesn't exist yet
+      debugPrint('searchMovies with title_lowercase failed, trying fallback: $e');
+      try {
+        final upperKeyword = lowerKeyword + '\uf8ff';
+        final snapshot = await _moviesRef
+            .where('title', isGreaterThanOrEqualTo: lowerKeyword)
+            .where('title', isLessThanOrEqualTo: upperKeyword)
+            .orderBy('title')
+            .limit(limit * 2)
+            .get();
+
+        var results = snapshot.docs
+            .map((doc) => Movie.fromMap(
+                  doc.data() as Map<String, dynamic>,
+                  docId: doc.id,
+                ))
+            .toList();
+
+        final filtered = results
+            .where((m) => m.title.toLowerCase().contains(lowerKeyword))
+            .toList();
+
+        return {
+          'movies': filtered.take(limit).toList(),
+          'hasMore': filtered.length > limit,
+          'lastDoc': null,
+        };
+      } catch (e2) {
+        debugPrint('searchMovies fallback also failed: $e2');
+        return {
+          'movies': <Movie>[],
+          'hasMore': false,
+          'lastDoc': null,
+        };
+      }
     }
   }
 
@@ -718,13 +770,13 @@ class FirestoreContentService {
     final fetchLimit = (limit * 3).clamp(60, 200);
 
     try {
-      // Try Firestore prefix search first (efficient for new movies)
+      // Try Firestore prefix search on 'title_lowercase' (case-insensitive)
       final lowerKeyword = keyword.toLowerCase().trim();
       final upperKeyword = lowerKeyword + '\uf8ff';
       final prefixSnapshot = await _moviesRef
-          .where('title', isGreaterThanOrEqualTo: lowerKeyword)
-          .where('title', isLessThanOrEqualTo: upperKeyword)
-          .orderBy('title')
+          .where('title_lowercase', isGreaterThanOrEqualTo: lowerKeyword)
+          .where('title_lowercase', isLessThanOrEqualTo: upperKeyword)
+          .orderBy('title_lowercase')
           .limit(fetchLimit)
           .get();
 
@@ -763,8 +815,8 @@ class FirestoreContentService {
 
       // Apply token-based advanced filtering
       var filtered = allMovies.where((m) {
-        // All name tokens must be contained in the movie title
-        final lowerTitle = m.title.toLowerCase();
+        // All name tokens must be contained in the movie title (case-insensitive)
+        final lowerTitle = m.titleLowercase;
         final nameMatch = nameTokens.isEmpty ||
             nameTokens.every((token) => lowerTitle.contains(token));
 
@@ -1099,6 +1151,11 @@ class FirestoreContentService {
       data['slug'] = _generateSlug(data['title'] as String);
     }
 
+    // Auto-generate 'title_lowercase' for case-insensitive Firestore search
+    if (data.containsKey('title') && (data['title'] as String).isNotEmpty) {
+      data['title_lowercase'] = (data['title'] as String).toLowerCase();
+    }
+
     // === PRIORITY 1: Check for duplicate tmdbId ===
     final tmdbId = data['tmdbId'];
     if (tmdbId != null) {
@@ -1209,7 +1266,7 @@ class FirestoreContentService {
   /// Build a safe update map from TMDB data that only contains
   /// fields that should be updated from TMDB, preserving user-edited fields.
   static const _tmdbUpdateFields = [
-    'title', 'year', 'poster', 'backdrop', 'overview', 'rating',
+    'title', 'title_lowercase', 'year', 'poster', 'backdrop', 'overview', 'rating',
     'duration', 'type', 'isAdult', 'categories', 'directors',
     'casts', 'tmdbId', 'country', 'status',
   ];
@@ -1268,6 +1325,12 @@ class FirestoreContentService {
     }
 
     data['updatedAt'] = FieldValue.serverTimestamp();
+
+    // Auto-update 'title_lowercase' when title changes
+    if (data.containsKey('title') && (data['title'] as String).isNotEmpty) {
+      data['title_lowercase'] = (data['title'] as String).toLowerCase();
+    }
+
     await _moviesRef.doc(id).update(data);
   }
 
@@ -1359,6 +1422,65 @@ class FirestoreContentService {
   Future<void> deleteCollection(String id) async {
     await _requireAdmin();
     await _collectionsRef.doc(id).delete();
+  }
+
+  // ==================== BACKFILL & BANNER CONFIG ====================
+
+  /// Backfill 'title_lowercase' field for all existing movies that don't have it yet.
+  /// Call this once from Admin Panel to populate the field for existing documents.
+  /// Returns the number of documents updated.
+  Future<int> backfillTitleLowercase() async {
+    await _requireAdmin();
+    int updated = 0;
+    try {
+      final snapshot = await _moviesRef.get();
+      for (final doc in snapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final title = data['title'] as String?;
+        final existingLower = data['title_lowercase'] as String?;
+
+        if (title != null && title.isNotEmpty &&
+            (existingLower == null || existingLower.isEmpty)) {
+          await doc.reference.update({'title_lowercase': title.toLowerCase()});
+          updated++;
+        }
+      }
+      debugPrint('backfillTitleLowercase: updated $updated documents');
+    } catch (e) {
+      debugPrint('backfillTitleLowercase failed: $e');
+    }
+    return updated;
+  }
+
+  /// Get banner configuration from Firestore
+  /// Reads 'imageUrls' array from 'app_settings/banner_config' document
+  Future<List<String>> getBannerConfig() async {
+    try {
+      final doc = await _firestore.collection('app_settings').doc('banner_config').get();
+      if (!doc.exists) return [];
+      final data = doc.data()!;
+      final urls = data['imageUrls'] as List?;
+      if (urls == null) return [];
+      return urls.map((url) => url.toString()).where((url) => url.isNotEmpty).toList();
+    } catch (e) {
+      debugPrint('getBannerConfig failed: $e');
+      return [];
+    }
+  }
+
+  /// Save banner configuration to Firestore
+  /// Writes 'imageUrls' array to 'app_settings/banner_config' document
+  Future<void> saveBannerConfig(List<String> imageUrls) async {
+    await _requireAdmin();
+    try {
+      await _firestore.collection('app_settings').doc('banner_config').set({
+        'imageUrls': imageUrls,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('saveBannerConfig failed: $e');
+      rethrow;
+    }
   }
 
   // ==================== HELPER METHODS ====================

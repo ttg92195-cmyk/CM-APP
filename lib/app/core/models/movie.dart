@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 class Movie {
   final String id;
   final String title;
+  final String titleLowercase; // For case-insensitive Firestore search
   final String slug;
   final String? year;
   final String? poster;
@@ -19,6 +20,7 @@ class Movie {
   Movie({
     required this.id,
     required this.title,
+    required this.titleLowercase,
     required this.slug,
     this.year,
     this.poster,
@@ -34,9 +36,11 @@ class Movie {
   });
 
   factory Movie.fromMap(Map<String, dynamic> map, {String? docId}) {
+    final title = map['title'] as String? ?? '';
     return Movie(
       id: docId ?? map['id']?.toString() ?? '',
-      title: map['title'] as String? ?? '',
+      title: title,
+      titleLowercase: map['title_lowercase'] as String? ?? title.toLowerCase(),
       slug: map['slug'] as String? ?? '',
       year: map['year']?.toString(),
       poster: map['poster'] as String?,
@@ -58,6 +62,7 @@ class Movie {
     return {
       'id': id,
       'title': title,
+      'title_lowercase': titleLowercase,
       'slug': slug,
       'year': year,
       'poster': poster,
