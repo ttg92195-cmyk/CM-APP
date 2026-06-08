@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "1027168275411",
-    "project_id": "cm-movies-fe7d4",
-    "storage_bucket": "cm-movies-fe7d4.firebasestorage.app"
+    "project_number": "1087230185271",
+    "project_id": "cm-movies-dabab",
+    "storage_bucket": "cm-movies-dabab.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:1027168275411:android:eca3a631b66f0c972f3d26",
+        "mobilesdk_app_id": "1:1087230185271:android:f93bdd459e7d1cbafdd4b2",
         "android_client_info": {
           "package_name": "than.pre.cm"
         }
@@ -15,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyB1qceRgh0NsFkJDgh_fBQ5Vh9YV6tN5Us"
+          "current_key": "AIzaSyDoS3AaYAtLjO51RY99YA_A1V0gVnLfb70"
         }
       ],
       "services": {
