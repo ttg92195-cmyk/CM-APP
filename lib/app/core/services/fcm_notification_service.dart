@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:onesignal_flutter/onesignal_flutter.dart';
@@ -54,11 +55,13 @@ class FcmNotificationService {
       final granted = await OneSignal.Notifications.requestPermission(true);
       debugPrint('OneSignal: Permission granted: $granted');
 
-      // Setup foreground notification handler
-      OneSignal.Notifications.addForegroundWillShowListener((event) {
-        debugPrint('OneSignal: Foreground notification received');
-        // Let OneSignal display the notification automatically
-        event.notification.complete();
+      // Setup foreground notification display handler
+      // In onesignal_flutter 5.5.x, method renamed from addForegroundWillShowListener
+      // to addForegroundWillDisplayListener. Notification displays automatically
+      // unless event.preventDefault() is called.
+      OneSignal.Notifications.addForegroundWillDisplayListener((event) {
+        debugPrint('OneSignal: Foreground notification received: ${event.notification.title}');
+        // Do not call preventDefault() — let the notification display automatically
       });
 
       // Setup notification click handler (tap)
