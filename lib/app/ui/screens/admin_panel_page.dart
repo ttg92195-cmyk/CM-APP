@@ -48,10 +48,16 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   String? _filterGenre;
   String? _filterYear;
 
+  // Banner settings
+  List<String> _bannerImageUrls = [];
+  final TextEditingController _bannerUrl1Controller = TextEditingController();
+  final TextEditingController _bannerUrl2Controller = TextEditingController();
+  final TextEditingController _bannerUrl3Controller = TextEditingController();
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 5, vsync: this);
     _loadInitialData();
   }
 
@@ -77,6 +83,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
         _contentService.getGenres(),
         _contentService.getTags(),
         _contentService.getCollections(),
+        _contentService.getBannerConfig(),
       ]);
 
       if (mounted) {
@@ -96,6 +103,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
           _genres = results[1] as List<TagAndGenres>;
           _tags = results[2] as List<TagAndGenres>;
           _collections = results[3] as List<TagAndGenres>;
+          _bannerImageUrls = List<String>.from(results[4]);
           _isLoading = false;
         });
       }
@@ -341,6 +349,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
             Tab(text: 'Movies (${currentMovies.length})'),
             Tab(text: 'Series (${currentSeries.length})'),
             const Tab(text: 'Genres/Tags'),
+            const Tab(text: 'Banner'),
           ],
         ),
       ),
@@ -353,6 +362,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                 _buildPostsTab(currentMovies, isDark),
                 _buildPostsTab(currentSeries, isDark),
                 _buildGenresTagsTab(isDark),
+                _buildBannerTab(isDark),
               ],
             ),
       floatingActionButton: FloatingActionButton(
@@ -854,6 +864,217 @@ class _AdminPanelPageState extends State<AdminPanelPage>
         ),
       ),
     );
+  }
+
+  Widget _buildBannerTab(bool isDark) {
+    // Initialize controllers with existing URLs
+    if (_bannerImageUrls.isNotEmpty) {
+      if (_bannerUrl1Controller.text.isEmpty && _bannerImageUrls.length > 0) {
+        _bannerUrl1Controller.text = _bannerImageUrls[0];
+      }
+      if (_bannerUrl2Controller.text.isEmpty && _bannerImageUrls.length > 1) {
+        _bannerUrl2Controller.text = _bannerImageUrls[1];
+      }
+      if (_bannerUrl3Controller.text.isEmpty && _bannerImageUrls.length > 2) {
+        _bannerUrl3Controller.text = _bannerImageUrls[2];
+      }
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Banner Settings',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Add up to 3 external image URLs for the Home banner slider.',
+            style: TextStyle(fontSize: 13, color: isDark ? Colors.white54 : Colors.black54),
+          ),
+          const SizedBox(height: 24),
+
+          // URL 1
+          _buildBannerUrlField(
+            controller: _bannerUrl1Controller,
+            label: 'Banner Image 1',
+            hint: 'https://example.com/banner1.jpg',
+            isDark: isDark,
+          ),
+          const SizedBox(height: 16),
+
+          // URL 2
+          _buildBannerUrlField(
+            controller: _bannerUrl2Controller,
+            label: 'Banner Image 2',
+            hint: 'https://example.com/banner2.jpg',
+            isDark: isDark,
+          ),
+          const SizedBox(height: 16),
+
+          // URL 3
+          _buildBannerUrlField(
+            controller: _bannerUrl3Controller,
+            label: 'Banner Image 3',
+            hint: 'https://example.com/banner3.jpg',
+            isDark: isDark,
+          ),
+          const SizedBox(height: 24),
+
+          // Save button
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton.icon(
+              onPressed: _saveBannerConfig,
+              icon: const Icon(Icons.save),
+              label: const Text('Save Changes', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFE50914),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
+          // Preview section
+          Text(
+            'Preview',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          _buildBannerPreview(isDark),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBannerUrlField({
+    required TextEditingController controller,
+    required String label,
+    required String hint,
+    required bool isDark,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 6),
+        TextField(
+          controller: controller,
+          decoration: InputDecoration(
+            hintText: hint,
+            prefixIcon: const Icon(Icons.link, size: 20),
+            suffixIcon: controller.text.isNotEmpty
+                ? IconButton(
+                    icon: const Icon(Icons.clear, size: 18),
+                    onPressed: () {
+                      controller.clear();
+                      setState(() {});
+                    },
+                  )
+                : null,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(vertical: 12),
+          ),
+          keyboardType: TextInputType.url,
+          onChanged: (_) => setState(() {}),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBannerPreview(bool isDark) {
+    final urls = [
+      _bannerUrl1Controller.text.trim(),
+      _bannerUrl2Controller.text.trim(),
+      _bannerUrl3Controller.text.trim(),
+    ].where((url) => url.isNotEmpty).toList();
+
+    if (urls.isEmpty) {
+      return Container(
+        height: 120,
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade200,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Center(
+          child: Text(
+            'No banner images configured',
+            style: TextStyle(color: isDark ? Colors.white38 : Colors.black38),
+          ),
+        ),
+      );
+    }
+
+    return SizedBox(
+      height: 120,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        itemCount: urls.length,
+        itemBuilder: (context, index) {
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: CachedNetworkImage(
+                imageUrl: urls[index],
+                fit: BoxFit.cover,
+                width: 200,
+                height: 120,
+                placeholder: (_, __) => Container(
+                  width: 200,
+                  height: 120,
+                  color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade200,
+                  child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                ),
+                errorWidget: (_, __, ___) => Container(
+                  width: 200,
+                  height: 120,
+                  color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade200,
+                  child: Icon(Icons.broken_image, color: isDark ? Colors.white24 : Colors.black12),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _saveBannerConfig() async {
+    final urls = [
+      _bannerUrl1Controller.text.trim(),
+      _bannerUrl2Controller.text.trim(),
+      _bannerUrl3Controller.text.trim(),
+    ].where((url) => url.isNotEmpty).toList();
+
+    try {
+      await _contentService.saveBannerConfig(urls);
+      if (mounted) {
+        setState(() => _bannerImageUrls = urls);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Banner settings saved successfully!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error saving banner: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildGenresTagsTab(bool isDark) {

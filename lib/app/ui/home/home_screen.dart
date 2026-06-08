@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -25,11 +26,15 @@ class _HomeScreenState extends State<HomeScreen> {
   final RecentService _recentService = RecentService();
   final PageController _bannerController = PageController();
   int _currentBannerIndex = 0;
+  Timer? _autoScrollTimer;
 
   List<Movie> _trendingMovies = [];
   List<Movie> _trendingTvShows = [];
   List<Movie> _allMovies = [];
   List<Movie> _allSeries = [];
+
+  // Banner images from Firestore admin config
+  List<String> _bannerImageUrls = [];
 
   // Tag-based lists
   List<Movie> _kDramaMovies = [];
@@ -49,12 +54,30 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _loadData();
+    _startAutoScroll();
   }
 
   @override
   void dispose() {
+    _autoScrollTimer?.cancel();
     _bannerController.dispose();
     super.dispose();
+  }
+
+  /// Auto-scroll banner every 4 seconds
+  void _startAutoScroll() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+      if (_bannerImageUrls.isNotEmpty && _bannerController.hasClients) {
+        final nextIndex = _currentBannerIndex + 1;
+        // Use a very large number for infinite loop effect
+        _bannerController.animateToPage(
+          nextIndex,
+          duration: const Duration(milliseconds: 500),
+          curve: Curves.easeInOut,
+        );
+      }
+    });
   }
 
   Future<void> _loadData() async {
@@ -63,39 +86,34 @@ class _HomeScreenState extends State<HomeScreen> {
       _error = null;
     });
     try {
-      List<Movie> trendingMovies = [];
-      List<Movie> trendingTvShows = [];
+      // Load banner config and movie data in parallel
+      final results = await Future.wait([
+        _contentService.getBannerConfig(),
+        _contentService.getTrendingMovies().catchError((_) => <Movie>[]),
+        _contentService.getTrendingTvShows().catchError((_) => <Movie>[]),
+        _contentService.getMovies(limit: _homeLimit).catchError((_) => <Map<String, dynamic>>{}),
+        _contentService.getSeries(limit: _homeLimit).catchError((_) => <Map<String, dynamic>>{}),
+      ]);
+
+      final bannerUrls = results[0] as List<String>;
+      final trendingMovies = results[1] as List<Movie>;
+      final trendingTvShows = results[2] as List<Movie>;
+      final moviesResult = results[3];
+      final seriesResult = results[4];
+
       List<Movie> allMovies = [];
       List<Movie> allSeries = [];
 
-      try {
-        trendingMovies = await _contentService.getTrendingMovies();
-      } catch (e) {
-        debugPrint('Error loading trending movies: $e');
-      }
-
-      try {
-        trendingTvShows = await _contentService.getTrendingTvShows();
-      } catch (e) {
-        debugPrint('Error loading trending TV shows: $e');
-      }
-
-      try {
-        final moviesResult = await _contentService.getMovies(limit: _homeLimit);
+      if (moviesResult is Map<String, dynamic>) {
         allMovies = List<Movie>.from(moviesResult['movies'] ?? []);
-      } catch (e) {
-        debugPrint('Error loading all movies: $e');
       }
-
-      try {
-        final seriesResult = await _contentService.getSeries(limit: _homeLimit);
+      if (seriesResult is Map<String, dynamic>) {
         allSeries = List<Movie>.from(seriesResult['movies'] ?? []);
-      } catch (e) {
-        debugPrint('Error loading all series: $e');
       }
 
       if (mounted) {
         setState(() {
+          _bannerImageUrls = bannerUrls;
           _trendingMovies = trendingMovies;
           _trendingTvShows = trendingTvShows;
           _allMovies = allMovies;
@@ -275,8 +293,8 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Banner Slider (Featured Movies Carousel)
-          _buildBannerSlider(appConfig, theme),
+          // Banner Slider (Admin-managed images)
+          _buildBannerSlider(theme),
 
           const SizedBox(height: 8),
           // Movies Section
@@ -460,147 +478,107 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// Banner Slider — Featured Movies Carousel at top of Home
-  Widget _buildBannerSlider(AppConfig appConfig, ThemeData theme) {
+  /// Premium Banner Slider — Admin-managed pure image carousel
+  /// Features: Card style with rounded corners, shadow, infinite loop, auto-scroll, dots indicator
+  Widget _buildBannerSlider(ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
-    // Use trending movies as featured items for the banner
-    final featuredMovies = _trendingMovies.length > 5
-        ? _trendingMovies.sublist(0, 5)
-        : _trendingMovies;
 
-    if (featuredMovies.isEmpty) return const SizedBox.shrink();
+    // If no banner images configured, show nothing
+    if (_bannerImageUrls.isEmpty) return const SizedBox.shrink();
 
-    return SizedBox(
-      height: 200,
-      child: Stack(
-        alignment: Alignment.bottomCenter,
+    // Use a very large initial page for infinite loop effect
+    final initialPage = _bannerImageUrls.length * 1000;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Column(
         children: [
-          // PageView for sliding banners
-          PageView.builder(
-            controller: _bannerController,
-            itemCount: featuredMovies.length,
-            onPageChanged: (index) {
-              setState(() => _currentBannerIndex = index);
-            },
-            itemBuilder: (context, index) {
-              final movie = featuredMovies[index];
-              return GestureDetector(
-                onTap: () => _navigateToDetail(movie),
+          // Banner card with rounded corners and shadow
+          Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.3),
+                  blurRadius: 8,
+                  spreadRadius: 1,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: SizedBox(
+                height: 180,
                 child: Stack(
-                  fit: StackFit.expand,
                   children: [
-                    // Backdrop/Poster image
-                    if (movie.fullPosterUrl.isNotEmpty)
-                      CachedNetworkImage(
-                        imageUrl: movie.fullPosterUrl,
-                        fit: BoxFit.cover,
-                        placeholder: (_, __) => Container(
-                          color: isDark ? const Color(0xFF1A1A1A) : Colors.grey.shade300,
-                        ),
-                        errorWidget: (_, __, ___) => Container(
-                          color: isDark ? const Color(0xFF1A1A1A) : Colors.grey.shade300,
-                          child: const Icon(Icons.movie, color: Colors.white24, size: 48),
-                        ),
-                      )
-                    else
-                      Container(
-                        color: isDark ? const Color(0xFF1A1A1A) : Colors.grey.shade300,
-                      ),
+                    // Infinite loop PageView
+                    PageView.builder(
+                      controller: PageController(initialPage: initialPage),
+                      onPageChanged: (index) {
+                        final realIndex = index % _bannerImageUrls.length;
+                        setState(() => _currentBannerIndex = realIndex);
+                      },
+                      itemBuilder: (context, index) {
+                        final realIndex = index % _bannerImageUrls.length;
+                        final imageUrl = _bannerImageUrls[realIndex];
 
-                    // Gradient overlay for text readability
-                    Container(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            Colors.transparent,
-                            Colors.black.withOpacity(0.7),
-                          ],
-                          stops: const [0.4, 1.0],
-                        ),
-                      ),
-                    ),
-
-                    // Movie title + rating at bottom
-                    Positioned(
-                      left: 16,
-                      right: 16,
-                      bottom: 24,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            movie.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              shadows: [Shadow(color: Colors.black54, blurRadius: 4)],
+                        return CachedNetworkImage(
+                          imageUrl: imageUrl,
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          height: double.infinity,
+                          placeholder: (context, url) => Container(
+                            color: isDark ? const Color(0xFF1A1A1A) : Colors.grey.shade300,
+                            child: Center(
+                              child: SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: const Color(0xFFE50914),
+                                ),
+                              ),
                             ),
                           ),
-                          const SizedBox(height: 4),
-                          Row(
-                            children: [
-                              if (movie.year != null && movie.year!.isNotEmpty) ...[
-                                Text(
-                                  movie.year!,
-                                  style: const TextStyle(color: Colors.white70, fontSize: 12),
-                                ),
-                                const SizedBox(width: 8),
-                              ],
-                              if (movie.rating != null && movie.rating!.isNotEmpty) ...[
-                                const Icon(Icons.local_fire_department, size: 14, color: Color(0xFFFF4444)),
-                                const SizedBox(width: 2),
-                                Text(
-                                  _formatBannerRating(movie.rating),
-                                  style: const TextStyle(color: Colors.white70, fontSize: 12),
-                                ),
-                              ],
-                            ],
+                          errorWidget: (context, url, error) => Container(
+                            color: isDark ? const Color(0xFF1A1A1A) : Colors.grey.shade300,
+                            child: Icon(
+                              Icons.broken_image_outlined,
+                              color: isDark ? Colors.white24 : Colors.black12,
+                              size: 48,
+                            ),
                           ),
-                        ],
-                      ),
+                        );
+                      },
                     ),
                   ],
                 ),
-              );
-            },
+              ),
+            ),
           ),
 
-          // Dot indicators
-          Positioned(
-            bottom: 8,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(featuredMovies.length, (index) {
-                final isActive = index == _currentBannerIndex;
-                return AnimatedContainer(
-                  duration: const Duration(milliseconds: 300),
-                  margin: const EdgeInsets.symmetric(horizontal: 3),
-                  width: isActive ? 20 : 6,
-                  height: 6,
-                  decoration: BoxDecoration(
-                    color: isActive ? const Color(0xFFE50914) : Colors.white54,
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                );
-              }),
-            ),
+          const SizedBox(height: 10),
+
+          // Dots indicator
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(_bannerImageUrls.length, (index) {
+              final isActive = index == _currentBannerIndex;
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
+                margin: const EdgeInsets.symmetric(horizontal: 3),
+                width: isActive ? 20 : 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: isActive ? const Color(0xFFE50914) : (isDark ? Colors.white38 : Colors.black26),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              );
+            }),
           ),
         ],
       ),
     );
-  }
-
-  /// Format rating for banner: show "N/A" if null, empty, or 0.0
-  String _formatBannerRating(String? rating) {
-    if (rating == null || rating.trim().isEmpty) return 'N/A';
-    final parsed = double.tryParse(rating);
-    if (parsed == null || parsed == 0.0) return 'N/A';
-    return rating;
   }
 }
