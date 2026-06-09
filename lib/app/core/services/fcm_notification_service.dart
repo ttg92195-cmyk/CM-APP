@@ -205,7 +205,7 @@ class FcmNotificationService {
         options: Options(
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': 'Basic $_oneSignalRestApiKey',
+            'Authorization': 'Key $_oneSignalRestApiKey',
           },
         ),
         data: payload,
