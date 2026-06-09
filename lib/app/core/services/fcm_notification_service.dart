@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -170,24 +169,29 @@ class FcmNotificationService {
     String? movieSlug,
   }) async {
     try {
-      if (_oneSignalRestApiKey == null || _oneSignalRestApiKey!.isEmpty ||
-          _oneSignalRestApiKey == 'YOUR_ONE_SIGNAL_REST_API_KEY_HERE') {
-        debugPrint('OneSignal: REST API Key not configured');
-        return {'success': false, 'error': 'OneSignal REST API Key not configured in .env'};
+      // Read credentials directly from .env (not from cached instance variables)
+      // This ensures we always get the latest values even if initialize() failed
+      final appId = dotenv.env['ONE_SIGNAL_APP_ID'] ?? '';
+      final restApiKey = dotenv.env['ONE_SIGNAL_REST_API_KEY'] ?? '';
+
+      debugPrint('OneSignal: === SEND NOTIFICATION DEBUG ===');
+      debugPrint('OneSignal: App ID from .env: "${appId.isEmpty ? "(empty)" : "${appId.substring(0, 8)}..."}"');
+      debugPrint('OneSignal: REST API Key from .env: "${restApiKey.isEmpty ? "(empty)" : "${restApiKey.substring(0, 12)}..."}"');
+
+      if (appId.isEmpty || appId == 'YOUR_ONE_SIGNAL_APP_ID_HERE') {
+        debugPrint('OneSignal: App ID not configured in .env');
+        return {'success': false, 'error': 'ONE_SIGNAL_APP_ID not found in .env file'};
       }
 
-      if (_oneSignalAppId == null || _oneSignalAppId!.isEmpty) {
-        debugPrint('OneSignal: App ID not configured');
-        return {'success': false, 'error': 'OneSignal App ID not configured in .env'};
+      if (restApiKey.isEmpty || restApiKey == 'YOUR_ONE_SIGNAL_REST_API_KEY_HERE') {
+        debugPrint('OneSignal: REST API Key not configured in .env');
+        return {'success': false, 'error': 'ONE_SIGNAL_REST_API_KEY not found in .env file'};
       }
 
       // Build OneSignal notification payload
-      // NOTE: Removed 'android_channel_id' — it requires a channel created
-      // in OneSignal dashboard. Without it, OneSignal uses the default channel.
-      // NOTE: Removed 'small_icon' — default app icon is used automatically.
       final payload = <String, dynamic>{
-        'app_id': _oneSignalAppId,
-        'included_segments': ['Subscribed Users'], // Send to all subscribed users
+        'app_id': appId,
+        'included_segments': ['Subscribed Users'],
         'headings': {'en': title},
         'contents': {'en': body},
         'data': {
@@ -196,26 +200,35 @@ class FcmNotificationService {
         },
       };
 
-      debugPrint('OneSignal: Sending notification to app_id: $_oneSignalAppId');
+      debugPrint('OneSignal: Sending POST to https://onesignal.com/api/v1/notifications');
+      debugPrint('OneSignal: Authorization header: "Key ${restApiKey.substring(0, 12)}..."');
+      debugPrint('OneSignal: Payload app_id: $appId');
 
-      // Call OneSignal REST API using Dio
-      final dio = Dio();
+      // Call OneSignal REST API using Dio with timeout
+      final dio = Dio(BaseOptions(
+        connectTimeout: const Duration(seconds: 15),
+        receiveTimeout: const Duration(seconds: 15),
+        sendTimeout: const Duration(seconds: 15),
+      ));
+
       final response = await dio.post(
         'https://onesignal.com/api/v1/notifications',
         options: Options(
           headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Key $_oneSignalRestApiKey',
+            'Content-Type': 'application/json; charset=utf-8',
+            'Authorization': 'Key $restApiKey',
           },
         ),
         data: payload,
       );
 
+      debugPrint('OneSignal: Response status: ${response.statusCode}');
+      debugPrint('OneSignal: Response data: ${response.data}');
+
       if (response.statusCode == 200) {
         final data = response.data;
         final recipients = data['recipients'] ?? 0;
-        debugPrint('OneSignal: Notification sent successfully! ID: ${data['id']}');
-        debugPrint('OneSignal: Recipients: $recipients');
+        debugPrint('OneSignal: Notification sent! ID: ${data['id']}, Recipients: $recipients');
         return {'success': true, 'recipients': recipients, 'error': null};
       } else {
         final errorMsg = 'HTTP ${response.statusCode}: ${response.data}';
@@ -223,28 +236,41 @@ class FcmNotificationService {
         return {'success': false, 'error': errorMsg};
       }
     } on DioException catch (e) {
-      // Log detailed OneSignal API error for debugging
+      // Handle different types of Dio errors with clear messages
       final statusCode = e.response?.statusCode;
       final responseData = e.response?.data;
       String errorMsg;
 
-      if (statusCode == 400) {
+      debugPrint('OneSignal: DioException type: ${e.type}');
+      debugPrint('OneSignal: DioException message: ${e.message}');
+
+      if (e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.sendTimeout ||
+          e.type == DioExceptionType.receiveTimeout) {
+        errorMsg = 'Connection timeout — check internet connection';
+      } else if (e.type == DioExceptionType.connectionError) {
+        errorMsg = 'No internet connection — cannot reach OneSignal server';
+      } else if (statusCode == 400) {
         errorMsg = 'Bad Request — ${responseData?['errors']?.join(', ') ?? responseData}';
       } else if (statusCode == 401) {
-        errorMsg = 'Unauthorized — REST API Key is invalid. Check OneSignal dashboard → Settings → Keys & IDs';
+        errorMsg = 'Unauthorized (401) — API Key rejected by OneSignal';
+      } else if (statusCode == 403) {
+        errorMsg = 'Forbidden (403) — API Key lacks permission. Check Key scope in OneSignal Dashboard';
       } else if (statusCode == 404) {
-        errorMsg = 'App not found — Check ONE_SIGNAL_APP_ID in .env';
-      } else {
+        errorMsg = 'App not found (404) — Check ONE_SIGNAL_APP_ID';
+      } else if (responseData != null) {
         errorMsg = 'HTTP $statusCode: $responseData';
+      } else {
+        // No response at all — network-level error
+        errorMsg = 'Network error: ${e.message ?? "Unknown connection failure"}';
       }
 
       debugPrint('OneSignal: API Error — Status: $statusCode');
       debugPrint('OneSignal: API Error — Response: $responseData');
-      debugPrint('OneSignal: API Error — Message: ${e.message}');
       return {'success': false, 'error': errorMsg};
     } catch (e) {
-      debugPrint('OneSignal: Error sending notification: $e');
-      return {'success': false, 'error': e.toString()};
+      debugPrint('OneSignal: Unexpected error: $e');
+      return {'success': false, 'error': 'Unexpected error: ${e.toString()}'};
     }
   }
 
