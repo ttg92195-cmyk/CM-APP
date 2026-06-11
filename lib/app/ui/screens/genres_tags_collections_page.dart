@@ -473,13 +473,13 @@ class _FilterResultPageState extends State<FilterResultPage> {
       final stopwatch = Stopwatch()..start();
       Map<String, dynamic> result;
       if (widget.genreName != null) {
-        result = await _contentService.getMoviesByGenre(widget.genreName!, limit: 30);
+        result = await _contentService.getMoviesByGenre(widget.genreName!, limit: 50);
       } else if (widget.tagName != null) {
-        result = await _contentService.getMoviesByTag(widget.tagName!, limit: 30);
+        result = await _contentService.getMoviesByTag(widget.tagName!, limit: 50);
       } else if (widget.collectionName != null) {
-        result = await _contentService.getMoviesByCollection(widget.collectionName!, limit: 30);
+        result = await _contentService.getMoviesByCollection(widget.collectionName!, limit: 50);
       } else {
-        result = await _contentService.getMovies(limit: 30);
+        result = await _contentService.getMovies(limit: 50);
       }
 
       if (mounted) {
@@ -527,18 +527,18 @@ class _FilterResultPageState extends State<FilterResultPage> {
       Map<String, dynamic> result;
       if (widget.genreName != null) {
         result = await _contentService.getMoviesByGenre(
-          widget.genreName!, limit: 20, startAfter: _lastDoc,
+          widget.genreName!, limit: 50, startAfter: _lastDoc,
         );
       } else if (widget.tagName != null) {
         result = await _contentService.getMoviesByTag(
-          widget.tagName!, limit: 20, startAfter: _lastDoc,
+          widget.tagName!, limit: 50, startAfter: _lastDoc,
         );
       } else if (widget.collectionName != null) {
         result = await _contentService.getMoviesByCollection(
-          widget.collectionName!, limit: 20, startAfter: _lastDoc,
+          widget.collectionName!, limit: 50, startAfter: _lastDoc,
         );
       } else {
-        result = await _contentService.getMovies(limit: 20, startAfter: _lastDoc);
+        result = await _contentService.getMovies(limit: 50, startAfter: _lastDoc);
       }
 
       if (mounted) {

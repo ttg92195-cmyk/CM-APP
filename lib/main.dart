@@ -12,6 +12,7 @@ import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/ui/home/home_page.dart';
 import 'package:cm_movies/app/core/services/download_manager_service.dart';
 import 'package:cm_movies/app/core/services/fcm_notification_service.dart';
+import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
 import 'package:cm_movies/app/ui/screens/login_page.dart';
 import 'firebase_options.dart';
 
@@ -57,11 +58,11 @@ void main() async {
         cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
       );
 
-      // Initialize FCM push notifications
+      // Initialize OneSignal push notifications (free, no Cloud Functions needed)
       try {
         await FcmNotificationService().initialize();
       } catch (e) {
-        debugPrint('FCM initialization error: $e');
+        debugPrint('OneSignal initialization error: $e');
       }
     } catch (e) {
       debugPrint('Firebase initialization error: $e');
@@ -195,9 +196,17 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
       child: MaterialApp(
         title: 'KMM',
         debugShowCheckedModeBanner: false,
+        navigatorKey: navigatorKey,
         theme: _buildLightTheme(),
         darkTheme: _buildDarkTheme(),
         themeMode: appConfig.themeMode,
+        // Named routes for notification tap navigation
+        routes: {
+          '/movie-detail': (context) {
+            final slug = ModalRoute.of(context)?.settings.arguments as String? ?? '';
+            return MovieDetailScreen(slug: slug);
+          },
+        },
         // Auth gate: show LoginPage if not logged in, HomePage if logged in
         // This ensures Firestore reads only happen after authentication
         // Splash is shown until both: auth loads AND minimum 3s elapsed

@@ -132,7 +132,7 @@ class _SearchScreenState extends State<SearchScreen> {
         year: _selectedYear,
         rating: _selectedRating,
         sortBy: _sortBy,
-        limit: 20,
+        limit: 50,
       );
       if (mounted) {
         final movies = result['movies'] as List<Movie>;
@@ -193,7 +193,7 @@ class _SearchScreenState extends State<SearchScreen> {
         year: _selectedYear,
         rating: _selectedRating,
         sortBy: _sortBy,
-        limit: 20,
+        limit: 50,
         startAfter: _lastDoc,
       );
       if (mounted) {

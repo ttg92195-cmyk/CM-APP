@@ -72,7 +72,7 @@ class _SeriesPageState extends State<SeriesPage> {
     setState(() => _isLoading = true);
     try {
       final stopwatch = Stopwatch()..start();
-      final result = await _contentService.getSeries(limit: 20);
+      final result = await _contentService.getSeries(limit: 50);
       // Ensure skeleton shows for at least 600ms so it doesn't flash too fast
       final elapsed = stopwatch.elapsedMilliseconds;
       if (elapsed < 600) {
@@ -100,7 +100,7 @@ class _SeriesPageState extends State<SeriesPage> {
     setState(() => _isLoadingMore = true);
     try {
       final result = await _contentService.getSeries(
-        limit: 20,
+        limit: 50,
         startAfter: _lastDoc,
       );
       if (mounted) {

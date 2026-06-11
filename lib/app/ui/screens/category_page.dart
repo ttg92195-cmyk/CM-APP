@@ -89,13 +89,13 @@ class _CategoryPageState extends State<CategoryPage> {
         case CategoryFilterType.tag:
           result = await _contentService.getMoviesByTag(
             widget.filterValue!,
-            limit: 20,
+            limit: 50,
           );
           break;
         case CategoryFilterType.genre:
           result = await _contentService.getMoviesByGenre(
             widget.filterValue!,
-            limit: 20,
+            limit: 50,
           );
           break;
         case CategoryFilterType.trendingMovies:
@@ -156,14 +156,14 @@ class _CategoryPageState extends State<CategoryPage> {
         case CategoryFilterType.tag:
           result = await _contentService.getMoviesByTag(
             widget.filterValue!,
-            limit: 20,
+            limit: 50,
             startAfter: _lastDoc,
           );
           break;
         case CategoryFilterType.genre:
           result = await _contentService.getMoviesByGenre(
             widget.filterValue!,
-            limit: 20,
+            limit: 50,
             startAfter: _lastDoc,
           );
           break;

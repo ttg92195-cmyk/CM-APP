@@ -46,6 +46,20 @@
       "fields": [
         { "fieldPath": "title", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "movies",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "title_lowercase", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "movies",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "search_keywords", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

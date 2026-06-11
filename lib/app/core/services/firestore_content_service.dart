@@ -33,7 +33,7 @@ class FirestoreContentService {
 
   /// Get movies with cursor-based pagination
   Future<Map<String, dynamic>> getMovies({
-    int limit = 20,
+    int limit = 50,
     DocumentSnapshot? startAfter,
   }) async {
     try {
@@ -97,7 +97,7 @@ class FirestoreContentService {
 
   /// Get series with cursor-based pagination
   Future<Map<String, dynamic>> getSeries({
-    int limit = 20,
+    int limit = 50,
     DocumentSnapshot? startAfter,
   }) async {
     try {
@@ -241,7 +241,7 @@ class FirestoreContentService {
           .where('type', isEqualTo: 'movie')
           .where('isTrending', isEqualTo: true)
           .orderBy('createdAt', descending: true)
-          .limit(20)
+          .limit(50)
           .get();
 
       return snapshot.docs
@@ -257,7 +257,7 @@ class FirestoreContentService {
         final snapshot = await _moviesRef
             .where('type', isEqualTo: 'movie')
             .where('isTrending', isEqualTo: true)
-            .limit(20)
+            .limit(50)
             .get();
 
         final movies = snapshot.docs
@@ -283,7 +283,7 @@ class FirestoreContentService {
           .where('type', isEqualTo: 'series')
           .where('isTrending', isEqualTo: true)
           .orderBy('createdAt', descending: true)
-          .limit(20)
+          .limit(50)
           .get();
 
       return snapshot.docs
@@ -299,7 +299,7 @@ class FirestoreContentService {
         final snapshot = await _moviesRef
             .where('type', isEqualTo: 'series')
             .where('isTrending', isEqualTo: true)
-            .limit(20)
+            .limit(50)
             .get();
 
         final movies = snapshot.docs
@@ -394,7 +394,7 @@ class FirestoreContentService {
   /// Get movies by genre name
   Future<Map<String, dynamic>> getMoviesByGenre(
     String genreName, {
-    int limit = 20,
+    int limit = 50,
     DocumentSnapshot? startAfter,
   }) async {
     try {
@@ -457,7 +457,7 @@ class FirestoreContentService {
   /// Get movies by tag name
   Future<Map<String, dynamic>> getMoviesByTag(
     String tagName, {
-    int limit = 20,
+    int limit = 50,
     DocumentSnapshot? startAfter,
   }) async {
     try {
@@ -517,10 +517,10 @@ class FirestoreContentService {
     }
   }
 
-  /// Search movies by keyword using Firestore prefix search on 'title_lowercase' + client-side fallback
+  /// Search movies by keyword using Firestore prefix search on 'title_lowercase' + search_keywords + client-side fallback
   Future<Map<String, dynamic>> searchMovies(
     String keyword, {
-    int limit = 20,
+    int limit = 50,
     DocumentSnapshot? startAfter,
   }) async {
     final lowerKeyword = keyword.toLowerCase().trim();
@@ -528,29 +528,55 @@ class FirestoreContentService {
       return {'movies': <Movie>[], 'hasMore': false, 'lastDoc': null};
     }
 
-    // Primary approach: Firestore prefix search on 'title_lowercase' (case-insensitive)
+    // Primary approach: Use search_keywords array for word-level matching + prefix search
     try {
       final upperKeyword = lowerKeyword + '\uf8ff';
-      final snapshot = await _moviesRef
+
+      // Strategy 1: Firestore prefix search on 'title_lowercase' (finds titles STARTING with keyword)
+      final prefixSnapshot = await _moviesRef
           .where('title_lowercase', isGreaterThanOrEqualTo: lowerKeyword)
           .where('title_lowercase', isLessThanOrEqualTo: upperKeyword)
           .orderBy('title_lowercase')
           .limit(limit * 2)
           .get();
 
-      var results = snapshot.docs
+      final prefixResults = prefixSnapshot.docs
           .map((doc) => Movie.fromMap(
                 doc.data() as Map<String, dynamic>,
                 docId: doc.id,
               ))
           .toList();
 
-      // Client-side contains filter as enhancement (catches partial matches)
-      final filtered = results
+      // Strategy 2: Use search_keywords array for non-prefix word matching
+      // e.g. "Avengers" will find "The Avengers" because "avengers" is in search_keywords
+      final keywordSnapshot = await _moviesRef
+          .where('search_keywords', arrayContains: lowerKeyword)
+          .limit(limit * 2)
+          .get();
+
+      final keywordResults = keywordSnapshot.docs
+          .map((doc) => Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              ))
+          .toList();
+
+      // Combine both result sets, deduplicating by ID
+      final seenIds = <String>{};
+      final allResults = <Movie>[];
+      for (final m in [...prefixResults, ...keywordResults]) {
+        if (!seenIds.contains(m.id)) {
+          seenIds.add(m.id);
+          allResults.add(m);
+        }
+      }
+
+      // Client-side contains filter as enhancement (catches partial matches within results)
+      final filtered = allResults
           .where((m) => m.titleLowercase.contains(lowerKeyword))
           .toList();
 
-      // If prefix search found enough results, return them
+      // If combined search found enough results, return them
       if (filtered.length >= limit) {
         return {
           'movies': filtered.take(limit).toList(),
@@ -559,8 +585,11 @@ class FirestoreContentService {
         };
       }
 
-      // If prefix search didn't find enough, supplement with a broader search
-      final broaderSnapshot = await _moviesRef.limit(50).get();
+      // Fallback: broader search to catch any remaining matches
+      final broaderSnapshot = await _moviesRef
+          .orderBy('createdAt', descending: true)
+          .limit(100)
+          .get();
       final broaderMovies = broaderSnapshot.docs
           .map((doc) => Movie.fromMap(
                 doc.data() as Map<String, dynamic>,
@@ -569,7 +598,6 @@ class FirestoreContentService {
           .toList();
 
       // Combine results, avoiding duplicates
-      final seenIds = results.map((m) => m.id).toSet();
       final additionalMovies = broaderMovies
           .where((m) => !seenIds.contains(m.id) && m.titleLowercase.contains(lowerKeyword))
           .toList();
@@ -581,9 +609,30 @@ class FirestoreContentService {
         'lastDoc': null,
       };
     } catch (e) {
-      // Fallback: try old 'title' field if title_lowercase index doesn't exist yet
-      debugPrint('searchMovies with title_lowercase failed, trying fallback: $e');
+      // Fallback: try search_keywords then old 'title' field
+      debugPrint('searchMovies with primary strategy failed, trying fallback: $e');
       try {
+        // Try search_keywords array first
+        final keywordSnapshot = await _moviesRef
+            .where('search_keywords', arrayContains: lowerKeyword)
+            .limit(limit * 2)
+            .get();
+
+        if (keywordSnapshot.docs.isNotEmpty) {
+          final results = keywordSnapshot.docs
+              .map((doc) => Movie.fromMap(
+                    doc.data() as Map<String, dynamic>,
+                    docId: doc.id,
+                  ))
+              .toList();
+          return {
+            'movies': results.take(limit).toList(),
+            'hasMore': results.length > limit,
+            'lastDoc': null,
+          };
+        }
+
+        // Last resort: old 'title' field prefix search
         final upperKeyword = lowerKeyword + '\uf8ff';
         final snapshot = await _moviesRef
             .where('title', isGreaterThanOrEqualTo: lowerKeyword)
@@ -749,7 +798,7 @@ class FirestoreContentService {
     String? year,
     String? rating,
     String? sortBy,
-    int limit = 20,
+    int limit = 50,
     DocumentSnapshot? startAfter,
   }) async {
     // Split keyword into tokens for advanced search
@@ -770,7 +819,7 @@ class FirestoreContentService {
     final fetchLimit = (limit * 3).clamp(60, 200);
 
     try {
-      // Try Firestore prefix search on 'title_lowercase' (case-insensitive)
+      // Strategy 1: Firestore prefix search on 'title_lowercase' (case-insensitive)
       final lowerKeyword = keyword.toLowerCase().trim();
       final upperKeyword = lowerKeyword + '\uf8ff';
       final prefixSnapshot = await _moviesRef
@@ -787,6 +836,28 @@ class FirestoreContentService {
               ))
           .toList();
 
+      // Strategy 2: search_keywords array for each name token (non-prefix word matching)
+      // e.g. searching "Avengers" finds "The Avengers" because "avengers" is a search_keyword
+      final keywordResults = <Movie>[];
+      final keywordSeenIds = <String>{};
+      for (final token in nameTokens) {
+        try {
+          final kwSnapshot = await _moviesRef
+              .where('search_keywords', arrayContains: token)
+              .limit(fetchLimit)
+              .get();
+          for (final doc in kwSnapshot.docs) {
+            final movie = Movie.fromMap(doc.data() as Map<String, dynamic>, docId: doc.id);
+            if (!keywordSeenIds.contains(movie.id)) {
+              keywordSeenIds.add(movie.id);
+              keywordResults.add(movie);
+            }
+          }
+        } catch (_) {
+          // search_keywords field may not exist yet, skip gracefully
+        }
+      }
+
       // Also fetch recent movies to find older ones
       Query broaderQuery = _moviesRef.orderBy('createdAt', descending: true);
       if (startAfter != null) {
@@ -802,11 +873,11 @@ class FirestoreContentService {
               ))
           .toList();
 
-      // Combine results, deduplicating by ID
+      // Combine results from all strategies, deduplicating by ID
       final seenIds = <String>{};
       final allMovies = <Movie>[];
 
-      for (final m in [...prefixMovies, ...broaderMovies]) {
+      for (final m in [...prefixMovies, ...keywordResults, ...broaderMovies]) {
         if (!seenIds.contains(m.id)) {
           seenIds.add(m.id);
           allMovies.add(m);
@@ -932,7 +1003,7 @@ class FirestoreContentService {
   /// Get movies by collection name
   Future<Map<String, dynamic>> getMoviesByCollection(
     String collectionName, {
-    int limit = 20,
+    int limit = 50,
     DocumentSnapshot? startAfter,
   }) async {
     try {
@@ -992,7 +1063,7 @@ class FirestoreContentService {
   }
 
   /// Get movies by tag name (simple list, for home screen sections)
-  Future<List<Movie>> getMoviesByTagSimple(String tagName, {int limit = 20}) async {
+  Future<List<Movie>> getMoviesByTagSimple(String tagName, {int limit = 50}) async {
     try {
       final snapshot = await _moviesRef
           .where('tags', arrayContains: tagName)
@@ -1154,6 +1225,8 @@ class FirestoreContentService {
     // Auto-generate 'title_lowercase' for case-insensitive Firestore search
     if (data.containsKey('title') && (data['title'] as String).isNotEmpty) {
       data['title_lowercase'] = (data['title'] as String).toLowerCase();
+      // Auto-generate 'search_keywords' array for word-level Firestore search
+      data['search_keywords'] = _generateSearchKeywords(data['title'] as String);
     }
 
     // === PRIORITY 1: Check for duplicate tmdbId ===
@@ -1326,9 +1399,10 @@ class FirestoreContentService {
 
     data['updatedAt'] = FieldValue.serverTimestamp();
 
-    // Auto-update 'title_lowercase' when title changes
+    // Auto-update 'title_lowercase' and 'search_keywords' when title changes
     if (data.containsKey('title') && (data['title'] as String).isNotEmpty) {
       data['title_lowercase'] = (data['title'] as String).toLowerCase();
+      data['search_keywords'] = _generateSearchKeywords(data['title'] as String);
     }
 
     await _moviesRef.doc(id).update(data);
@@ -1426,8 +1500,21 @@ class FirestoreContentService {
 
   // ==================== BACKFILL & BANNER CONFIG ====================
 
-  /// Backfill 'title_lowercase' field for all existing movies that don't have it yet.
-  /// Call this once from Admin Panel to populate the field for existing documents.
+  /// Generate search keywords from title for word-level Firestore search.
+  /// Splits title into individual lowercase words, stripping punctuation.
+  /// e.g. "The Avengers: Endgame" → ["the", "avengers", "endgame"]
+  List<String> _generateSearchKeywords(String title) {
+    return title
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^\w\s]'), ' ')  // Replace non-word chars with space
+        .split(RegExp(r'\s+'))                     // Split on whitespace
+        .where((word) => word.isNotEmpty && word.length >= 2)  // Skip empty & single-char
+        .toList();
+  }
+
+  /// Backfill 'title_lowercase' and 'search_keywords' fields for all existing movies.
+  /// Call this once from Admin Panel to populate the fields for existing documents.
+  /// Also fixes stale/incorrect values (not just missing ones).
   /// Returns the number of documents updated.
   Future<int> backfillTitleLowercase() async {
     await _requireAdmin();
@@ -1438,14 +1525,28 @@ class FirestoreContentService {
         final data = doc.data() as Map<String, dynamic>;
         final title = data['title'] as String?;
         final existingLower = data['title_lowercase'] as String?;
+        final existingKeywords = data['search_keywords'];
 
-        if (title != null && title.isNotEmpty &&
-            (existingLower == null || existingLower.isEmpty)) {
-          await doc.reference.update({'title_lowercase': title.toLowerCase()});
+        final needsLowerUpdate = title != null && title.isNotEmpty &&
+            (existingLower == null || existingLower.isEmpty || existingLower != title.toLowerCase());
+        final needsKeywordsUpdate = title != null && title.isNotEmpty &&
+            (existingKeywords == null ||
+             (existingKeywords is! List) ||
+             (existingKeywords as List).isEmpty);
+
+        if (needsLowerUpdate || needsKeywordsUpdate) {
+          final updates = <String, dynamic>{};
+          if (needsLowerUpdate) {
+            updates['title_lowercase'] = title!.toLowerCase();
+          }
+          if (needsKeywordsUpdate) {
+            updates['search_keywords'] = _generateSearchKeywords(title!);
+          }
+          await doc.reference.update(updates);
           updated++;
         }
       }
-      debugPrint('backfillTitleLowercase: updated $updated documents');
+      debugPrint('backfillTitleLowercase: updated $updated documents (title_lowercase + search_keywords)');
     } catch (e) {
       debugPrint('backfillTitleLowercase failed: $e');
     }

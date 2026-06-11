@@ -62,6 +62,13 @@ service cloud.firestore {
         || isAdmin();
     }
 
+    // NOTIFICATIONS: Admin can write, authenticated users can read their own notifications
+    match /notifications/{notificationId} {
+      allow read: if request.auth != null;
+      allow create: if isAdmin();
+      allow update, delete: if isAdmin();
+    }
+
     // USER SUB-COLLECTIONS (bookmarks, watchlist, history)
     match /users/{userId}/bookmarks/{bookmarkId} {
       allow read, write: if isOwner(userId);
