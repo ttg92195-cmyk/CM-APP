@@ -1,7 +1,7 @@
-# Environment variables — NEVER commit .env to version control!
-# Contains Firebase API keys and project secrets.
-# Copy .env.example to .env and fill in your values.
-.env
+# Environment variables — .env is committed because the app bundles it at build time.
+# .env.example is available for reference but .env itself must be in the repo
+# for GitHub Actions CI/CD builds to work (flutter_dotenv loads it as an asset).
+# .env
 
 # Flutter
 .dart_tool/
