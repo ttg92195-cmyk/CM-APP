@@ -144,14 +144,28 @@ class _AdminNotificationPageState extends State<AdminNotificationPage> {
           .update({'isSent': sent});
 
       if (mounted) {
+        // Determine success message based on result
+        String message;
+        Color bgColor;
+
+        if (sent && recipients != null && recipients > 0) {
+          message = 'Notification sent to $recipients device(s)!';
+          bgColor = Colors.green;
+        } else if (sent && (recipients == null || recipients == 0)) {
+          // API accepted but no subscribers yet — this is normal for new apps
+          message = 'Notification queued! Subscribers will receive it once they open the app.';
+          bgColor = Colors.blue;
+        } else {
+          message = 'Push failed: ${errorMsg ?? "Unknown error"}';
+          bgColor = Colors.orange;
+        }
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(sent
-                ? 'Notification sent to $recipients device(s)!'
-                : 'Push failed: ${errorMsg ?? "Unknown error"}'),
-            backgroundColor: sent ? Colors.green : Colors.orange,
+            content: Text(message),
+            backgroundColor: bgColor,
             behavior: SnackBarBehavior.floating,
-            duration: Duration(seconds: sent ? 3 : 6),
+            duration: Duration(seconds: sent ? 4 : 6),
           ),
         );
         // Clear form

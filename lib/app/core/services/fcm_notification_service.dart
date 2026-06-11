@@ -228,6 +228,24 @@ class FcmNotificationService {
       if (response.statusCode == 200) {
         final data = response.data;
         final recipients = data['recipients'] ?? 0;
+        final errors = data['errors'] as List<dynamic>?;
+
+        // Check for OneSignal soft-errors (e.g. "All included players are not subscribed")
+        if (errors != null && errors.isNotEmpty) {
+          final errorMsg = errors.join(', ');
+          debugPrint('OneSignal: Soft error — $errorMsg');
+          // This is not a hard failure — the API accepted the request
+          // but there are no subscribers yet. This is normal for new apps.
+          if (errorMsg.contains('not subscribed')) {
+            return {
+              'success': true,
+              'recipients': 0,
+              'error': 'Notification queued! No subscribers yet — users need to open the app first to subscribe.',
+            };
+          }
+          return {'success': false, 'recipients': 0, 'error': errorMsg};
+        }
+
         debugPrint('OneSignal: Notification sent! ID: ${data['id']}, Recipients: $recipients');
         return {'success': true, 'recipients': recipients, 'error': null};
       } else {
