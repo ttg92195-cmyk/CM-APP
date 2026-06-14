@@ -28,12 +28,6 @@ class RecentService {
     await _saveRecents(recents);
   }
 
-  Future<void> removeRecent(String movieId) async {
-    final recents = await getRecentMovies();
-    recents.removeWhere((m) => m.id == movieId);
-    await _saveRecents(recents);
-  }
-
   Future<void> clearRecents() async {
     final prefs = await _prefs;
     await prefs.remove(_recentKey);

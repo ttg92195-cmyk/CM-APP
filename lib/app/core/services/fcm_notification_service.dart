@@ -292,16 +292,6 @@ class FcmNotificationService {
     }
   }
 
-  /// Legacy method — kept for backward compatibility.
-  /// Now uses OneSignal instead of Cloud Functions.
-  Future<void> sendNewMovieNotification(String movieTitle, String movieId) async {
-    await sendNotificationToAll(
-      title: 'New Movie Added!',
-      body: movieTitle,
-      movieId: movieId,
-    );
-  }
-
   /// Get OneSignal Player ID (for debugging)
   String? get playerId => OneSignal.User.pushSubscription.id;
 

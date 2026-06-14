@@ -262,15 +262,4 @@ class DeviceManagementService {
     }
   }
 
-  /// Remove all devices except the current one (for cleanup)
-  Future<void> removeAllOtherDevices(String uid) async {
-    try {
-      final currentDevice = await getCurrentDeviceInfo();
-      await _firestore.collection('users').doc(uid).update({
-        'logged_in_devices': [currentDevice.toMap()],
-      });
-    } catch (e) {
-      debugPrint('removeAllOtherDevices failed: $e');
-    }
-  }
 }

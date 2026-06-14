@@ -131,25 +131,6 @@ class SafStorageService {
     }
   }
 
-  /// Delete a file from the SAF folder
-  Future<bool> deleteFileFromSafFolder(String fileName) async {
-    if (!Platform.isAndroid) return false;
-
-    final treeUri = await getStoredTreeUri();
-    if (treeUri == null || treeUri.isEmpty) return false;
-
-    try {
-      final result = await _channel.invokeMethod<bool>('deleteFileFromFolder', {
-        'treeUri': treeUri,
-        'fileName': fileName,
-      });
-      return result ?? false;
-    } on PlatformException catch (e) {
-      debugPrint('SAF delete file error: ${e.code} - ${e.message}');
-      return false;
-    }
-  }
-
   /// Open a file from the SAF folder using the system's default app.
   /// This finds the file in the SAF folder and opens it via ACTION_VIEW Intent.
   Future<bool> openFileFromSafFolder(String fileName) async {

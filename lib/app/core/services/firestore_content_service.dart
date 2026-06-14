@@ -1512,47 +1512,6 @@ class FirestoreContentService {
         .toList();
   }
 
-  /// Backfill 'title_lowercase' and 'search_keywords' fields for all existing movies.
-  /// Call this once from Admin Panel to populate the fields for existing documents.
-  /// Also fixes stale/incorrect values (not just missing ones).
-  /// Returns the number of documents updated.
-  Future<int> backfillTitleLowercase() async {
-    await _requireAdmin();
-    int updated = 0;
-    try {
-      final snapshot = await _moviesRef.get();
-      for (final doc in snapshot.docs) {
-        final data = doc.data() as Map<String, dynamic>;
-        final title = data['title'] as String?;
-        final existingLower = data['title_lowercase'] as String?;
-        final existingKeywords = data['search_keywords'];
-
-        final needsLowerUpdate = title != null && title.isNotEmpty &&
-            (existingLower == null || existingLower.isEmpty || existingLower != title.toLowerCase());
-        final needsKeywordsUpdate = title != null && title.isNotEmpty &&
-            (existingKeywords == null ||
-             (existingKeywords is! List) ||
-             (existingKeywords as List).isEmpty);
-
-        if (needsLowerUpdate || needsKeywordsUpdate) {
-          final updates = <String, dynamic>{};
-          if (needsLowerUpdate) {
-            updates['title_lowercase'] = title!.toLowerCase();
-          }
-          if (needsKeywordsUpdate) {
-            updates['search_keywords'] = _generateSearchKeywords(title!);
-          }
-          await doc.reference.update(updates);
-          updated++;
-        }
-      }
-      debugPrint('backfillTitleLowercase: updated $updated documents (title_lowercase + search_keywords)');
-    } catch (e) {
-      debugPrint('backfillTitleLowercase failed: $e');
-    }
-    return updated;
-  }
-
   /// Get banner configuration from Firestore
   /// Reads 'imageUrls' array from 'app_settings/banner_config' document
   Future<List<String>> getBannerConfig() async {

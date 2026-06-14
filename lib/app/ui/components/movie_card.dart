@@ -42,8 +42,6 @@ class _MovieCardState extends State<MovieCard> {
 
   String _formatWatchPosition() {
     if (_watchProgress == null) return '';
-    // Get position in minutes
-    final prefsAsync = SharedPreferences.getInstance();
     // We'll show percentage-based position
     final percent = (_watchProgress! * 100).round();
     return '$percent%';
