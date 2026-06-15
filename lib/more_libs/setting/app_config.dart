@@ -2,11 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:onesignal_flutter/onesignal_flutter.dart';
 
 class AppConfig extends ChangeNotifier {
   static const String _themeKey = 'app_theme';
   static const String _langKey = 'app_language';
   static const String _downloadEnabledKey = 'download_enabled';
+  static const String _videoPlayerKey = 'video_player_mode';
+  static const String _downloadsNotifKey = 'downloads_notification';
+  static const String _notificationKey = 'notification_enabled';
 
   // L3: Session timeout — auto-logout after inactivity
   static const Duration sessionTimeout = Duration(minutes: 30);
@@ -45,6 +49,9 @@ class AppConfig extends ChangeNotifier {
   String _languageCode = 'en';
   Map<String, String> _translations = {};
   bool _downloadEnabled = true;
+  bool _downloadsNotification = true;
+  bool _notificationEnabled = true;
+  String _videoPlayerMode = 'builtin'; // 'builtin' or 'external'
   Map<String, dynamic>? _currentUser;
   bool _isLoadingAuth = true;
 
@@ -52,6 +59,9 @@ class AppConfig extends ChangeNotifier {
   String get languageCode => _languageCode;
   bool get isDarkMode => _themeMode == ThemeMode.dark;
   bool get downloadEnabled => _downloadEnabled;
+  bool get downloadsNotification => _downloadsNotification;
+  bool get notificationEnabled => _notificationEnabled;
+  String get videoPlayerMode => _videoPlayerMode;
   Map<String, dynamic>? get currentUser => _currentUser;
   bool get isLoggedIn => _currentUser != null;
   String? get currentUsername => _currentUser?['username'] as String?;
@@ -166,6 +176,9 @@ class AppConfig extends ChangeNotifier {
     _themeMode = ThemeMode.values[themeIndex];
     _languageCode = prefs.getString(_langKey) ?? 'en';
     _downloadEnabled = prefs.getBool(_downloadEnabledKey) ?? true;
+    _downloadsNotification = prefs.getBool(_downloadsNotifKey) ?? true;
+    _notificationEnabled = prefs.getBool(_notificationKey) ?? true;
+    _videoPlayerMode = prefs.getString(_videoPlayerKey) ?? 'builtin';
     await _loadTranslations();
     notifyListeners();
   }
@@ -185,6 +198,28 @@ class AppConfig extends ChangeNotifier {
           'registrationDate': _parseRegistrationDate(data['registrationDate']),
           'email': data['email'] ?? '',
         };
+
+        // Check if admin has banned this user — force logout
+        if (data['isBanned'] == true) {
+          await _auth.signOut();
+          _currentUser = null;
+          _isLoadingAuth = false;
+          notifyListeners();
+          return;
+        }
+
+        // Check force logout flag set by admin
+        if (data['forceLogout'] == true) {
+          // Clear the flag and logout
+          await _firestore.collection('users').doc(uid).update({
+            'forceLogout': false,
+          });
+          await _auth.signOut();
+          _currentUser = null;
+          _isLoadingAuth = false;
+          notifyListeners();
+          return;
+        }
       } else {
         // Firestore doc doesn't exist yet, create from Firebase Auth user
         final user = _auth.currentUser;
@@ -248,6 +283,39 @@ class AppConfig extends ChangeNotifier {
     await prefs.setString(_langKey, code);
     await _loadTranslations();
     notifyListeners();
+  }
+
+  Future<void> setVideoPlayerMode(String mode) async {
+    _videoPlayerMode = mode;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_videoPlayerKey, mode);
+    notifyListeners();
+  }
+
+  Future<void> setDownloadsNotification(bool enabled) async {
+    _downloadsNotification = enabled;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_downloadsNotifKey, enabled);
+    notifyListeners();
+  }
+
+  Future<void> setNotificationEnabled(bool enabled) async {
+    _notificationEnabled = enabled;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_notificationKey, enabled);
+    notifyListeners();
+
+    // Control OneSignal subscription
+    try {
+      if (enabled) {
+        await OneSignal.Notifications.requestPermission(true);
+        OneSignal.User.pushSubscription.optIn();
+      } else {
+        OneSignal.User.pushSubscription.optOut();
+      }
+    } catch (e) {
+      debugPrint('OneSignal opt error: $e');
+    }
   }
 
   Future<void> setDownloadEnabled(bool enabled) async {
@@ -542,6 +610,10 @@ class AppConfig extends ChangeNotifier {
         'download_toggle': 'Show Download',
         'download_toggle_desc': 'Enable to show download in movie details',
         'download_disabled_msg': 'Download links are currently disabled. Go to Download settings to enable them.',
+        'video_player': 'Video Player',
+        'video_player_desc': 'Choose default video player',
+        'built_in_player': 'Built-in Player',
+        'external_player': 'External Player (VLC/MX Player)',
         'no_downloads': 'No downloads available',
         'genres_tags_collections': 'Genres/Tags/Collections',
         'profile': 'Profile',
@@ -630,6 +702,15 @@ class AppConfig extends ChangeNotifier {
         'english': 'English',
         'privacy_policy_text': 'Privacy Policy\n\nKMM is committed to protecting your privacy. This Privacy Policy explains how we collect, use, and safeguard your information when you use our application.\n\nInformation We Collect:\n- Account credentials (username, email) — stored securely via Firebase Authentication\n- Bookmarks, watchlist, and viewing history — synced to your account via Firebase Firestore\n- App settings and preferences — stored locally on your device\n\nHow We Use Your Information:\n- To provide and improve our services\n- To sync your bookmarks and watchlist across devices\n- To maintain your viewing history and preferences\n\nData Storage:\nYour account data (bookmarks, watchlist, viewing history) is stored securely on Google Firebase Firestore cloud servers, encrypted in transit and at rest. App settings and preferences are stored locally on your device. Your password is never stored in plain text — Firebase Authentication handles it securely.\n\nData Sharing:\nWe do not sell or share your personal data with third parties. Your data is only accessible to you and is protected by Firebase Security Rules that require authentication.\n\nThird-Party Services:\nOur app uses Google Firebase (Authentication, Firestore, Storage, App Check) which has its own privacy policy. We encourage you to review the Google privacy policy.\n\nYour Rights:\n- You can delete your account and all associated data at any time from your Profile page\n- You can export your bookmarks and watchlist locally\n- You can logout at any time to stop cloud sync\n\nContact Us:\nIf you have any questions about this Privacy Policy, please contact us at support@cmmovies.app.\n\nLast updated: 2026',
         'about_cm_movies_text': 'KMM\n\nYour ultimate movie and series companion app. Browse, search, and discover movies and TV series from around the world.\n\nFeatures:\n- Browse trending movies and TV shows\n- Search by title, genre, or tag\n- Bookmark your favorites\n- Download management\n- Multi-language support (Myanmar & English)\n- Dark & Light theme\n\nVersion 1.0.0\nDeveloped with love for movie enthusiasts.',
+        'notifications': 'Notifications',
+        'downloads_notification': 'Downloads Notification',
+        'downloads_notification_desc': 'Show notifications for download progress',
+        'push_notification': 'Push Notification',
+        'push_notification_desc': 'Receive push notifications from admin',
+        'storage': 'Storage',
+        'clear_cache': 'Clear Cache',
+        'clear_cache_desc': 'Clear cached images and temporary data',
+        'cache_cleared': 'Cache cleared successfully',
       };
     }
     return {
@@ -721,6 +802,10 @@ class AppConfig extends ChangeNotifier {
       'download_toggle': 'Download ပြသရန်',
       'download_toggle_desc': 'Movie အသေးစိတ်တွင် Download ပြသလိုပါက ဖွင့်ပါ',
       'download_disabled_msg': 'Download Link များကို လက်ရှိ ပိတ်ထားပါသည်။ Download Settings တွင် ဖွင့်ပါ။',
+      'video_player': 'ဗီဒီယိုပလေယာ',
+      'video_player_desc': 'ဗီဒီယိုပလေယာ ရွေးချယ်ရန်',
+      'built_in_player': 'Built-in ပလေယာ',
+      'external_player': 'External ပလေယာ (VLC/MX Player)',
       'no_downloads': 'ဒေါင်းလုဒ် မရှိပါ',
       'genres_tags_collections': 'အမျိုးအစား/တက်ဂ်/စုစည်းမှု',
       'profile': 'ကိုယ်ရေးအချက်အလက်',
@@ -809,6 +894,15 @@ class AppConfig extends ChangeNotifier {
       'english': 'English',
       'privacy_policy_text': 'ကိုယ်ရေးအချက်အလက် မူဝါဒ\n\nKMM သည် သင့်ကိုယ်ရေးအချက်အလက်များကို ကာကွယ်ရန် ကတိကဝတ် ပြုထားပါသည်။ ဤ မူဝါဒသည် သင့်အချက်အလက်များကို မည်သို့ စုဆောင်း၊ အသုံးပြု၊ ကာကွယ်သည်ကို ရှင်းပြပါသည်။\n\nစုဆောင်းသော အချက်အလက်များ:\n- အကောင့်အချက်အလက် (အသုံးပြုသူအမည်၊ အီးမေးလ်) — Firebase Authentication မှ ဘေးကင်းစွာ သိမ်းဆည်း\n- သိမ်းဆည်းမှု၊ ကြည့်ရန်စာရင်း၊ ကြည့်ရှုမှတ်တမ်း — Firebase Firestore မှတဆင့် သင့်အကောင့်သို့ ချိတ်ဆက်\n- App ဆက်တင်နှင့် ကိုယ်ကြိုက်ဆန္ဒများ — သင့်စက်ပေါ်တွင် ဒေသန္တရအားဖြင့် သိမ်းဆည်း\n\nအချက်အလက် အသုံးပြုပုံ:\n- ဝန်ဆောင်မှုများ ပေးရန်နှင့် တိုးတက်စေရန်\n- သင့်သိမ်းဆည်းမှုနှင့် ကြည့်ရန်စာရင်းကို စက်အချင်းချင်း ချိတ်ဆက်ရန်\n- ကြည့်ရှုမှတ်တမ်းနှင့် ကိုယ်ကြိုက်ဆန္ဒများ ထိန်းသိမ်းရန်\n\nဒေတာ သိမ်းဆည်းမှု:\nသင့်အကောင့်ဒေတာ (သိမ်းဆည်းမှု၊ ကြည့်ရန်စာရင်း၊ ကြည့်ရှုမှတ်တမ်း) ကို Google Firebase Firestore ကလောင့်ဆာဗာများတွင် ဘေးကင်းစွာ သိမ်းဆည်းထားပြီး ဖြတ်သန်းရာတွင်လည်းကောင်း၊ သိမ်းဆည်းစဉ်လည်းကောင်း ဝှက်စာပြုလုပ်ထားပါသည်။ App ဆက်တင်များကို သင့်စက်ပေါ်တွင် ဒေသန္တရအားဖြင့် သိမ်းဆည်းပါသည်။ သင့်စကားဝှက်ကို မည်သောအခါမှ ရှင်းလင်းသောစာသားအဖြစ် မသိမ်းဆည်းပါ — Firebase Authentication က ဘေးကင်းစွာ စီမံခန့်ခွဲပါသည်။\n\nဒေတာ မျှဝေမှု:\nကျွန်တော်တို့သည် သင့်ကိုယ်ရေးအချက်အလက်ကို တတိယဦးများထံ ရောင်းချခြင်း သို့မဟုတ် မျှဝေခြင်း မပြုပါ။ သင့်ဒေတာကို သင်တစ်ဦးတည်းသာ ဝင်ရောက်ကြည့်ရှုနိုင်ပြီး Firebase လုံခြုံရေးစည်းမျဉ်းများဖြင့် ကာကွယ်ထားပါသည်။\n\nတတိယဦး ဝန်ဆောင်မှုများ:\nကျွန်တော်တို့ App သည် Google Firebase (Authentication, Firestore, Storage, App Check) ကို အသုံးပြုပါသည်။ Google ၏ ကိုယ်ရေးအချက်အလက် မူဝါဒကို ဖတ်ရှုရန် အကြံပြုပါသည်။\n\nသင့်အခွင့်အရေးများ:\n- သင့်အကောင့်နှင့် ဆက်စပ်ဒေတာအားလုံးကို သင့် Profile စာမျက်နှာမှ အချိန်မရွေး ဖျက်နိုင်ပါသည်\n- သင့်သိမ်းဆည်းမှုနှင့် ကြည့်ရန်စာရင်းကို ဒေသန္တရသို့ ထုတ်ယူနိုင်ပါသည်\n- ကလောင့်ချိတ်ဆက်မှုကို ရပ်နားရန် အချိန်မရွေး ထွက်နိုင်ပါသည်\n\nဆက်သွယ်ရန်:\nကိုယ်ရေးအချက်အလက် မူဝါဒအတွက် မေးခွန်းရှိပါက support@cmmovies.app သို့ ဆက်သွယ်ပါ။\n\nနောက်ဆုံး အသစ်ပြင်ဆင်ချက်: ၂၀၂၆',
       'about_cm_movies_text': 'KMM\n\nရုပ်ရှင်နှင့် ဇာတ်လမ်းတွဲများ ကြည့်ရှုရန် အကောင်းဆုံး App ဖြစ်ပါသည်။ ကမ္ဘာအနှံ့ရုပ်ရှင်နှင့် TV ဇာတ်လမ်းတွဲများကို ရှာဖွေ၊ ကြည့်ရှုနိုင်ပါသည်။\n\nအသွင်အပြင်များ:\n- လူကြိုက်များရုပ်ရှင်နှင့် TV ရှိုးများ ကြည့်ရှုရန်\n- ခေါင်းစဉ်၊ အမျိုးအစား၊ တက်ဂ်အလိုက် ရှာဖွေရန်\n- နှစ်သက်ရာများ သိမ်းဆည်းရန်\n- Download စီမံခန့်ခွဲရန်\n- ဘာသာစကား ၂ မျိုး ပံ့ပိုးမှု (မြန်မာ & English)\n- အမှောင်နှင့် အလင်း Theme\n\nဗားရှင်း 1.0.0\nရုပ်ရှင်ချစ်သူများအတွက် ချစ်ခြင်းမေတ္တာဖြင့် ဖန်တီးထားပါသည်။',
+      'notifications': 'အကြောင်းကြားချက်များ',
+      'downloads_notification': 'ဒေါင်းလုဒ် အကြောင်းကြားချက်',
+      'downloads_notification_desc': 'ဒေါင်းလုဒ်တိုးတက်မှု အကြောင်းကြားချက် ပြသရန်',
+      'push_notification': 'Push အကြောင်းကြားချက်',
+      'push_notification_desc': 'အက်ဒမင်ထံမှ အကြောင်းကြားချက်များ လက်ခံရန်',
+      'storage': 'သိုလှောင်မှု',
+      'clear_cache': 'Cache ရှင်းလင်းရန်',
+      'clear_cache_desc': 'ဓာတ်ပုံနှင့် ယာယီဒေတာများ ဖျက်ရန်',
+      'cache_cleared': 'Cache ရှင်းလင်းပြီးပါပြီ',
     };
   }
 }

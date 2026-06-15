@@ -11,6 +11,7 @@ import 'package:cm_movies/app/ui/screens/add_movie_page.dart';
 import 'package:cm_movies/app/ui/screens/add_series_page.dart';
 import 'package:cm_movies/app/ui/screens/edit_movie_page.dart';
 import 'package:cm_movies/app/ui/screens/admin_notification_page.dart';
+import 'package:cm_movies/app/ui/screens/admin_users_page.dart';
 
 class AdminPanelPage extends StatefulWidget {
   const AdminPanelPage({super.key});
@@ -396,6 +397,15 @@ class _AdminPanelPageState extends State<AdminPanelPage>
     return Scaffold(
       appBar: AppBar(
         title: const Text('Admin Panel'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.people_outline),
+            onPressed: () {
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminUsersPage()));
+            },
+            tooltip: 'Users',
+          ),
+        ],
         bottom: TabBar(
           controller: _tabController,
           isScrollable: true,

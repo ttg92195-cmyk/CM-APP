@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,6 +9,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:media_kit/media_kit.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/ui/home/home_page.dart';
 import 'package:cm_movies/app/core/services/download_manager_service.dart';
@@ -69,14 +71,6 @@ void main() async {
     }
 
     // Initialize Firebase App Check with Play Integrity (production) + Debug fallback.
-    // Play Integrity: Validates that requests come from the genuine app installed
-    // from Google Play Store. Blocks unauthorized clients from accessing Firestore.
-    // Debug provider: Used as fallback during development (debug builds only).
-    // To enable Play Integrity for production:
-    //   1. Get your app's SHA-256 fingerprint from your keystore:
-    //      keytool -list -v -keystore your-key.jks -alias your-alias
-    //   2. Add SHA-256 fingerprint in Firebase Console → Project Settings → App Check
-    //   3. Enable Play Integrity in Firebase Console → App Check → Apps
     try {
       await FirebaseAppCheck.instance.activate(
         androidProvider: AndroidProvider.playIntegrity,
@@ -131,6 +125,15 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
   // Splash: minimum display time before dismissing
   bool _minSplashElapsed = false;
 
+  // Feature 1: Internet connection state
+  bool _hasInternet = true;
+  bool _checkingInternet = false;
+
+  // Feature 2: Force update state
+  bool _forceUpdate = false;
+  bool _forceUpdateDialogShown = false;
+  String _latestVersion = '';
+
   @override
   void initState() {
     super.initState();
@@ -139,6 +142,8 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
     Future.delayed(const Duration(seconds: 3), () {
       if (mounted) {
         setState(() => _minSplashElapsed = true);
+        // After splash, check internet and updates
+        _checkInternet();
       }
     });
   }
@@ -152,6 +157,222 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
   /// Whether splash screen should still be shown.
   /// True if auth is still loading OR minimum splash time hasn't elapsed.
   bool get _showSplash => !_minSplashElapsed;
+
+  // Feature 1: Check internet connection using DNS lookup
+  Future<void> _checkInternet() async {
+    if (_checkingInternet) return;
+    setState(() => _checkingInternet = true);
+    try {
+      final result = await InternetAddress.lookup('google.com');
+      final hasConnection = result.isNotEmpty && result[0].rawAddress.isNotEmpty;
+      if (mounted) {
+        setState(() {
+          _hasInternet = hasConnection;
+          _checkingInternet = false;
+        });
+        // If we have internet, check for force update
+        if (hasConnection) {
+          _checkForUpdate();
+        }
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _hasInternet = false;
+          _checkingInternet = false;
+        });
+      }
+    }
+  }
+
+  // Feature 2: Check for force update from Firestore config
+  Future<void> _checkForUpdate() async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('config')
+          .doc('app_version')
+          .get();
+      if (!doc.exists) return;
+      final data = doc.data()!;
+      _latestVersion = data['latestVersion'] as String? ?? '';
+      final forceUpdate = data['forceUpdate'] as bool? ?? false;
+
+      if (_latestVersion.isNotEmpty && forceUpdate) {
+        const currentVersion = '1.9.0';
+        if (_isNewerVersion(_latestVersion, currentVersion)) {
+          if (mounted) {
+            setState(() => _forceUpdate = true);
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Version check error: $e');
+    }
+  }
+
+  // Feature 2: Compare version strings (e.g. "2.0.0" > "1.9.0")
+  bool _isNewerVersion(String latest, String current) {
+    try {
+      final latestParts = latest.split('.').map(int.parse).toList();
+      final currentParts = current.split('.').map(int.parse).toList();
+      for (int i = 0; i < 3; i++) {
+        final l = i < latestParts.length ? latestParts[i] : 0;
+        final c = i < currentParts.length ? currentParts[i] : 0;
+        if (l > c) return true;
+        if (l < c) return false;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('Version comparison error: $e');
+      return false;
+    }
+  }
+
+  // Feature 2: Show non-dismissible force update dialog
+  void _showForceUpdateDialog() {
+    showDialog(
+      context: navigatorKey.currentContext ?? context,
+      barrierDismissible: false,
+      builder: (ctx) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          backgroundColor: kDarkCard,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              const Icon(Icons.system_update, color: kNetflixRed, size: 28),
+              const SizedBox(width: 12),
+              Text(
+                'Update Required',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          content: Text(
+            'A new version ($_latestVersion) is available. Please update to continue using the app.',
+            style: const TextStyle(color: Colors.white70, fontSize: 15),
+          ),
+          actions: [
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: kNetflixRed,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: () async {
+                  // Try to open Play Store, fallback to a message
+                  final uri = Uri.parse(
+                    'https://play.google.com/store/apps/details?id=com.cm.movies',
+                  );
+                  if (await canLaunchUrl(uri)) {
+                    await launchUrl(uri, mode: LaunchMode.externalApplication);
+                  } else {
+                    if (ctx.mounted) {
+                      ScaffoldMessenger.of(ctx).showSnackBar(
+                        const SnackBar(
+                          content: Text('Please update the app manually.'),
+                          backgroundColor: kNetflixRed,
+                        ),
+                      );
+                    }
+                  }
+                },
+                child: const Text(
+                  'Update',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Feature 1: Build "No Internet" dark page
+  Widget _buildNoInternetPage() {
+    return Scaffold(
+      backgroundColor: kDarkBg,
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 40),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: kNetflixRed.withOpacity(0.15),
+                ),
+                child: const Icon(
+                  Icons.wifi_off_rounded,
+                  size: 64,
+                  color: kNetflixRed,
+                ),
+              ),
+              const SizedBox(height: 28),
+              const Text(
+                'No Internet Connection',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Please check your internet connection and try again.',
+                style: TextStyle(
+                  color: Colors.white54,
+                  fontSize: 15,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 36),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kNetflixRed,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  onPressed: _checkingInternet ? null : () => _checkInternet(),
+                  child: _checkingInternet
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text(
+                          'Retry',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   // L3: Track app lifecycle for session timeout
   @override
@@ -189,6 +410,14 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final appConfig = Provider.of<AppConfig>(context);
 
+    // Feature 2: If force update required, show dialog after frame builds
+    if (_forceUpdate && !_forceUpdateDialogShown) {
+      _forceUpdateDialogShown = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showForceUpdateDialog();
+      });
+    }
+
     return GestureDetector(
       // L3: Record activity on any user tap to keep session alive
       onTap: () => appConfig.recordActivity(),
@@ -210,11 +439,14 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
         // Auth gate: show LoginPage if not logged in, HomePage if logged in
         // This ensures Firestore reads only happen after authentication
         // Splash is shown until both: auth loads AND minimum 3s elapsed
-        home: (_showSplash || appConfig.isLoadingAuth)
-            ? _buildSplashScreen()
-            : appConfig.isLoggedIn
-                ? const HomePage()
-                : const LoginPage(),
+        // Feature 1: No internet page shown when !_hasInternet
+        home: !_hasInternet
+            ? _buildNoInternetPage()
+            : (_showSplash || appConfig.isLoadingAuth)
+                ? _buildSplashScreen()
+                : appConfig.isLoggedIn
+                    ? const HomePage()
+                    : const LoginPage(),
       ),
     );
   }

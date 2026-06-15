@@ -52,6 +52,7 @@ class _SeriesPageState extends State<SeriesPage> {
 
   Future<void> _refreshData() async {
     setState(() {
+      _series = [];  // Clear series so skeleton shows during refresh
       _seenIds.clear();
       _lastDoc = null;
       _hasMore = true;

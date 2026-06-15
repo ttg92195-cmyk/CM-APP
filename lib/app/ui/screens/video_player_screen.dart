@@ -8,6 +8,9 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:screen_brightness/screen_brightness.dart';
+import 'package:provider/provider.dart';
+import 'package:cm_movies/more_libs/setting/app_config.dart';
+import 'package:cm_movies/app/core/services/external_player_service.dart';
 
 /// Professional Video Player using media_kit (libmpv/VLC engine)
 /// Supports: MP4, MKV, HEVC (H.265), 4K, AC3/DTS audio, embedded subtitles
@@ -163,10 +166,50 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   // Guard against double-exit (prevents double-pop causing app close)
   bool _isExiting = false;
 
+  // Whether to use external player instead of built-in
+  bool _useExternalPlayer = false;
+  bool _externalLaunched = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+
+    // Check video player mode setting
+    _checkVideoPlayerMode();
+  }
+
+  Future<void> _checkVideoPlayerMode() async {
+    if (!mounted) return;
+    final appConfig = Provider.of<AppConfig>(context, listen: false);
+    if (appConfig.videoPlayerMode == 'external') {
+      _useExternalPlayer = true;
+      // Launch external player and pop back
+      final success = await ExternalPlayerService.playWithExternalPlayer(widget.videoUrl);
+      if (mounted) {
+        if (success) {
+          _externalLaunched = true;
+          Navigator.of(context).pop();
+        } else {
+          // Fallback to built-in player if external launch fails
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(appConfig.languageCode == 'my'
+                  ? 'External ပလေယာ ဖွင့်မရပါ။ Built-in ပလေယာဖြင့် ဖွင့်ပါသည်။'
+                  : 'Could not open external player. Using built-in player.'),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+          _useExternalPlayer = false;
+          _initBuiltInPlayer();
+        }
+      }
+    } else {
+      _initBuiltInPlayer();
+    }
+  }
+
+  void _initBuiltInPlayer() {
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
@@ -1239,6 +1282,21 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   @override
   Widget build(BuildContext context) {
+    // If external player was launched or is being prepared, show a loading screen
+    if (_useExternalPlayer || _externalLaunched) {
+      return PopScope(
+        canPop: true,
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: Center(
+            child: _externalLaunched
+                ? const SizedBox.shrink()
+                : const CircularProgressIndicator(color: Color(0xFFE50914)),
+          ),
+        ),
+      );
+    }
+
     return PopScope(
       // Prevent accidental double-back exit: always intercept back button
       canPop: false,

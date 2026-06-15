@@ -215,3 +215,70 @@ class TrendingMovieSkeleton extends StatelessWidget {
     );
   }
 }
+
+/// Skeleton loading for the banner slider
+class BannerSkeleton extends StatefulWidget {
+  const BannerSkeleton({super.key});
+
+  @override
+  State<BannerSkeleton> createState() => _BannerSkeletonState();
+}
+
+class _BannerSkeletonState extends State<BannerSkeleton>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final baseColor = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE0E0E0);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Column(
+        children: [
+          FadeTransition(
+            opacity: Tween<double>(begin: 0.4, end: 1.0).animate(_controller),
+            child: Container(
+              height: 180,
+              decoration: BoxDecoration(
+                color: baseColor,
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          // Dots indicator skeleton
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(3, (index) => Container(
+              margin: const EdgeInsets.symmetric(horizontal: 3),
+              width: index == 0 ? 20 : 6,
+              height: 6,
+              decoration: BoxDecoration(
+                color: baseColor,
+                borderRadius: BorderRadius.circular(3),
+              ),
+            )),
+          ),
+        ],
+      ),
+    );
+  }
+}

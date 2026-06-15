@@ -42,6 +42,8 @@ dependencies:
   flutter_local_notifications: ^17.0.0
   # URL launcher — open Telegram, external links
   url_launcher: ^6.2.4
+  # Cache manager — for clearing cached images
+  flutter_cache_manager: ^3.3.1
 
 dev_dependencies:
   flutter_launcher_icons: ^0.13.1

@@ -53,6 +53,7 @@ class _MoviesPageState extends State<MoviesPage> {
 
   Future<void> _refreshData() async {
     setState(() {
+      _movies = [];  // Clear movies so skeleton shows during refresh
       _seenIds.clear();
       _lastDoc = null;
       _hasMore = true;

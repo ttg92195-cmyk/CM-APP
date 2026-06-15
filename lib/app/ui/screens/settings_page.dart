@@ -1,13 +1,63 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/ui/screens/help_support_page.dart';
 import 'package:cm_movies/app/ui/screens/about_kmm_page.dart';
 import 'package:cm_movies/app/ui/screens/privacy_policy_page.dart';
 import 'package:cm_movies/app/ui/screens/vip_page.dart';
 
-class SettingsPage extends StatelessWidget {
+class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  // Feature 3: Clear cache method
+  Future<void> _clearCache(BuildContext context) async {
+    try {
+      // Clear CachedNetworkImage cache
+      await DefaultCacheManager().emptyCache();
+
+      // Clear SharedPreferences except critical keys (theme, language, video player mode)
+      final prefs = await SharedPreferences.getInstance();
+      final criticalKeys = {
+        'app_theme',
+        'app_language',
+        'video_player_mode',
+        'download_enabled',
+      };
+      final allKeys = prefs.getKeys();
+      final keysToRemove = allKeys.where((key) => !criticalKeys.contains(key)).toList();
+      for (final key in keysToRemove) {
+        await prefs.remove(key);
+      }
+
+      if (mounted) {
+        final appConfig = Provider.of<AppConfig>(context, listen: false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(appConfig.translate('cache_cleared')),
+            backgroundColor: const Color(0xFFE50914),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to clear cache. Please try again.'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -100,6 +150,56 @@ class SettingsPage extends StatelessWidget {
           onChanged: (val) {
             appConfig.setThemeMode(val ? ThemeMode.dark : ThemeMode.light);
           },
+        ),
+        const Divider(),
+
+        // Player Section
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Text(
+            appConfig.translate('video_player'),
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        RadioListTile<String>(
+          secondary: const Icon(Icons.play_circle_outline),
+          title: Text(appConfig.translate('built_in_player')),
+          subtitle: Text(appConfig.translate('video_player_desc')),
+          value: 'builtin',
+          groupValue: appConfig.videoPlayerMode,
+          onChanged: (val) {
+            if (val != null) appConfig.setVideoPlayerMode(val);
+          },
+        ),
+        RadioListTile<String>(
+          secondary: const Icon(Icons.open_in_new),
+          title: Text(appConfig.translate('external_player')),
+          value: 'external',
+          groupValue: appConfig.videoPlayerMode,
+          onChanged: (val) {
+            if (val != null) appConfig.setVideoPlayerMode(val);
+          },
+        ),
+        const Divider(),
+
+        // Feature 3: Storage Section
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Text(
+            appConfig.translate('storage'),
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        ListTile(
+          leading: const Icon(Icons.cleaning_services_outlined),
+          title: Text(appConfig.translate('clear_cache')),
+          subtitle: Text(appConfig.translate('clear_cache_desc')),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => _clearCache(context),
         ),
         const Divider(),
 

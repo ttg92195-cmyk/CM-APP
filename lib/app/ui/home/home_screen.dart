@@ -138,7 +138,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadTagBasedData() async {
     final tagEntries = <MapEntry<String, Future<List<Movie>>>>[
       MapEntry('K Drama', _contentService.getMoviesByTagSimple('K Drama', limit: _homeLimit)),
-      MapEntry('4K', _contentService.getMoviesByTagSimple('4K', limit: _homeLimit)),
+      MapEntry('4K Movies', _contentService.getMoviesByTagSimple('4K Movies', limit: _homeLimit)),
+      MapEntry('4K Series', _contentService.getMoviesByTagSimple('4K Series', limit: _homeLimit)),
       MapEntry('Animation', _contentService.getMoviesByTagSimple('Animation', limit: _homeLimit)),
       MapEntry('Anime', _contentService.getMoviesByTagSimple('Anime', limit: _homeLimit)),
       MapEntry('Bollywood', _contentService.getMoviesByTagSimple('Bollywood', limit: _homeLimit)),
@@ -159,15 +160,11 @@ class _HomeScreenState extends State<HomeScreen> {
           case 'K Drama':
             kDramaMovies = movies;
             break;
-          case '4K':
-            fourKMovies = movies.where((m) => m.type == 'movie').toList();
-            fourKSeries = movies.where((m) => m.type == 'series').toList();
-            if (fourKMovies.isEmpty && movies.isNotEmpty) {
-              fourKMovies = movies;
-            }
-            if (fourKSeries.isEmpty && movies.isNotEmpty) {
-              fourKSeries = movies;
-            }
+          case '4K Movies':
+            fourKMovies = movies;
+            break;
+          case '4K Series':
+            fourKSeries = movies;
             break;
           case 'Animation':
             animationMovies = movies;
@@ -244,11 +241,38 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Banner skeleton
+          const BannerSkeleton(),
+          const SizedBox(height: 8),
+          // Movies section skeleton
           TrendingMovieSkeleton(title: appConfig.translate('movies'), count: 5),
           const SizedBox(height: 4),
+          // Series section skeleton
           TrendingMovieSkeleton(title: appConfig.translate('series'), count: 5),
           const SizedBox(height: 4),
+          // Trending Movies skeleton
           TrendingMovieSkeleton(title: appConfig.translate('trending_movies'), count: 5),
+          const SizedBox(height: 4),
+          // Trending TV Shows skeleton
+          TrendingMovieSkeleton(title: appConfig.translate('trending_tv_shows'), count: 5),
+          const SizedBox(height: 4),
+          // K Drama skeleton
+          TrendingMovieSkeleton(title: appConfig.translate('k_drama'), count: 5),
+          const SizedBox(height: 4),
+          // 4K Movies skeleton
+          TrendingMovieSkeleton(title: appConfig.translate('4k_movies'), count: 5),
+          const SizedBox(height: 4),
+          // 4K Series skeleton
+          TrendingMovieSkeleton(title: appConfig.translate('4k_series'), count: 5),
+          const SizedBox(height: 4),
+          // Animation skeleton
+          TrendingMovieSkeleton(title: appConfig.translate('animation'), count: 5),
+          const SizedBox(height: 4),
+          // Anime skeleton
+          TrendingMovieSkeleton(title: appConfig.translate('anime'), count: 5),
+          const SizedBox(height: 4),
+          // Bollywood skeleton
+          TrendingMovieSkeleton(title: appConfig.translate('bollywood'), count: 5),
           const SizedBox(height: 16),
         ],
       ),
@@ -382,8 +406,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _navigateToCategory(CategoryPage(
                   title: appConfig.translate('4k_movies'),
                   filterType: CategoryFilterType.tag,
-                  filterValue: '4K',
-                  typeFilter: 'movie',
+                  filterValue: '4K Movies',
                 ));
               },
             ),
@@ -400,8 +423,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _navigateToCategory(CategoryPage(
                   title: appConfig.translate('4k_series'),
                   filterType: CategoryFilterType.tag,
-                  filterValue: '4K',
-                  typeFilter: 'series',
+                  filterValue: '4K Series',
                 ));
               },
             ),
