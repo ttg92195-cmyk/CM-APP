@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,6 +11,7 @@ import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/ui/home/home_page.dart';
 import 'package:cm_movies/app/core/services/download_manager_service.dart';
@@ -32,9 +34,20 @@ void main() async {
   // This is critical for the video player — media_kit's native engine can throw
   // errors that would otherwise kill the app process.
   FlutterError.onError = (FlutterErrorDetails details) {
+    // Log the error but don't crash
     FlutterError.presentError(details);
     debugPrint('FlutterError: ${details.exceptionAsString()}');
+    if (details.stack != null) {
+      debugPrint('Stack: ${details.stack}');
+    }
     // Don't rethrow — keep the app alive
+  };
+
+  // Catch any unhandled platform errors (e.g., from plugins)
+  PlatformDispatcher.instance.onError = (error, stack) {
+    debugPrint('Platform error: $error');
+    debugPrint('Stack: $stack');
+    return true; // Return true to prevent crash
   };
 
   runZonedGuarded(() async {
@@ -129,6 +142,9 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
   bool _hasInternet = true;
   bool _checkingInternet = false;
 
+  // Real-time connectivity monitor
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+
   // Feature 2: Force update state
   bool _forceUpdate = false;
   bool _forceUpdateDialogShown = false;
@@ -146,12 +162,44 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
         _checkInternet();
       }
     });
+
+    // Real-time internet monitoring: listen to connectivity changes
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen(
+      (List<ConnectivityResult> results) {
+        _onConnectivityChanged(results);
+      },
+    );
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _connectivitySubscription?.cancel();
     super.dispose();
+  }
+
+  /// Handle connectivity changes in real-time
+  /// Shows "No Internet" screen immediately when connection is lost,
+  /// and auto-refreshes when connection is restored
+  void _onConnectivityChanged(List<ConnectivityResult> results) {
+    final hasConnection = results.any((r) => r != ConnectivityResult.none);
+
+    if (!hasConnection && _hasInternet) {
+      // Internet just went down — show No Internet screen
+      if (mounted) {
+        setState(() => _hasInternet = false);
+      }
+    } else if (hasConnection && !_hasInternet) {
+      // Internet just came back — auto-refresh
+      if (mounted) {
+        setState(() {
+          _hasInternet = true;
+          _checkingInternet = false;
+        });
+        // Check for updates now that we have internet
+        _checkForUpdate();
+      }
+    }
   }
 
   /// Whether splash screen should still be shown.

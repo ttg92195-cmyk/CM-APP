@@ -26,6 +26,7 @@ class _SeriesPageState extends State<SeriesPage> {
   bool _isLoadingMore = false;
   final Set<String> _seenIds = {};
   bool _isFirstLoad = true;
+  String? _errorMessage;
 
   @override
   void initState() {
@@ -41,12 +42,11 @@ class _SeriesPageState extends State<SeriesPage> {
   }
 
   /// Called when this tab becomes active (from HomePage)
-  /// Refreshes data to show newly added posts
+  /// Always refreshes to show skeleton loading first, then fresh data.
+  /// This ensures users see the skeleton shimmer effect when navigating
+  /// from Home via the "More" button, rather than stale data.
   void onTabSelected() {
-    if (_isFirstLoad) {
-      _isFirstLoad = false;
-      return; // initState already loads on first time
-    }
+    _isFirstLoad = false;
     _refreshData();
   }
 
@@ -56,6 +56,7 @@ class _SeriesPageState extends State<SeriesPage> {
       _seenIds.clear();
       _lastDoc = null;
       _hasMore = true;
+      _errorMessage = null;
     });
     await _loadSeries();
   }
@@ -92,7 +93,13 @@ class _SeriesPageState extends State<SeriesPage> {
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _isLoading = false);
+      debugPrint('Error loading series: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = e.toString();
+        });
+      }
     }
   }
 
@@ -122,7 +129,9 @@ class _SeriesPageState extends State<SeriesPage> {
         });
       }
     } catch (e) {
+      debugPrint('Error loading more series: $e');
       if (mounted) setState(() => _isLoadingMore = false);
+      // Don't block UI — user can keep scrolling, next load more will retry
     }
   }
 

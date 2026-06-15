@@ -539,16 +539,30 @@ class _LoginPageState extends State<LoginPage>
                 ),
               ),
 
-            // Username field
+            // Username/Email field — accepts both username and email
             TextFormField(
               controller: _usernameController,
+              keyboardType: TextInputType.emailAddress,
               decoration: inputDecoration.copyWith(
-                labelText: appConfig.translate('username'),
+                labelText: appConfig.languageCode == 'my'
+                    ? 'အသုံးပြုသူအမည် / အီးမေးလ်'
+                    : 'Username / Email',
                 prefixIcon: const Icon(Icons.person_outline),
+                hintText: appConfig.languageCode == 'my'
+                    ? 'Username သို့မဟုတ် Email ထည့်ပါ'
+                    : 'Enter username or email',
               ),
               validator: (val) {
                 if (val == null || val.trim().isEmpty) {
-                  return appConfig.translate('enter_username');
+                  return appConfig.languageCode == 'my'
+                      ? 'အသုံးပြုသူအမည် သို့မဟုတ် အီးမေးလ် ထည့်ပါ'
+                      : 'Please enter username or email';
+                }
+                // If it looks like an email, validate basic format
+                if (val.contains('@') && !val.contains('.')) {
+                  return appConfig.languageCode == 'my'
+                      ? 'အီးမေးလ် မှန်ကန်စွာ ထည့်ပါ'
+                      : 'Please enter a valid email';
                 }
                 return null;
               },

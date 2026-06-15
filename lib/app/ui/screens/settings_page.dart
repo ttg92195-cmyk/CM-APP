@@ -1,7 +1,9 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/ui/screens/help_support_page.dart';
 import 'package:cm_movies/app/ui/screens/about_kmm_page.dart';
@@ -16,19 +18,42 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  // Feature 3: Clear cache method
+  // Feature 3: Clear cache method — clears cached images, temp files, and non-critical preferences
   Future<void> _clearCache(BuildContext context) async {
     try {
-      // Clear CachedNetworkImage cache
+      // 1. Clear CachedNetworkImage cache (libcached_network_image)
       await DefaultCacheManager().emptyCache();
 
-      // Clear SharedPreferences except critical keys (theme, language, video player mode)
+      // 2. Clear temporary directory files
+      try {
+        final tempDir = await getTemporaryDirectory();
+        if (tempDir.existsSync()) {
+          final tempFiles = tempDir.listSync(recursive: true);
+          for (final file in tempFiles) {
+            try {
+              if (file is File) {
+                await file.delete();
+              } else if (file is Directory) {
+                await file.delete(recursive: true);
+              }
+            } catch (_) {
+              // Skip files that can't be deleted (in use, etc.)
+            }
+          }
+        }
+      } catch (_) {
+        // Temp directory cleanup is best-effort
+      }
+
+      // 3. Clear SharedPreferences except critical keys (theme, language, video player mode)
       final prefs = await SharedPreferences.getInstance();
       final criticalKeys = {
         'app_theme',
         'app_language',
         'video_player_mode',
         'download_enabled',
+        'downloads_notification',
+        'notification_enabled',
       };
       final allKeys = prefs.getKeys();
       final keysToRemove = allKeys.where((key) => !criticalKeys.contains(key)).toList();
@@ -200,6 +225,38 @@ class _SettingsPageState extends State<SettingsPage> {
           subtitle: Text(appConfig.translate('clear_cache_desc')),
           trailing: const Icon(Icons.chevron_right),
           onTap: () => _clearCache(context),
+        ),
+        const Divider(),
+
+        // Notifications Section
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Text(
+            appConfig.translate('notifications'),
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        SwitchListTile(
+          secondary: const Icon(Icons.download_done_rounded),
+          title: Text(appConfig.translate('downloads_notification')),
+          subtitle: Text(appConfig.translate('downloads_notification_desc')),
+          value: appConfig.downloadsNotification,
+          activeColor: const Color(0xFFE50914),
+          onChanged: (val) {
+            appConfig.setDownloadsNotification(val);
+          },
+        ),
+        SwitchListTile(
+          secondary: const Icon(Icons.notifications_active_outlined),
+          title: Text(appConfig.translate('push_notification')),
+          subtitle: Text(appConfig.translate('push_notification_desc')),
+          value: appConfig.notificationEnabled,
+          activeColor: const Color(0xFFE50914),
+          onChanged: (val) {
+            appConfig.setNotificationEnabled(val);
+          },
         ),
         const Divider(),
 

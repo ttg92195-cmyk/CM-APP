@@ -17,6 +17,12 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   List<Map<String, dynamic>> _users = [];
   String _searchQuery = '';
 
+  // VIP days options (10 to 200 in steps of 10)
+  static const List<int> _vipDaysOptions = [
+    10, 20, 30, 40, 50, 60, 70, 80, 90, 100,
+    110, 120, 130, 140, 150, 160, 170, 180, 190, 200,
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -35,6 +41,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
           'email': data['email'] ?? '',
           'isAdmin': data['isAdmin'] == true || data['isAdmin'] == 'true',
           'isVip': data['isVip'] == true || data['isVip'] == 'true',
+          'vipExpiry': data['vipExpiry'] ?? '',
           'isBanned': data['isBanned'] == true,
           'registrationDate': data['registrationDate'] ?? '',
           'oneSignalPlayerId': data['oneSignalPlayerId'] ?? '',
@@ -67,39 +74,46 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       await _firestore.collection('users').doc(uid).update({
         'isBanned': !currentlyBanned,
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(currentlyBanned ? 'User unbanned' : 'User banned'),
-          backgroundColor: currentlyBanned ? Colors.green : Colors.redAccent,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(currentlyBanned ? 'User unbanned' : 'User banned'),
+            backgroundColor: currentlyBanned ? Colors.green : Colors.redAccent,
+          ),
+        );
+      }
       _loadUsers();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.redAccent),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.redAccent),
+        );
+      }
     }
   }
 
   Future<void> _forceLogout(String uid) async {
-    // Clear the user's logged_in_devices so they need to re-login
     try {
       await _firestore.collection('users').doc(uid).update({
         'logged_in_devices': [],
         'forceLogout': true,
         'forceLogoutAt': FieldValue.serverTimestamp(),
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Force logout initiated. User will be logged out on next app open.'),
-          backgroundColor: Colors.orange,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Force logout initiated. User will be logged out on next app open.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
       _loadUsers();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.redAccent),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.redAccent),
+        );
+      }
     }
   }
 
@@ -110,18 +124,231 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         'isAdmin': newRole == 'admin',
         'role': newRole,
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Role changed to $newRole'),
-          backgroundColor: Colors.green,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Role changed to $newRole'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
       _loadUsers();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.redAccent),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.redAccent),
+        );
+      }
     }
+  }
+
+  /// Show VIP management dialog — admin selects VIP days (10-200)
+  /// then confirms. The VIP expiry is set to current date + selected days.
+  Future<void> _showVipDialog(String uid, String username, bool currentlyVip) async {
+    final appConfig = Provider.of<AppConfig>(context, listen: false);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    int? selectedDays;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            return AlertDialog(
+              backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: Row(
+                children: [
+                  Icon(Icons.verified, color: const Color(0xFFFFD700), size: 28),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'VIP Management',
+                      style: TextStyle(
+                        color: isDark ? Colors.white : Colors.black87,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'User: $username',
+                    style: TextStyle(
+                      color: isDark ? Colors.white70 : Colors.black54,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    currentlyVip
+                        ? appConfig.languageCode == 'my'
+                            ? 'လက်ရှိ VIP ဖြစ်နေပါသည်'
+                            : 'Currently VIP Active'
+                        : appConfig.languageCode == 'my'
+                            ? 'VIP မဖြစ်သေးပါ'
+                            : 'Not VIP',
+                    style: TextStyle(
+                      color: currentlyVip ? const Color(0xFFFFD700) : Colors.grey,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Text(
+                    appConfig.languageCode == 'my'
+                        ? 'VIP ရက် ရွေးချယ်ပါ (၁၀ ရက် - ၂၀၀ ရက်)'
+                        : 'Select VIP Duration (10 - 200 Days)',
+                    style: TextStyle(
+                      color: isDark ? Colors.white : Colors.black87,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // VIP days dropdown
+                  DropdownButtonFormField<int>(
+                    value: selectedDays,
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: isDark ? const Color(0xFF1A1A1A) : Colors.grey.shade100,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xFFFFD700), width: 1.5),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    ),
+                    dropdownColor: isDark ? const Color(0xFF2A2A2A) : Colors.white,
+                    hint: Text(
+                      appConfig.languageCode == 'my' ? 'ရက် ရွေးချယ်ပါ' : 'Select days',
+                      style: TextStyle(color: isDark ? Colors.white54 : Colors.black54),
+                    ),
+                    items: _vipDaysOptions.map((days) {
+                      return DropdownMenuItem<int>(
+                        value: days,
+                        child: Text(
+                          '$days Days',
+                          style: TextStyle(
+                            color: isDark ? Colors.white : Colors.black87,
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (val) {
+                      setDialogState(() => selectedDays = val);
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                // Revoke VIP button (only shown if user is currently VIP)
+                if (currentlyVip)
+                  TextButton.icon(
+                    onPressed: () async {
+                      try {
+                        await _firestore.collection('users').doc(uid).update({
+                          'isVip': false,
+                          'vipExpiry': '',
+                        });
+                        if (ctx.mounted) {
+                          Navigator.pop(ctx);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('VIP revoked for $username'),
+                              backgroundColor: Colors.orange,
+                            ),
+                          );
+                        }
+                        _loadUsers();
+                      } catch (e) {
+                        if (ctx.mounted) {
+                          Navigator.pop(ctx);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('Error: $e'), backgroundColor: Colors.redAccent),
+                          );
+                        }
+                      }
+                    },
+                    icon: const Icon(Icons.cancel, size: 16),
+                    label: Text(
+                      appConfig.languageCode == 'my' ? 'VIP ပိတ်ရန်' : 'Revoke VIP',
+                      style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                    ),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.redAccent,
+                    ),
+                  ),
+
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: Text(
+                    appConfig.languageCode == 'my' ? 'မလုပ်တော့' : 'Cancel',
+                    style: TextStyle(color: isDark ? Colors.white54 : Colors.black54),
+                  ),
+                ),
+
+                // Grant VIP button
+                FilledButton.icon(
+                  onPressed: selectedDays == null
+                      ? null
+                      : () async {
+                          try {
+                            // Calculate expiry date
+                            final expiryDate = DateTime.now().add(Duration(days: selectedDays!));
+                            final expiryString = '${expiryDate.year}-${expiryDate.month.toString().padLeft(2, '0')}-${expiryDate.day.toString().padLeft(2, '0')}';
+
+                            await _firestore.collection('users').doc(uid).update({
+                              'isVip': true,
+                              'vipExpiry': expiryString,
+                              'vipGrantedAt': FieldValue.serverTimestamp(),
+                              'vipDays': selectedDays,
+                            });
+
+                            if (ctx.mounted) {
+                              Navigator.pop(ctx);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('VIP granted: $selectedDays days for $username\nExpires: $expiryString'),
+                                  backgroundColor: const Color(0xFFFFD700),
+                                  duration: const Duration(seconds: 4),
+                                ),
+                              );
+                            }
+                            _loadUsers();
+                          } catch (e) {
+                            if (ctx.mounted) {
+                              Navigator.pop(ctx);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Error: $e'), backgroundColor: Colors.redAccent),
+                              );
+                            }
+                          }
+                        },
+                  icon: const Icon(Icons.verified, size: 16),
+                  label: Text(
+                    appConfig.languageCode == 'my' ? 'VIP ပေးရန်' : 'Grant VIP',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFFFFD700),
+                    foregroundColor: Colors.black87,
+                    disabledBackgroundColor: Colors.grey.shade600,
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -227,6 +454,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     final isVip = user['isVip'] as bool;
     final isBanned = user['isBanned'] as bool;
     final regDate = user['registrationDate'] as String;
+    final vipExpiry = user['vipExpiry'] as String;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -234,7 +462,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         borderRadius: BorderRadius.circular(12),
         side: isBanned
             ? const BorderSide(color: Colors.redAccent, width: 1.5)
-            : BorderSide.none,
+            : isVip
+                ? const BorderSide(color: Color(0xFFFFD700), width: 1)
+                : BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -249,11 +479,13 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                   radius: 20,
                   backgroundColor: isBanned
                       ? Colors.redAccent.withOpacity(0.2)
-                      : const Color(0xFFE50914).withOpacity(0.15),
+                      : isVip
+                          ? const Color(0xFFFFD700).withOpacity(0.2)
+                          : const Color(0xFFE50914).withOpacity(0.15),
                   child: Text(
                     username[0].toUpperCase(),
                     style: TextStyle(
-                      color: isBanned ? Colors.redAccent : const Color(0xFFE50914),
+                      color: isBanned ? Colors.redAccent : isVip ? const Color(0xFFFFD700) : const Color(0xFFE50914),
                       fontWeight: FontWeight.bold,
                       fontSize: 18,
                     ),
@@ -323,18 +555,44 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
             ),
             const SizedBox(height: 8),
 
-            // Registration date
-            if (regDate.isNotEmpty)
-              Text(
-                '${appConfig.languageCode == 'my' ? 'မှတ်ပုံတင်ရက်' : 'Registered'}: $regDate',
-                style: TextStyle(fontSize: 11, color: isDark ? Colors.white38 : Colors.black38),
-              ),
+            // Registration date and VIP expiry
+            Row(
+              children: [
+                if (regDate.isNotEmpty)
+                  Text(
+                    '${appConfig.languageCode == 'my' ? 'မှတ်ပုံတင်ရက်' : 'Reg'}: $regDate',
+                    style: TextStyle(fontSize: 11, color: isDark ? Colors.white38 : Colors.black38),
+                  ),
+                if (isVip && vipExpiry.isNotEmpty) ...[
+                  const SizedBox(width: 12),
+                  Text(
+                    '${appConfig.languageCode == 'my' ? 'VIP ကုန်ဆုံးရက်' : 'VIP Exp'}: $vipExpiry',
+                    style: const TextStyle(fontSize: 11, color: Color(0xFFFFD700), fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ],
+            ),
             const SizedBox(height: 8),
 
             // Action buttons
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
+            Wrap(
+              alignment: WrapAlignment.end,
+              spacing: 4,
+              runSpacing: 4,
               children: [
+                // VIP management button
+                TextButton.icon(
+                  onPressed: () => _showVipDialog(uid, username, isVip),
+                  icon: Icon(isVip ? Icons.verified : Icons.verified_outlined, size: 16),
+                  label: Text(isVip ? 'Manage VIP' : 'Grant VIP', style: const TextStyle(fontSize: 11)),
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFFFFD700),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+
                 // Role change button (Admin ↔ User)
                 if (!isAdmin || uid != FirebaseAuth.instance.currentUser?.uid)
                   TextButton.icon(
@@ -349,8 +607,6 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                     ),
                   ),
 
-                const SizedBox(width: 4),
-
                 // Force Logout button
                 TextButton.icon(
                   onPressed: () => _forceLogout(uid),
@@ -363,8 +619,6 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
                 ),
-
-                const SizedBox(width: 4),
 
                 // Ban/Unban button
                 TextButton.icon(

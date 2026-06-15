@@ -27,6 +27,7 @@ class _MoviesPageState extends State<MoviesPage> {
   bool _isLoadingMore = false;
   final Set<String> _seenIds = {};
   bool _isFirstLoad = true;
+  String? _errorMessage;
 
   @override
   void initState() {
@@ -42,12 +43,11 @@ class _MoviesPageState extends State<MoviesPage> {
   }
 
   /// Called when this tab becomes active (from HomePage)
-  /// Refreshes data to show newly added posts
+  /// Always refreshes to show skeleton loading first, then fresh data.
+  /// This ensures users see the skeleton shimmer effect when navigating
+  /// from Home via the "More" button, rather than stale data.
   void onTabSelected() {
-    if (_isFirstLoad) {
-      _isFirstLoad = false;
-      return; // initState already loads on first time
-    }
+    _isFirstLoad = false;
     _refreshData();
   }
 
@@ -57,6 +57,7 @@ class _MoviesPageState extends State<MoviesPage> {
       _seenIds.clear();
       _lastDoc = null;
       _hasMore = true;
+      _errorMessage = null;
     });
     await _loadMovies();
   }
@@ -93,7 +94,13 @@ class _MoviesPageState extends State<MoviesPage> {
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _isLoading = false);
+      debugPrint('Error loading movies: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = e.toString();
+        });
+      }
     }
   }
 
@@ -123,7 +130,9 @@ class _MoviesPageState extends State<MoviesPage> {
         });
       }
     } catch (e) {
+      debugPrint('Error loading more movies: $e');
       if (mounted) setState(() => _isLoadingMore = false);
+      // Don't block UI — user can keep scrolling, next load more will retry
     }
   }
 

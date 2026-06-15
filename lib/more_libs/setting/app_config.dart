@@ -69,13 +69,39 @@ class AppConfig extends ChangeNotifier {
   bool get isLoadingAuth => _isLoadingAuth;
 
   /// Check if current user has active VIP (not expired)
+  /// Auto-expires VIP if the expiry date has passed by updating Firestore
   bool get isCurrentUserVip {
     if (_currentUser?['isVip'] != true) return false;
     final expiry = _currentUser?['vipExpiry'] as String?;
     if (expiry == null || expiry.isEmpty) return false;
     final expiryDate = DateTime.tryParse(expiry);
     if (expiryDate == null) return false;
-    return expiryDate.isAfter(DateTime.now());
+    final isActive = expiryDate.isAfter(DateTime.now());
+
+    // Auto-expire: If VIP has expired, update Firestore and local state
+    if (!isActive && _currentUser?['uid'] != null) {
+      _autoExpireVip(_currentUser!['uid'] as String);
+    }
+
+    return isActive;
+  }
+
+  /// Auto-expire VIP — update Firestore and local state
+  Future<void> _autoExpireVip(String uid) async {
+    try {
+      await _firestore.collection('users').doc(uid).update({
+        'isVip': false,
+        'vipExpiry': '',
+      });
+      // Update local state
+      if (_currentUser != null) {
+        _currentUser!['isVip'] = false;
+        _currentUser!['vipExpiry'] = '';
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Auto-expire VIP error: $e');
+    }
   }
 
   // Cached admin email map loaded from Firestore (config/admin_emails)

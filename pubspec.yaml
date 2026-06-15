@@ -44,6 +44,8 @@ dependencies:
   url_launcher: ^6.2.4
   # Cache manager — for clearing cached images
   flutter_cache_manager: ^3.3.1
+  # Internet connectivity monitoring — real-time connection state
+  connectivity_plus: ^6.0.3
 
 dev_dependencies:
   flutter_launcher_icons: ^0.13.1

@@ -248,6 +248,7 @@ class _ProfilePageState extends State<ProfilePage> {
     final username = appConfig.currentUsername ?? 'User';
     final isAdmin = appConfig.isCurrentUserAdmin;
     final isVip = appConfig.isCurrentUserVip;
+    final vipExpiry = appConfig.currentUser?['vipExpiry'] as String? ?? '';
     final email = appConfig.currentUser?['email'] as String? ?? '';
     final regDate = appConfig.currentUser?['registrationDate'] as String? ?? '';
 
@@ -361,6 +362,20 @@ class _ProfilePageState extends State<ProfilePage> {
                               ],
                             ],
                           ),
+                          // VIP expiry date display
+                          if (isVip && vipExpiry.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              appConfig.languageCode == 'my'
+                                  ? 'VIP ကုန်ဆုံးရက်: $vipExpiry'
+                                  : 'VIP Expires: $vipExpiry',
+                              style: const TextStyle(
+                                color: Color(0xFFFFD700),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),

@@ -1,10 +1,117 @@
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+/// Advanced External Player Service
+///
+/// Supports launching video URLs in external players like VLC and MX Player
+/// using Android's intent system. Falls back to url_launcher for non-Android
+/// platforms or when no specific player app is found.
+///
+/// For 4K video support: VLC and MX Player both support 4K HEVC/H.265
+/// playback with hardware acceleration. The intent approach passes the
+/// video URL directly to the player, allowing the external player to
+/// handle its own buffering, decoding, and rendering pipeline.
 class ExternalPlayerService {
+  // Common Android package names for video players
+  static const String _vlcPackage = 'org.videolan.vlc';
+  static const String _mxPlayerPackage = 'com.mxtech.videoplayer.ad';
+  static const String _mxPlayerProPackage = 'com.mxtech.videoplayer.pro';
+
   /// Open a video URL in an external player (VLC, MX Player, etc.)
-  /// Uses Android intent system via url_launcher
+  ///
+  /// Strategy:
+  /// 1. On Android: Try to launch with ACTION_VIEW intent targeting video players
+  /// 2. Fall back to url_launcher which also uses the intent system
+  /// 3. The external player handles its own process lifecycle, preventing
+  ///    crashes in the host app since video decoding runs in the player's process
   static Future<bool> playWithExternalPlayer(String videoUrl) async {
+    try {
+      if (Platform.isAndroid) {
+        return await _launchWithAndroidIntent(videoUrl);
+      }
+      // Non-Android: use url_launcher
+      return await _launchWithUrlLauncher(videoUrl);
+    } catch (e) {
+      debugPrint('External player error: $e');
+      return false;
+    }
+  }
+
+  /// Android-specific: Launch video with an explicit intent
+  ///
+  /// Uses a custom intent URI that targets video player apps.
+  /// This is more reliable than url_launcher for video playback
+  /// because it explicitly sets the MIME type and category.
+  static Future<bool> _launchWithAndroidIntent(String videoUrl) async {
+    // Try VLC first (best 4K/codec support)
+    final vlcSuccess = await _tryLaunchSpecificPlayer(
+      videoUrl,
+      _vlcPackage,
+      'org.videolan.vlc.gui.video.VideoPlayerActivity',
+    );
+    if (vlcSuccess) return true;
+
+    // Try MX Player (free version)
+    final mxSuccess = await _tryLaunchSpecificPlayer(
+      videoUrl,
+      _mxPlayerPackage,
+      'com.mxtech.videoplayer.ad.ActivityScreen',
+    );
+    if (mxSuccess) return true;
+
+    // Try MX Player Pro
+    final mxProSuccess = await _tryLaunchSpecificPlayer(
+      videoUrl,
+      _mxPlayerProPackage,
+      'com.mxtech.videoplayer.pro.ActivityScreen',
+    );
+    if (mxProSuccess) return true;
+
+    // Fallback: Use generic ACTION_VIEW intent via url_launcher
+    // This will show a chooser dialog if multiple video players are installed
+    return await _launchWithUrlLauncher(videoUrl);
+  }
+
+  /// Try to launch a specific player by package name
+  ///
+  /// Constructs an Android intent URI that targets a specific video player app.
+  /// If the app is not installed, this returns false without crashing.
+  static Future<bool> _tryLaunchSpecificPlayer(
+    String videoUrl,
+    String packageName,
+    String activityName,
+  ) async {
+    try {
+      // Build an intent URI for Android:
+      // intent:#Intent;action=android.intent.action.VIEW;data=<url>;type=video/*;package=<pkg>;component=<pkg>/<activity>;end
+      final encodedUrl = Uri.encodeComponent(videoUrl);
+      final intentUri = Uri.parse(
+        'intent:$videoUrl#Intent;'
+        'action=android.intent.action.VIEW;'
+        'data=$videoUrl;'
+        'type=video/*;'
+        'package=$packageName;'
+        'S.title=CM_Movies_Video;'
+        'end',
+      );
+
+      if (await canLaunchUrl(intentUri)) {
+        final launched = await launchUrl(
+          intentUri,
+          mode: LaunchMode.externalApplication,
+        );
+        return launched;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('Failed to launch $packageName: $e');
+      return false;
+    }
+  }
+
+  /// Generic fallback using url_launcher
+  static Future<bool> _launchWithUrlLauncher(String videoUrl) async {
     try {
       final uri = Uri.parse(videoUrl);
       if (await canLaunchUrl(uri)) {
@@ -15,7 +122,34 @@ class ExternalPlayerService {
       }
       return false;
     } catch (e) {
-      debugPrint('External player error: $e');
+      debugPrint('url_launcher fallback error: $e');
+      return false;
+    }
+  }
+
+  /// Check if any external video player is available on the device
+  static Future<bool> isExternalPlayerAvailable() async {
+    if (!Platform.isAndroid) return true; // Assume available on non-Android
+
+    try {
+      // Try checking if VLC is available
+      final vlcIntent = Uri.parse(
+        'intent:#Intent;action=android.intent.action.VIEW;type=video/*;package=$_vlcPackage;end',
+      );
+      if (await canLaunchUrl(vlcIntent)) return true;
+
+      // Try checking if MX Player is available
+      final mxIntent = Uri.parse(
+        'intent:#Intent;action=android.intent.action.VIEW;type=video/*;package=$_mxPlayerPackage;end',
+      );
+      if (await canLaunchUrl(mxIntent)) return true;
+
+      // Generic video intent
+      final genericIntent = Uri.parse(
+        'intent:#Intent;action=android.intent.action.VIEW;type=video/*;end',
+      );
+      return await canLaunchUrl(genericIntent);
+    } catch (e) {
       return false;
     }
   }
