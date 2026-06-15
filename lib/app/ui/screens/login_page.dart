@@ -21,6 +21,7 @@ class _LoginPageState extends State<LoginPage>
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   final _regUsernameController = TextEditingController();
+  final _regEmailController = TextEditingController();
   final _regPasswordController = TextEditingController();
   final _regConfirmPasswordController = TextEditingController();
   bool _obscurePassword = true;
@@ -28,6 +29,7 @@ class _LoginPageState extends State<LoginPage>
   bool _obscureRegConfirmPassword = true;
   bool _isLoggingIn = false;
   bool _isRegistering = false;
+  bool _isResettingPassword = false;
   String? _loginError;
   String? _registerError;
 
@@ -64,6 +66,7 @@ class _LoginPageState extends State<LoginPage>
     _usernameController.dispose();
     _passwordController.dispose();
     _regUsernameController.dispose();
+    _regEmailController.dispose();
     _regPasswordController.dispose();
     _regConfirmPasswordController.dispose();
     super.dispose();
@@ -182,6 +185,145 @@ class _LoginPageState extends State<LoginPage>
     }
   }
 
+  Future<void> _handleForgotPassword() async {
+    final appConfig = Provider.of<AppConfig>(context, listen: false);
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    final emailController = TextEditingController();
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            return AlertDialog(
+              backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: Text(
+                appConfig.languageCode == 'my' ? 'စကားဝှက် ပြန်လည်ရယူရန်' : 'Reset Password',
+                style: TextStyle(
+                  color: isDark ? Colors.white : Colors.black87,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    appConfig.languageCode == 'my'
+                        ? 'သင့်အီးမေးလ်ကို ထည့်ပါ။ စကားဝှက် ပြင်ဆင်ရန် Link ပို့ပေးမည်ဖြစ်ပါသည်။'
+                        : 'Enter your email address. We will send a password reset link.',
+                    style: TextStyle(
+                      color: isDark ? Colors.white60 : Colors.black54,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: emailController,
+                    keyboardType: TextInputType.emailAddress,
+                    style: TextStyle(color: isDark ? Colors.white : Colors.black87),
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: isDark ? const Color(0xFF1A1A1A) : Colors.grey.shade100,
+                      labelText: appConfig.languageCode == 'my' ? 'အီးမေးလ်' : 'Email',
+                      labelStyle: TextStyle(color: isDark ? Colors.white54 : Colors.black54),
+                      prefixIcon: Icon(Icons.email_outlined, color: isDark ? Colors.white54 : Colors.black54),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xFFE50914), width: 1.5),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: Text(
+                    appConfig.languageCode == 'my' ? 'မလုပ်တော့' : 'Cancel',
+                    style: TextStyle(color: isDark ? Colors.white54 : Colors.black54),
+                  ),
+                ),
+                FilledButton(
+                  onPressed: _isResettingPassword
+                      ? null
+                      : () async {
+                          final email = emailController.text.trim();
+                          if (email.isEmpty || !email.contains('@')) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(appConfig.languageCode == 'my'
+                                    ? 'အီးမေးလ် မှန်ကန်စွာ ထည့်ပါ'
+                                    : 'Please enter a valid email'),
+                                backgroundColor: Colors.redAccent,
+                              ),
+                            );
+                            return;
+                          }
+
+                          setDialogState(() => _isResettingPassword = true);
+
+                          try {
+                            await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+                            if (ctx.mounted) {
+                              Navigator.pop(ctx, true);
+                            }
+                          } on FirebaseAuthException catch (e) {
+                            setDialogState(() => _isResettingPassword = false);
+                            // Don't reveal whether email exists for security
+                            if (ctx.mounted) {
+                              Navigator.pop(ctx, true); // Still show success for security
+                            }
+                          } catch (e) {
+                            setDialogState(() => _isResettingPassword = false);
+                            if (ctx.mounted) {
+                              Navigator.pop(ctx, false);
+                            }
+                          }
+                        },
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFFE50914),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: _isResettingPassword
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : Text(appConfig.languageCode == 'my' ? 'ပို့ပါ' : 'Send'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    emailController.dispose();
+
+    if (result == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            appConfig.languageCode == 'my'
+                ? 'စကားဝှက် ပြင်ဆင်ရန် Link ကို အီးမေးလ်သို့ ပို့ပြီးပါပြီ'
+                : 'Password reset link has been sent to your email',
+          ),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
+  }
+
   Future<void> _handleRegister() async {
     if (!_registerFormKey.currentState!.validate()) return;
 
@@ -191,11 +333,12 @@ class _LoginPageState extends State<LoginPage>
     });
 
     final username = _regUsernameController.text.trim();
+    final email = _regEmailController.text.trim();
     final password = _regPasswordController.text.trim();
     final appConfig = Provider.of<AppConfig>(context, listen: false);
 
     try {
-      final success = await appConfig.registerUser(username, password);
+      final success = await appConfig.registerUser(username, password, email: email);
 
       if (mounted) {
         setState(() => _isRegistering = false);
@@ -207,6 +350,7 @@ class _LoginPageState extends State<LoginPage>
             ),
           );
           _regUsernameController.clear();
+          _regEmailController.clear();
           _regPasswordController.clear();
           _regConfirmPasswordController.clear();
 
@@ -434,7 +578,28 @@ class _LoginPageState extends State<LoginPage>
                 return null;
               },
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 8),
+
+            // Forgot Password
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: _handleForgotPassword,
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: Text(
+                  appConfig.languageCode == 'my' ? 'စကားဝှက် မေ့နေပါသလား?' : 'Forgot Password?',
+                  style: TextStyle(
+                    color: const Color(0xFFE50914),
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
 
             // Login button
             FilledButton(
@@ -557,6 +722,31 @@ class _LoginPageState extends State<LoginPage>
                 // Check for invalid characters that would break email format
                 if (val.contains('@') || val.contains(' ')) {
                   return appConfig.translate('username_invalid_chars');
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+
+            // Email
+            TextFormField(
+              controller: _regEmailController,
+              keyboardType: TextInputType.emailAddress,
+              decoration: inputDecoration.copyWith(
+                labelText: appConfig.languageCode == 'my' ? 'အီးမေးလ်' : 'Email',
+                prefixIcon: const Icon(Icons.email_outlined),
+              ),
+              validator: (val) {
+                if (val == null || val.trim().isEmpty) {
+                  return appConfig.languageCode == 'my'
+                      ? 'အီးမေးလ် ထည့်ပါ'
+                      : 'Please enter email';
+                }
+                // Basic email format validation
+                if (!RegExp(r'^[\w-.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(val.trim())) {
+                  return appConfig.languageCode == 'my'
+                      ? 'အီးမေးလ် ပုံစံ မမှန်ကန်ပါ'
+                      : 'Please enter a valid email';
                 }
                 return null;
               },

@@ -260,13 +260,14 @@ class AppConfig extends ChangeNotifier {
   // ========== Firebase Auth Methods ==========
 
   // Register a new user with Firebase Auth
-  Future<bool> registerUser(String username, String password) async {
+  Future<bool> registerUser(String username, String password, {String? email}) async {
     try {
-      final email = await _usernameToEmail(username);
+      // Use provided email, or auto-generate from username
+      final userEmail = email ?? await _usernameToEmail(username);
 
       // Create user in Firebase Auth
       final userCredential = await _auth.createUserWithEmailAndPassword(
-        email: email,
+        email: userEmail,
         password: password,
       );
 
@@ -279,7 +280,7 @@ class AppConfig extends ChangeNotifier {
       // Create user profile in Firestore
       await _firestore.collection('users').doc(user.uid).set({
         'username': username,
-        'email': email,
+        'email': userEmail,
         'isAdmin': false,
         'registrationDate': regDate,
         'createdAt': FieldValue.serverTimestamp(),
@@ -292,7 +293,7 @@ class AppConfig extends ChangeNotifier {
         'isAdmin': false,
         'loginDate': now.toIso8601String(),
         'registrationDate': regDate,
-        'email': email,
+        'email': userEmail,
       };
 
       notifyListeners();

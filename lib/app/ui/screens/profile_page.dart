@@ -247,6 +247,8 @@ class _ProfilePageState extends State<ProfilePage> {
 
     final username = appConfig.currentUsername ?? 'User';
     final isAdmin = appConfig.isCurrentUserAdmin;
+    final isVip = appConfig.isCurrentUserVip;
+    final email = appConfig.currentUser?['email'] as String? ?? '';
     final regDate = appConfig.currentUser?['registrationDate'] as String? ?? '';
 
     // Load devices if not yet loaded
@@ -302,26 +304,62 @@ class _ProfilePageState extends State<ProfilePage> {
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                          const SizedBox(height: 4),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: isAdmin
-                                  ? Colors.green.withOpacity(0.2)
-                                  : const Color(0xFFE50914).withOpacity(0.15),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              isAdmin ? 'Admin' : 'User',
-                              style: TextStyle(
-                                color: isAdmin ? Colors.green : const Color(0xFFE50914),
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
+                          if (email.isNotEmpty) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              email,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurface.withOpacity(0.5),
                               ),
                             ),
+                          ],
+                          const SizedBox(height: 6),
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: isAdmin
+                                      ? Colors.green.withOpacity(0.2)
+                                      : const Color(0xFFE50914).withOpacity(0.15),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  isAdmin ? 'Admin' : 'User',
+                                  style: TextStyle(
+                                    color: isAdmin ? Colors.green : const Color(0xFFE50914),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              if (isVip) ...[
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    gradient: const LinearGradient(
+                                      colors: [Color(0xFFFFD700), Color(0xFFFFA500)],
+                                    ),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: const Text(
+                                    'VIP',
+                                    style: TextStyle(
+                                      color: Colors.black87,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                         ],
                       ),
