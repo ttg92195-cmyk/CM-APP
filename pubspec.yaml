@@ -40,6 +40,8 @@ dependencies:
   onesignal_flutter: ^5.2.0
   # System-level download progress notifications
   flutter_local_notifications: ^17.0.0
+  # URL launcher — open Telegram, external links
+  url_launcher: ^6.2.4
 
 dev_dependencies:
   flutter_launcher_icons: ^0.13.1

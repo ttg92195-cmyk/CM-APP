@@ -58,6 +58,16 @@ class AppConfig extends ChangeNotifier {
   bool get isCurrentUserAdmin => _currentUser?['isAdmin'] == true;
   bool get isLoadingAuth => _isLoadingAuth;
 
+  /// Check if current user has active VIP (not expired)
+  bool get isCurrentUserVip {
+    if (_currentUser?['isVip'] != true) return false;
+    final expiry = _currentUser?['vipExpiry'] as String?;
+    if (expiry == null || expiry.isEmpty) return false;
+    final expiryDate = DateTime.tryParse(expiry);
+    if (expiryDate == null) return false;
+    return expiryDate.isAfter(DateTime.now());
+  }
+
   // Cached admin email map loaded from Firestore (config/admin_emails)
   Map<String, String> _adminEmailMap = {};
   bool _adminEmailsLoaded = false;
@@ -169,6 +179,8 @@ class AppConfig extends ChangeNotifier {
           'uid': uid,
           'username': data['username'] ?? 'User',
           'isAdmin': _isTruthy(data['isAdmin']),
+          'isVip': _isTruthy(data['isVip']),
+          'vipExpiry': data['vipExpiry'] ?? '',
           'loginDate': DateTime.now().toIso8601String(),
           'registrationDate': _parseRegistrationDate(data['registrationDate']),
           'email': data['email'] ?? '',
