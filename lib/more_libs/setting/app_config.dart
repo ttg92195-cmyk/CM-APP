@@ -128,9 +128,10 @@ class AppConfig extends ChangeNotifier {
   }
 
   // Helper to convert username to email format for Firebase Auth
-  // For admin accounts: If input contains '@', use it directly as email.
-  // For regular accounts: Auto-append @cmmovies.app to username.
-  // Admin email mapping is only available after admin login (rules restrict access).
+  // Priority: 1) If input contains '@', use as email directly
+  //           2) Look up actual email from Firestore by username
+  //           3) Check admin email map
+  //           4) Fallback: append @cmmovies.app (legacy users)
   Future<String> _usernameToEmail(String username) async {
     // If input already contains @, treat as email directly
     if (username.contains('@')) {
@@ -139,13 +140,32 @@ class AppConfig extends ChangeNotifier {
 
     final lowerUsername = username.toLowerCase();
 
-    // Try loading admin email map (will only work if current user is admin)
+    // Step 1: Look up the user's actual email from Firestore by username
+    // This handles users who registered with a real email (e.g., john@gmail.com)
+    try {
+      final query = await _firestore
+          .collection('users')
+          .where('username', isEqualTo: lowerUsername)
+          .limit(1)
+          .get();
+      if (query.docs.isNotEmpty) {
+        final data = query.docs.first.data();
+        final email = data['email'] as String?;
+        if (email != null && email.isNotEmpty) {
+          return email;
+        }
+      }
+    } catch (e) {
+      debugPrint('Username lookup error (may be rules): $e');
+    }
+
+    // Step 2: Try loading admin email map (will only work if current user is admin)
     await _loadAdminEmailMap();
     if (_adminEmailMap.containsKey(lowerUsername)) {
       return _adminEmailMap[lowerUsername]!;
     }
 
-    // Default: append @cmmovies.app for regular users
+    // Step 3: Default fallback — append @cmmovies.app for legacy users
     return '$lowerUsername@cmmovies.app';
   }
 

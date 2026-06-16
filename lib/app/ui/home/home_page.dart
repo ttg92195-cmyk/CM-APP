@@ -50,7 +50,22 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _bottomNavPages = [
       HomeScreen(onNavigateToTab: (index) {
+        // Switch tab first
         setState(() => _currentIndex = index);
+        // Trigger data refresh with skeleton loading when navigating via "More" button
+        // This ensures skeleton shows first, then fresh data loads
+        if (index == kMoviesTab) {
+          // Use addPostFrameCallback to ensure the tab is visible before refreshing
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            final state = _moviesKey.currentState;
+            if (state != null) (state as dynamic).onTabSelected();
+          });
+        } else if (index == kSeriesTab) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            final state = _seriesKey.currentState;
+            if (state != null) (state as dynamic).onTabSelected();
+          });
+        }
       }),
       MoviesPage(key: _moviesKey),
       SeriesPage(key: _seriesKey),

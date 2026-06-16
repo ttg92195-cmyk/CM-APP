@@ -89,6 +89,7 @@ class DeviceManagementService {
 
   /// Check if a user can log in on the current device
   /// Returns DeviceLimitResult with allowed/denied status and device info
+  /// Admin users always bypass device limit checks
   Future<DeviceLimitResult> checkDeviceLimit(String uid) async {
     try {
       final userDoc = await _firestore.collection('users').doc(uid).get();
@@ -102,8 +103,33 @@ class DeviceManagementService {
       }
 
       final data = userDoc.data()!;
+      final isAdmin = data['isAdmin'] == true;
+      
+      // Admin always bypasses device limit
+      if (isAdmin) {
+        return DeviceLimitResult(
+          allowed: true,
+          maxDevices: 999,
+          currentDevices: 0,
+          devices: [],
+        );
+      }
+      
       final isVip = data['isVip'] == true;
-      final maxDevices = isVip ? 4 : 2;
+      
+      // Check VIP expiry — if expired, treat as non-VIP for device limit
+      bool effectiveVip = isVip;
+      if (isVip) {
+        final vipExpiry = data['vipExpiry'] as String?;
+        if (vipExpiry != null && vipExpiry.isNotEmpty) {
+          final expiryDate = DateTime.tryParse(vipExpiry);
+          if (expiryDate != null && expiryDate.isBefore(DateTime.now())) {
+            effectiveVip = false;
+          }
+        }
+      }
+      
+      final maxDevices = effectiveVip ? 4 : 2;
       final currentDevice = await getCurrentDeviceInfo();
 
       // Parse existing logged_in_devices

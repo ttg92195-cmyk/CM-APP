@@ -41,29 +41,39 @@ class VipPage extends StatelessWidget {
   ];
 
   Future<void> _openTelegram(BuildContext context) async {
-    final uri = Uri.parse(_telegramLink);
+    // Try tg:// deep link first (opens Telegram app directly)
+    final tgUri = Uri.parse('tg://resolve?domain=Shine7162dsh');
     try {
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Telegram app not found. Please install Telegram first.'),
-              backgroundColor: Colors.redAccent,
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Could not open Telegram: $e'),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-      }
+      final launched = await launchUrl(tgUri, mode: LaunchMode.externalApplication);
+      if (launched) return;
+    } catch (_) {
+      // tg:// scheme not available, try https fallback
+    }
+
+    // Fallback: https://t.me/ URL with external application mode
+    final httpsUri = Uri.parse(_telegramLink);
+    try {
+      final launched = await launchUrl(httpsUri, mode: LaunchMode.externalApplication);
+      if (launched) return;
+    } catch (_) {
+      // https URL also failed
+    }
+
+    // Last resort: try platform default
+    try {
+      final launched = await launchUrl(httpsUri, mode: LaunchMode.platformDefault);
+      if (launched) return;
+    } catch (_) {}
+
+    // All methods failed
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not open Telegram. Please install Telegram first.'),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 3),
+        ),
+      );
     }
   }
 

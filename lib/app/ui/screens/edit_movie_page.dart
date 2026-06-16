@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/core/models/movie_detail.dart';
@@ -73,9 +74,9 @@ class _EditMoviePageState extends State<EditMoviePage> {
   Future<void> _loadData() async {
     try {
       final results = await Future.wait([
-        _contentService.getMovieById(widget.movieId),
-        _contentService.getGenres(),
-        _contentService.getTags(),
+        _contentService.getMovieById(widget.movieId).timeout(const Duration(seconds: 15)),
+        _contentService.getGenres().timeout(const Duration(seconds: 10)),
+        _contentService.getTags().timeout(const Duration(seconds: 10)),
       ]);
 
       final detail = results[0] as MovieDetail?;
@@ -115,6 +116,17 @@ class _EditMoviePageState extends State<EditMoviePage> {
           Navigator.pop(context);
         }
       }
+    } on TimeoutException {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Loading timed out. Please check your connection and try again.'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -151,11 +163,21 @@ class _EditMoviePageState extends State<EditMoviePage> {
         'seasons': _seasons.map((s) => s.toMap()).toList(),
       };
 
-      await _contentService.updateMovie(widget.movieId, data);
+      await _contentService.updateMovie(widget.movieId, data).timeout(const Duration(seconds: 20));
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Updated successfully!')));
         Navigator.pop(context);
+      }
+    } on TimeoutException {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Save timed out. Please check your connection and try again.'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 4),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {

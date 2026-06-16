@@ -543,6 +543,8 @@ class _LoginPageState extends State<LoginPage>
             TextFormField(
               controller: _usernameController,
               keyboardType: TextInputType.emailAddress,
+              enableInteractiveSelection: true,
+              autocorrect: false,
               decoration: inputDecoration.copyWith(
                 labelText: appConfig.languageCode == 'my'
                     ? 'အသုံးပြုသူအမည် / အီးမေးလ်'

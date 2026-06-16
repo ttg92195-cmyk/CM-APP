@@ -5,6 +5,7 @@ import 'package:cm_movies/app/core/models/movie_detail.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/services/download_manager_service.dart';
 import 'package:cm_movies/app/ui/screens/download_page.dart';
+import 'package:cm_movies/app/ui/screens/vip_page.dart';
 
 class MovieDownloadScreen extends StatefulWidget {
   final MovieDetail movieDetail;
@@ -32,6 +33,25 @@ class _MovieDownloadScreenState extends State<MovieDownloadScreen> {
             content: Text('Download link is not available'),
             backgroundColor: Colors.redAccent,
           ),
+        );
+      }
+      return;
+    }
+
+    // VIP Gate: Only VIP or Admin can download
+    final appConfig = Provider.of<AppConfig>(context, listen: false);
+    if (!appConfig.isCurrentUserVip && !appConfig.isCurrentUserAdmin) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('VIP membership required to download. Please upgrade to VIP.'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 3),
+          ),
+        );
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const VipPage()),
         );
       }
       return;

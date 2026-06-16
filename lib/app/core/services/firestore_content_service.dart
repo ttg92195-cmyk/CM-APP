@@ -1370,31 +1370,37 @@ class FirestoreContentService {
       final newCategories = List<String>.from(data['categories'] ?? oldCategories);
       final newTags = List<String>.from(data['tags'] ?? oldTags);
 
+      // Use batch writes for count updates to prevent hanging on sequential writes
+      final batch = _firestore.batch();
+
       // Decrement old categories that are removed
       for (final cat in oldCategories) {
         if (!newCategories.contains(cat)) {
-          await _decrementCount(_genresRef, cat);
+          await _batchDecrementCount(batch, _genresRef, cat);
         }
       }
       // Increment new categories that are added
       for (final cat in newCategories) {
         if (!oldCategories.contains(cat)) {
-          await _incrementCount(_genresRef, cat);
+          await _batchIncrementCount(batch, _genresRef, cat);
         }
       }
 
       // Decrement old tags that are removed
       for (final tag in oldTags) {
         if (!newTags.contains(tag)) {
-          await _decrementCount(_tagsRef, tag);
+          await _batchDecrementCount(batch, _tagsRef, tag);
         }
       }
       // Increment new tags that are added
       for (final tag in newTags) {
         if (!oldTags.contains(tag)) {
-          await _incrementCount(_tagsRef, tag);
+          await _batchIncrementCount(batch, _tagsRef, tag);
         }
       }
+
+      // Commit all count updates in a single batch write
+      await batch.commit();
     }
 
     data['updatedAt'] = FieldValue.serverTimestamp();
@@ -1416,17 +1422,23 @@ class FirestoreContentService {
     if (doc.exists) {
       final data = doc.data() as Map<String, dynamic>;
 
+      // Use batch writes for count updates
+      final batch = _firestore.batch();
+
       // Decrement genre counts
       final categories = List<String>.from(data['categories'] ?? []);
       for (final genreName in categories) {
-        await _decrementCount(_genresRef, genreName);
+        await _batchDecrementCount(batch, _genresRef, genreName);
       }
 
       // Decrement tag counts
       final tags = List<String>.from(data['tags'] ?? []);
       for (final tagName in tags) {
-        await _decrementCount(_tagsRef, tagName);
+        await _batchDecrementCount(batch, _tagsRef, tagName);
       }
+
+      // Commit all count updates in a single batch write
+      await batch.commit();
     }
 
     await _moviesRef.doc(id).delete();
@@ -1563,6 +1575,28 @@ class FirestoreContentService {
       final currentCount = (doc.data() as Map<String, dynamic>)['moviesCount'] as int? ?? 0;
       if (currentCount > 0) {
         await doc.reference.update({'moviesCount': currentCount - 1});
+      }
+    }
+  }
+
+  /// Batch increment — adds count update to a WriteBatch instead of committing individually
+  Future<void> _batchIncrementCount(WriteBatch batch, CollectionReference ref, String name) async {
+    final snapshot = await ref.where('name', isEqualTo: name).limit(1).get();
+    if (snapshot.docs.isNotEmpty) {
+      final doc = snapshot.docs.first;
+      final currentCount = (doc.data() as Map<String, dynamic>)['moviesCount'] as int? ?? 0;
+      batch.update(doc.reference, {'moviesCount': currentCount + 1});
+    }
+  }
+
+  /// Batch decrement — adds count update to a WriteBatch instead of committing individually
+  Future<void> _batchDecrementCount(WriteBatch batch, CollectionReference ref, String name) async {
+    final snapshot = await ref.where('name', isEqualTo: name).limit(1).get();
+    if (snapshot.docs.isNotEmpty) {
+      final doc = snapshot.docs.first;
+      final currentCount = (doc.data() as Map<String, dynamic>)['moviesCount'] as int? ?? 0;
+      if (currentCount > 0) {
+        batch.update(doc.reference, {'moviesCount': currentCount - 1});
       }
     }
   }
