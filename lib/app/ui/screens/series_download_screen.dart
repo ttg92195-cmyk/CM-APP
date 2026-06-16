@@ -73,7 +73,6 @@ class _SeriesDownloadScreenState extends State<SeriesDownloadScreen> {
       }
     }
 
-    final appConfig = Provider.of<AppConfig>(context, listen: false);
     if (!appConfig.downloadEnabled) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
