@@ -6,6 +6,7 @@ import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/models/tag_and_genres.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
+import 'package:cm_movies/app/core/services/search_history_service.dart';
 import 'package:cm_movies/app/ui/components/movie_card.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
 import 'package:cm_movies/app/ui/screens/series_detail_screen.dart';
@@ -21,11 +22,16 @@ class _SearchScreenState extends State<SearchScreen> {
   final FirestoreContentService _contentService = FirestoreContentService();
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final SearchHistoryService _historyService = SearchHistoryService.instance;
   Timer? _debounceTimer;
 
   List<Movie> _results = [];
   bool _isLoading = false;
   bool _hasSearched = false;
+
+  // Local-only search history (no Firestore usage — stored in SharedPreferences).
+  List<String> _searchHistory = [];
+  StreamSubscription<List<String>>? _historySub;
 
   // Pagination state for infinite scroll
   DocumentSnapshot? _lastDoc;
@@ -49,8 +55,16 @@ class _SearchScreenState extends State<SearchScreen> {
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
+    // Load local search history (no Firestore cost).
+    _historyService.load().then((h) {
+      if (mounted) setState(() => _searchHistory = h);
+    });
+    // Keep UI in sync if history changes elsewhere (e.g. add/remove/clear).
+    _historySub = _historyService.changes.listen((h) {
+      if (mounted) setState(() => _searchHistory = h);
+    });
     _searchController.addListener(() {
-      setState(() {}); // Rebuild to show/hide clear button
+      setState(() {}); // Rebuild to show/hide clear button + history panel
       // Debounced auto-search: wait 400ms after user stops typing
       _debounceTimer?.cancel();
       final query = _searchController.text.trim();
@@ -71,6 +85,7 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   void dispose() {
     _debounceTimer?.cancel();
+    _historySub?.cancel();
     _searchController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -112,6 +127,11 @@ class _SearchScreenState extends State<SearchScreen> {
         _hasSearched = false;
       });
       return;
+    }
+
+    // Save non-empty queries to local search history (no Firestore cost).
+    if (query.isNotEmpty) {
+      await _historyService.add(query);
     }
 
     // Reset pagination state for new search
@@ -251,6 +271,27 @@ class _SearchScreenState extends State<SearchScreen> {
             : MovieDetailScreen(slug: movie.slug),
       ),
     );
+  }
+
+  // ---- Search history handlers (local storage only — no Firestore) -------
+
+  /// Tap a history entry → fill the search box and run the query.
+  Future<void> _onTapHistory(String query) async {
+    _searchController.text = query;
+    _searchController.selection = TextSelection.fromPosition(
+      TextPosition(offset: query.length),
+    );
+    await _search();
+  }
+
+  /// Remove a single entry from history (the X button on each row).
+  Future<void> _onDeleteHistory(String query) async {
+    await _historyService.remove(query);
+  }
+
+  /// Clear all entries from history (the "Clear All" button).
+  Future<void> _onClearAllHistory() async {
+    await _historyService.clear();
   }
 
   void _showFilterBottomSheet() {
@@ -871,38 +912,40 @@ class _SearchScreenState extends State<SearchScreen> {
                           ),
                         )
                       : !_hasSearched
-                          ? Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.movie_filter_outlined,
-                                    size: 64,
-                                    color: theme.colorScheme.onSurface.withOpacity(0.3),
+                          ? (_searchController.text.trim().isEmpty && !_hasActiveFilters)
+                              ? _buildSearchHistoryView(appConfig, theme, isDark)
+                              : Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.movie_filter_outlined,
+                                        size: 64,
+                                        color: theme.colorScheme.onSurface.withOpacity(0.3),
+                                      ),
+                                      const SizedBox(height: 16),
+                                      Text(
+                                        appConfig.translate('search_hint'),
+                                        style: theme.textTheme.bodyLarge?.copyWith(
+                                          color: theme.colorScheme.onSurface.withOpacity(0.5),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        appConfig.translate('filters'),
+                                        style: theme.textTheme.bodyMedium?.copyWith(
+                                          color: theme.colorScheme.onSurface.withOpacity(0.3),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Icon(
+                                        Icons.tune,
+                                        size: 32,
+                                        color: theme.colorScheme.onSurface.withOpacity(0.2),
+                                      ),
+                                    ],
                                   ),
-                                  const SizedBox(height: 16),
-                                  Text(
-                                    appConfig.translate('search_hint'),
-                                    style: theme.textTheme.bodyLarge?.copyWith(
-                                      color: theme.colorScheme.onSurface.withOpacity(0.5),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    appConfig.translate('filters'),
-                                    style: theme.textTheme.bodyMedium?.copyWith(
-                                      color: theme.colorScheme.onSurface.withOpacity(0.3),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Icon(
-                                    Icons.tune,
-                                    size: 32,
-                                    color: theme.colorScheme.onSurface.withOpacity(0.2),
-                                  ),
-                                ],
-                              ),
-                            )
+                                )
                           : GridView.builder(
                               controller: _scrollController,
                               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
@@ -954,6 +997,147 @@ class _SearchScreenState extends State<SearchScreen> {
         labelPadding: const EdgeInsets.only(left: 4),
         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         visualDensity: VisualDensity.compact,
+      ),
+    );
+  }
+
+  // ---- Search history UI (local-only — backed by SharedPreferences) ------
+
+  /// Renders the recent-searches panel. Shown only when the search box is
+  /// empty AND there are no active filters (so users see history on first
+  /// entry into the screen). Each row has a clock icon, the query text, and
+  /// a small X button to remove that single entry. A header row also has a
+  /// "Clear All" button on the right.
+  Widget _buildSearchHistoryView(
+      AppConfig appConfig, ThemeData theme, bool isDark) {
+    final history = _searchHistory;
+    if (history.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.movie_filter_outlined,
+              size: 64,
+              color: theme.colorScheme.onSurface.withOpacity(0.3),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              appConfig.translate('search_hint'),
+              style: theme.textTheme.bodyLarge?.copyWith(
+                color: theme.colorScheme.onSurface.withOpacity(0.5),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              appConfig.translate('filters'),
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurface.withOpacity(0.3),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Icon(
+              Icons.tune,
+              size: 32,
+              color: theme.colorScheme.onSurface.withOpacity(0.2),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final subTextColor = isDark ? Colors.white54 : Colors.black54;
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(8, 12, 8, 24),
+      children: [
+        // Header row: "Recent Searches" + Clear All button
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                appConfig.translate('search_history'),
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: subTextColor,
+                  fontSize: 13,
+                  letterSpacing: 0.3,
+                ),
+              ),
+              TextButton(
+                onPressed: _onClearAllHistory,
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFFE50914),
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  minimumSize: const Size(0, 32),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: Text(
+                  appConfig.translate('search_history_clear_all'),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 4),
+        // History rows
+        for (final q in history) _buildHistoryItem(q, textColor, isDark, theme),
+      ],
+    );
+  }
+
+  Widget _buildHistoryItem(
+      String query, Color textColor, bool isDark, ThemeData theme) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _onTapHistory(query),
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          child: Row(
+            children: [
+              Icon(
+                Icons.history,
+                size: 20,
+                color: isDark ? Colors.white54 : Colors.black45,
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
+                  query,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: textColor,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Single-item delete button (X on the right)
+              InkWell(
+                onTap: () => _onDeleteHistory(query),
+                borderRadius: BorderRadius.circular(20),
+                child: Padding(
+                  padding: const EdgeInsets.all(6),
+                  child: Icon(
+                    Icons.close,
+                    size: 16,
+                    color: isDark ? Colors.white54 : Colors.black45,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
