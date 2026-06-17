@@ -86,9 +86,15 @@ class _HomeScreenState extends State<HomeScreen> {
       _error = null;
     });
     try {
-      // Load banner config and movie data in parallel
+      // Load banner config and movie data in parallel.
+      // Each future is wrapped with catchError so that one failure (e.g.
+      // banner doc missing or temporarily failing) doesn't break the whole
+      // home screen — the rest of the data still loads.
       final results = await Future.wait([
-        _contentService.getBannerConfig(),
+        _contentService.getBannerConfig().catchError((e) {
+          debugPrint('Home: getBannerConfig failed, hiding banner: $e');
+          return <String>[];
+        }),
         _contentService.getTrendingMovies().catchError((_) => <Movie>[]),
         _contentService.getTrendingTvShows().catchError((_) => <Movie>[]),
         _contentService.getMovies(limit: _homeLimit).catchError((_) => <Map<String, dynamic>>{}),

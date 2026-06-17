@@ -75,6 +75,24 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    // APP_SETTINGS: admin-managed global config (banner images, etc.)
+    // Authenticated users can read; only admins can write.
+    match /app_settings/{docId} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+
+    // USER_DEVICES: device-tracking for device-limit feature.
+    // Each user can read/write only their own device documents.
+    // The doc ID is the device fingerprint; the doc stores uid, deviceName,
+    // platform, lastActive, etc. Admins can read all devices for support.
+    match /user_devices/{deviceId} {
+      allow read: if isAdmin() || (request.auth != null && resource.data.uid == request.auth.uid);
+      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
+      allow update: if request.auth != null && (resource.data.uid == request.auth.uid || isAdmin());
+      allow delete: if isAdmin() || (request.auth != null && resource.data.uid == request.auth.uid);
+    }
+
     // USER SUB-COLLECTIONS (bookmarks, watchlist, history)
     match /users/{userId}/bookmarks/{bookmarkId} {
       allow read, write: if isOwner(userId);
