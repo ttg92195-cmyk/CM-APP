@@ -697,18 +697,9 @@ class _SearchScreenState extends State<SearchScreen> {
                   Expanded(
                     child: TextField(
                       controller: _searchController,
-                      enableInteractiveSelection: true,
-                      // Single tap on existing text → select all + show copy/paste toolbar
-                      onTap: () {
-                        final text = _searchController.text;
-                        if (text.isNotEmpty) {
-                          // Select all text so the floating toolbar (Cut/Copy/Paste) appears
-                          _searchController.selection = TextSelection(
-                            baseOffset: 0,
-                            extentOffset: text.length,
-                          );
-                        }
-                      },
+                      // Use default Flutter behavior: double-tap to select word +
+                      // show Cut/Copy/Paste toolbar. This works repeatably — every
+                      // double-tap re-shows the toolbar.
                       decoration: InputDecoration(
                         hintText: appConfig.translate('search_hint'),
                         prefixIcon: const Icon(Icons.search, size: 22),
