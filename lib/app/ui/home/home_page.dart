@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/ui/home/home_screen.dart';
@@ -16,6 +17,7 @@ import 'package:cm_movies/app/ui/screens/search_screen.dart';
 import 'package:cm_movies/app/ui/screens/admin_panel_page.dart';
 import 'package:cm_movies/app/core/services/download_manager_service.dart';
 import 'package:cm_movies/app/ui/screens/tmdb_generator_page.dart';
+import 'package:cm_movies/app/ui/screens/vip_page.dart';
 import 'package:cm_movies/app/ui/components/download_notification_banner.dart';
 
 // Bottom nav tab indices (4 tabs)
@@ -45,9 +47,13 @@ class _HomePageState extends State<HomePage> {
   bool _canExit = false;
   Timer? _exitTimer;
 
+  // Real app version (fetched from package_info_plus)
+  String _appVersion = '';
+
   @override
   void initState() {
     super.initState();
+    _loadAppVersion();
     _bottomNavPages = [
       HomeScreen(onNavigateToTab: (index) {
         // Switch tab first
@@ -77,6 +83,21 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _exitTimer?.cancel();
     super.dispose();
+  }
+
+  // Fetch the real app version (e.g. "1.9.0+15") from pubspec at runtime
+  Future<void> _loadAppVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      final version = info.version;
+      final build = info.buildNumber;
+      final formatted = build.isEmpty ? version : '$version+$build';
+      if (mounted) {
+        setState(() => _appVersion = formatted);
+      }
+    } catch (_) {
+      // Fallback: leave empty so UI can fall back to a static label
+    }
   }
 
   @override
@@ -330,12 +351,17 @@ class _HomePageState extends State<HomePage> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Version 1.0.0',
+                    _appVersion.isEmpty
+                        ? appConfig.translate('version')
+                        : '${appConfig.translate('version')} $_appVersion',
                     style: TextStyle(
                       color: subTextColor,
                       fontSize: 12,
                     ),
                   ),
+                  const SizedBox(height: 14),
+                  // VIP Status Card — shows active VIP (red badge) or "not purchased yet"
+                  _buildVipStatusCard(appConfig, isDark),
                 ],
               ),
             ),
@@ -513,7 +539,7 @@ class _HomePageState extends State<HomePage> {
             Padding(
               padding: const EdgeInsets.all(16),
               child: Text(
-                'KMM v1.0.0',
+                _appVersion.isEmpty ? 'KMM' : 'KMM v$_appVersion',
                 style: TextStyle(
                   color: subTextColor,
                   fontSize: 11,
@@ -553,6 +579,167 @@ class _HomePageState extends State<HomePage> {
           borderRadius: BorderRadius.circular(10),
         ),
         onTap: onTap,
+      ),
+    );
+  }
+
+  /// VIP status card shown inside the drawer header.
+  /// - VIP users → red gradient badge with crown + "VIP Active" + expiry date
+  /// - Non-VIP users → outlined grey/orange card with "VIP Not Active" + "Tap to upgrade"
+  ///   (tapping opens the VipPage where they can purchase VIP via Telegram)
+  Widget _buildVipStatusCard(AppConfig appConfig, bool isDark) {
+    final isVip = appConfig.isCurrentUserVip;
+    final isAdmin = appConfig.isCurrentUserAdmin;
+    // Admins implicitly have all VIP perks — show VIP-style badge for them too
+    final showAsVip = isVip || isAdmin;
+
+    if (showAsVip) {
+      // Format the VIP expiry date for display (if available)
+      String expiryDisplay = '';
+      final rawExpiry = appConfig.currentUser?['vipExpiry'] as String?;
+      if (rawExpiry != null && rawExpiry.isNotEmpty) {
+        final dt = DateTime.tryParse(rawExpiry);
+        if (dt != null) {
+          expiryDisplay =
+              '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+        }
+      }
+
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          gradient: const LinearGradient(
+            colors: [Color(0xFFE50914), Color(0xFFB20710)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFFE50914).withOpacity(0.35),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.workspace_premium_rounded,
+              color: Colors.white,
+              size: 26,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    isAdmin
+                        ? '${appConfig.translate('vip_active')} · Admin'
+                        : appConfig.translate('vip_active'),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    expiryDisplay.isEmpty
+                        ? appConfig.translate('vip_active_desc')
+                        : appConfig
+                            .translate('vip_expires_on')
+                            .replaceAll('{date}', expiryDisplay),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.85),
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Non-VIP card — tap to open VipPage and purchase VIP
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () {
+          Navigator.pop(context); // close drawer
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const VipPage()),
+          );
+        },
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.04),
+            border: Border.all(
+              color: const Color(0xFFE50914).withOpacity(0.5),
+              width: 1.2,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.lock_outline,
+                color: const Color(0xFFE50914).withOpacity(0.9),
+                size: 22,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      appConfig.translate('vip_inactive'),
+                      style: TextStyle(
+                        color: isDark ? Colors.white : Colors.black87,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      appConfig.translate('vip_inactive_desc'),
+                      style: TextStyle(
+                        color: isDark ? Colors.white60 : Colors.black54,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE50914),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  appConfig.translate('vip_get_now'),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
