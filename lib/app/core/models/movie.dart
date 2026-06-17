@@ -16,6 +16,7 @@ class Movie {
   final String? type;
   final bool isTrending;
   final DateTime? createdAt;
+  final DateTime? updatedAt;
 
   Movie({
     required this.id,
@@ -33,6 +34,7 @@ class Movie {
     this.type,
     this.isTrending = false,
     this.createdAt,
+    this.updatedAt,
   });
 
   factory Movie.fromMap(Map<String, dynamic> map, {String? docId}) {
@@ -55,6 +57,7 @@ class Movie {
       type: map['type'] as String?,
       isTrending: map['isTrending'] as bool? ?? false,
       createdAt: _parseDateTime(map['createdAt']),
+      updatedAt: _parseDateTime(map['updatedAt']),
     );
   }
 
@@ -75,6 +78,7 @@ class Movie {
       'type': type,
       'isTrending': isTrending,
       'createdAt': createdAt?.toIso8601String(),
+      'updatedAt': updatedAt?.toIso8601String(),
     };
   }
 

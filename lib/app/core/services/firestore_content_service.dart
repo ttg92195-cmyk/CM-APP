@@ -37,9 +37,11 @@ class FirestoreContentService {
     DocumentSnapshot? startAfter,
   }) async {
     try {
+      // Sort by updatedAt (descending) so that admin edits push the movie to
+      // the front of the Home list. Newly added movies also have updatedAt set.
       Query query = _moviesRef
           .where('type', isEqualTo: 'movie')
-          .orderBy('createdAt', descending: true)
+          .orderBy('updatedAt', descending: true)
           .limit(limit);
 
       if (startAfter != null) {
@@ -75,9 +77,12 @@ class FirestoreContentService {
                 ))
             .toList();
 
-        // Sort client-side
-        movies.sort((a, b) => (b.createdAt ?? DateTime(2000))
-            .compareTo(a.createdAt ?? DateTime(2000)));
+        // Sort client-side by updatedAt (falls back to createdAt if updatedAt missing)
+        movies.sort((a, b) {
+          final aDate = b.updatedAt ?? b.createdAt ?? DateTime(2000);
+          final bDate = a.updatedAt ?? a.createdAt ?? DateTime(2000);
+          return aDate.compareTo(bDate);
+        });
 
         return {
           'movies': movies,
@@ -101,9 +106,11 @@ class FirestoreContentService {
     DocumentSnapshot? startAfter,
   }) async {
     try {
+      // Sort by updatedAt (descending) so that admin edits push the series to
+      // the front of the Home list. Newly added series also have updatedAt set.
       Query query = _moviesRef
           .where('type', isEqualTo: 'series')
-          .orderBy('createdAt', descending: true)
+          .orderBy('updatedAt', descending: true)
           .limit(limit);
 
       if (startAfter != null) {
@@ -139,9 +146,12 @@ class FirestoreContentService {
                 ))
             .toList();
 
-        // Sort client-side
-        series.sort((a, b) => (b.createdAt ?? DateTime(2000))
-            .compareTo(a.createdAt ?? DateTime(2000)));
+        // Sort client-side by updatedAt (falls back to createdAt if updatedAt missing)
+        series.sort((a, b) {
+          final aDate = b.updatedAt ?? b.createdAt ?? DateTime(2000);
+          final bDate = a.updatedAt ?? a.createdAt ?? DateTime(2000);
+          return aDate.compareTo(bDate);
+        });
 
         return {
           'movies': series,
