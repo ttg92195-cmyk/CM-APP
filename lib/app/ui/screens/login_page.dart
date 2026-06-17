@@ -545,6 +545,16 @@ class _LoginPageState extends State<LoginPage>
               keyboardType: TextInputType.emailAddress,
               enableInteractiveSelection: true,
               autocorrect: false,
+              // Single tap on existing text → select all + show copy/paste toolbar
+              onTap: () {
+                final text = _usernameController.text;
+                if (text.isNotEmpty) {
+                  _usernameController.selection = TextSelection(
+                    baseOffset: 0,
+                    extentOffset: text.length,
+                  );
+                }
+              },
               decoration: inputDecoration.copyWith(
                 labelText: appConfig.languageCode == 'my'
                     ? 'အသုံးပြုသူအမည် / အီးမေးလ်'
@@ -575,6 +585,17 @@ class _LoginPageState extends State<LoginPage>
             TextFormField(
               controller: _passwordController,
               obscureText: _obscurePassword,
+              enableInteractiveSelection: true,
+              // Single tap on existing text → select all (so user can copy/paste smoothly)
+              onTap: () {
+                final text = _passwordController.text;
+                if (text.isNotEmpty) {
+                  _passwordController.selection = TextSelection(
+                    baseOffset: 0,
+                    extentOffset: text.length,
+                  );
+                }
+              },
               decoration: inputDecoration.copyWith(
                 labelText: appConfig.translate('password'),
                 prefixIcon: const Icon(Icons.lock_outline),
@@ -724,6 +745,17 @@ class _LoginPageState extends State<LoginPage>
             // Username
             TextFormField(
               controller: _regUsernameController,
+              enableInteractiveSelection: true,
+              // Single tap on existing text → select all + show toolbar
+              onTap: () {
+                final text = _regUsernameController.text;
+                if (text.isNotEmpty) {
+                  _regUsernameController.selection = TextSelection(
+                    baseOffset: 0,
+                    extentOffset: text.length,
+                  );
+                }
+              },
               decoration: inputDecoration.copyWith(
                 labelText: appConfig.translate('username'),
                 prefixIcon: const Icon(Icons.person_outline),
@@ -748,6 +780,16 @@ class _LoginPageState extends State<LoginPage>
             TextFormField(
               controller: _regEmailController,
               keyboardType: TextInputType.emailAddress,
+              enableInteractiveSelection: true,
+              onTap: () {
+                final text = _regEmailController.text;
+                if (text.isNotEmpty) {
+                  _regEmailController.selection = TextSelection(
+                    baseOffset: 0,
+                    extentOffset: text.length,
+                  );
+                }
+              },
               decoration: inputDecoration.copyWith(
                 labelText: appConfig.languageCode == 'my' ? 'အီးမေးလ်' : 'Email',
                 prefixIcon: const Icon(Icons.email_outlined),
