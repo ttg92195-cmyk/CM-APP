@@ -51,11 +51,17 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
-    // USERS: Users can read/write their own profile
-    // Only admins can change isAdmin or role fields
+    // USERS: Public read for username→email lookup during login (login happens before auth)
+    // Security: passwords are NEVER stored here (only in Firebase Auth).
+    // Sensitive fields like forceLogout/isBanned are admin-controlled via update rules.
     match /users/{userId} {
-      allow read: if isOwner(userId);
+      // Public read so username-based login can resolve username → email before auth.
+      // This is required because Firebase Auth needs email, but user types username.
+      allow read: if true;
+      // User can create their own profile on signup
       allow create: if isOwner(userId);
+      // User can update their own profile but CANNOT change isAdmin/role fields
+      // (only admins can grant/revoke admin or role)
       allow update: if isOwner(userId)
         && request.resource.data.isAdmin == resource.data.isAdmin
         && request.resource.data.role == resource.data.role

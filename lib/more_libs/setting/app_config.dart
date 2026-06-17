@@ -129,7 +129,7 @@ class AppConfig extends ChangeNotifier {
 
   // Helper to convert username to email format for Firebase Auth
   // Priority: 1) If input contains '@', use as email directly
-  //           2) Look up actual email from Firestore by username
+  //           2) Look up actual email from Firestore by username (case-insensitive)
   //           3) Check admin email map
   //           4) Fallback: append @cmmovies.app (legacy users)
   Future<String> _usernameToEmail(String username) async {
@@ -141,22 +141,30 @@ class AppConfig extends ChangeNotifier {
     final lowerUsername = username.toLowerCase();
 
     // Step 1: Look up the user's actual email from Firestore by username
-    // This handles users who registered with a real email (e.g., john@gmail.com)
-    try {
-      final query = await _firestore
-          .collection('users')
-          .where('username', isEqualTo: lowerUsername)
-          .limit(1)
-          .get();
-      if (query.docs.isNotEmpty) {
-        final data = query.docs.first.data();
-        final email = data['email'] as String?;
-        if (email != null && email.isNotEmpty) {
-          return email;
+    // Try BOTH lowercase and original case to handle users who registered with
+    // mixed-case usernames (case-insensitive matching)
+    final candidates = <String>[lowerUsername];
+    if (username != lowerUsername) {
+      candidates.add(username);
+    }
+
+    for (final candidate in candidates) {
+      try {
+        final query = await _firestore
+            .collection('users')
+            .where('username', isEqualTo: candidate)
+            .limit(1)
+            .get();
+        if (query.docs.isNotEmpty) {
+          final data = query.docs.first.data();
+          final email = data['email'] as String?;
+          if (email != null && email.isNotEmpty) {
+            return email;
+          }
         }
+      } catch (e) {
+        debugPrint('Username lookup error for "$candidate" (may be rules): $e');
       }
-    } catch (e) {
-      debugPrint('Username lookup error (may be rules): $e');
     }
 
     // Step 2: Try loading admin email map (will only work if current user is admin)
