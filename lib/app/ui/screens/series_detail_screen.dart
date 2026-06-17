@@ -13,6 +13,7 @@ import 'package:cm_movies/app/ui/components/age_rating_gate.dart';
 import 'package:cm_movies/app/ui/screens/actor_movies_screen.dart';
 import 'package:cm_movies/app/ui/screens/series_watch_screen.dart';
 import 'package:cm_movies/app/ui/screens/series_download_screen.dart';
+import 'package:cm_movies/app/ui/screens/vip_page.dart';
 
 class SeriesDetailScreen extends StatefulWidget {
   final String slug;
@@ -521,25 +522,54 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                         ),
                       ),
                       const SizedBox(width: 12),
-                      // Download Button (controlled by Show Download toggle)
+                      // Download Button — VIP/Admin only.
+                      // Non-VIP: button is greyed; tapping prompts VIP upgrade.
                       Expanded(
                         child: ElevatedButton.icon(
-                          onPressed: (hasDownloadLinks && appConfig.downloadEnabled)
-                              ? () {
+                          onPressed: !hasDownloadLinks
+                              ? null
+                              : () {
+                                  if (!appConfig.isDownloadAllowedForUser) {
+                                    // Non-VIP → prompt to buy VIP
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          appConfig.languageCode == 'my'
+                                              ? 'Download ကို အသုံးပြုရန် VIP ဝယ်ယူရပါမည်'
+                                              : 'VIP membership required to download. Please upgrade to VIP.',
+                                        ),
+                                        backgroundColor: Colors.orange,
+                                        duration: const Duration(seconds: 3),
+                                      ),
+                                    );
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(builder: (_) => const VipPage()),
+                                    );
+                                    return;
+                                  }
                                   Navigator.push(
                                     context,
                                     MaterialPageRoute(
                                       builder: (_) => SeriesDownloadScreen(seriesDetail: detail),
                                     ),
                                   );
-                                }
-                              : null,
-                          icon: const Icon(Icons.download, size: 20),
+                                },
+                          icon: Icon(
+                            appConfig.isDownloadAllowedForUser
+                                ? Icons.download
+                                : Icons.lock_outline,
+                            size: 20,
+                          ),
                           label: const Text('Download',
                               style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: appConfig.downloadEnabled ? accentColor : (isDark ? Colors.white12 : Colors.grey.shade400),
-                            foregroundColor: appConfig.downloadEnabled ? Colors.white : (isDark ? Colors.white38 : Colors.black38),
+                            backgroundColor: appConfig.isDownloadAllowedForUser
+                                ? accentColor
+                                : (isDark ? Colors.white12 : Colors.grey.shade400),
+                            foregroundColor: appConfig.isDownloadAllowedForUser
+                                ? Colors.white
+                                : (isDark ? Colors.white38 : Colors.black38),
                             disabledBackgroundColor: isDark ? Colors.white12 : Colors.grey.shade300,
                             disabledForegroundColor: isDark ? Colors.white38 : Colors.black38,
                             padding: const EdgeInsets.symmetric(vertical: 14),

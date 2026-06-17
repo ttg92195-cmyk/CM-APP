@@ -59,6 +59,16 @@ class AppConfig extends ChangeNotifier {
   String get languageCode => _languageCode;
   bool get isDarkMode => _themeMode == ThemeMode.dark;
   bool get downloadEnabled => _downloadEnabled;
+
+  /// Whether the current user is ALLOWED to use the Download feature at all.
+  /// Admin = bypass (always true); VIP = true; non-VIP = false.
+  /// This gate is independent of the local download toggle.
+  bool get isDownloadAllowedForUser => isCurrentUserAdmin || isCurrentUserVip;
+
+  /// Effective download permission = (user is admin/vip) AND (local toggle ON).
+  /// Use this to decide whether to allow actual downloads / show download UI.
+  bool get canDownload => isDownloadAllowedForUser && _downloadEnabled;
+
   bool get downloadsNotification => _downloadsNotification;
   bool get notificationEnabled => _notificationEnabled;
   String get videoPlayerMode => _videoPlayerMode;
@@ -316,6 +326,9 @@ class AppConfig extends ChangeNotifier {
       debugPrint('Error loading user profile: $e');
       _currentUser = null;
     }
+    // Sync local download toggle with VIP status:
+    // VIP/Admin → auto-enable; non-VIP → auto-disable
+    await _syncDownloadToggleWithVipStatus();
     _isLoadingAuth = false;
     notifyListeners();
   }
@@ -373,10 +386,39 @@ class AppConfig extends ChangeNotifier {
   }
 
   Future<void> setDownloadEnabled(bool enabled) async {
+    // Non-VIP, non-Admin users cannot enable downloads.
+    if (enabled && !isDownloadAllowedForUser) {
+      // Silently refuse — caller should have shown the VIP prompt already.
+      return;
+    }
     _downloadEnabled = enabled;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_downloadEnabledKey, enabled);
     notifyListeners();
+  }
+
+  /// Sync the local download toggle with the user's VIP status.
+  /// Called after user profile loads. VIP/Admin users get downloads
+  /// auto-enabled; non-VIP users get downloads auto-disabled.
+  Future<void> _syncDownloadToggleWithVipStatus() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (isDownloadAllowedForUser) {
+        // VIP/Admin → auto-enable if currently off
+        if (!_downloadEnabled) {
+          _downloadEnabled = true;
+          await prefs.setBool(_downloadEnabledKey, true);
+        }
+      } else {
+        // Non-VIP → force disable
+        if (_downloadEnabled) {
+          _downloadEnabled = false;
+          await prefs.setBool(_downloadEnabledKey, false);
+        }
+      }
+    } catch (e) {
+      debugPrint('Sync download toggle error: $e');
+    }
   }
 
   // ========== Firebase Auth Methods ==========

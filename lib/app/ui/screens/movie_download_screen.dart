@@ -40,7 +40,7 @@ class _MovieDownloadScreenState extends State<MovieDownloadScreen> {
 
     // VIP Gate: Only VIP or Admin can download
     final appConfig = Provider.of<AppConfig>(context, listen: false);
-    if (!appConfig.isCurrentUserVip && !appConfig.isCurrentUserAdmin) {
+    if (!appConfig.isDownloadAllowedForUser) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(

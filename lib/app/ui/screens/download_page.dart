@@ -6,6 +6,7 @@ import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/services/download_manager_service.dart';
 import 'package:cm_movies/app/core/services/saf_storage_service.dart';
 import 'package:cm_movies/app/ui/components/download_notification_banner.dart';
+import 'package:cm_movies/app/ui/screens/vip_page.dart';
 
 class DownloadPage extends StatefulWidget {
   const DownloadPage({super.key});
@@ -227,46 +228,91 @@ class _DownloadPageState extends State<DownloadPage> {
   }
 
   Widget _buildDownloadToggle(AppConfig appConfig, ThemeData theme) {
+    // Non-VIP, non-Admin users: download is locked — show OFF + VIP prompt
+    final bool canUseDownload = appConfig.isDownloadAllowedForUser;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
       child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              Icon(
-                Icons.download_rounded,
-                color: appConfig.downloadEnabled ? Colors.green : Colors.grey,
-                size: 22,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      appConfig.translate('download_toggle'),
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: canUseDownload
+              ? null
+              : () {
+                  // Non-VIP user tapped the locked download toggle → prompt VIP
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        appConfig.languageCode == 'my'
+                            ? 'Download ကို အသုံးပြုရန် VIP ဝယ်ယူရပါမည်'
+                            : 'VIP membership required to use Download. Please upgrade to VIP.',
                       ),
+                      backgroundColor: Colors.orange,
+                      duration: const Duration(seconds: 3),
                     ),
-                    Text(
-                      appConfig.translate('download_toggle_desc'),
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurface.withOpacity(0.6),
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
+                  );
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const VipPage()),
+                  );
+                },
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.download_rounded,
+                  color: (canUseDownload && appConfig.downloadEnabled)
+                      ? Colors.green
+                      : (canUseDownload ? Colors.grey : Colors.redAccent),
+                  size: 22,
                 ),
-              ),
-              Switch(
-                value: appConfig.downloadEnabled,
-                onChanged: (val) => appConfig.setDownloadEnabled(val),
-                activeColor: Colors.green,
-              ),
-            ],
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            appConfig.translate('download_toggle'),
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          if (!canUseDownload) ...[
+                            const SizedBox(width: 6),
+                            const Icon(Icons.lock, size: 14, color: Colors.orange),
+                          ],
+                        ],
+                      ),
+                      Text(
+                        canUseDownload
+                            ? appConfig.translate('download_toggle_desc')
+                            : (appConfig.languageCode == 'my'
+                                ? 'VIP ဝယ်ယူမှ Download ဖွင့်နိုင်မည်'
+                                : 'Upgrade to VIP to enable downloads'),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: canUseDownload
+                              ? theme.colorScheme.onSurface.withOpacity(0.6)
+                              : Colors.orange,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                Switch(
+                  // For non-VIP users, the switch is always OFF and disabled.
+                  value: canUseDownload ? appConfig.downloadEnabled : false,
+                  onChanged: canUseDownload
+                      ? (val) => appConfig.setDownloadEnabled(val)
+                      : null, // disabled for non-VIP
+                  activeColor: Colors.green,
+                ),
+              ],
+            ),
           ),
         ),
       ),
