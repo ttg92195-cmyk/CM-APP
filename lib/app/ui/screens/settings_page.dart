@@ -250,7 +250,7 @@ class _SettingsPageState extends State<SettingsPage> {
           fontSize: 12,
           fontWeight: FontWeight.w700,
           letterSpacing: 0.9,
-          color: isDark ? Colors.white45 : Colors.black45,
+          color: isDark ? Colors.white54 : Colors.black45,
         ),
       ),
     );
@@ -337,7 +337,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     subtitle,
                     style: TextStyle(
                       fontSize: 12.5,
-                      color: isDark ? Colors.white45 : Colors.black45,
+                      color: isDark ? Colors.white54 : Colors.black45,
                     ),
                   ),
                 ],
@@ -459,7 +459,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         subtitle,
                         style: TextStyle(
                           fontSize: 12.5,
-                          color: isDark ? Colors.white45 : Colors.black45,
+                          color: isDark ? Colors.white54 : Colors.black45,
                         ),
                       ),
                     ],
