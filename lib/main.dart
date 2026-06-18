@@ -466,10 +466,25 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
       });
     }
 
-    return GestureDetector(
-      // L3: Record activity on any user tap to keep session alive
-      onTap: () => appConfig.recordActivity(),
-      onPanDown: (_) => appConfig.recordActivity(),
+    // IMPORTANT: We use a Listener (NOT GestureDetector) at the root so that
+    // activity tracking observes pointer events WITHOUT participating in the
+    // gesture arena. A GestureDetector with both onTap + onPanDown at the
+    // root would force the arena to disambiguate tap-vs-pan on every touch,
+    // which competes with the internal drag recognizer used by EditableText's
+    // text-selection handles — causing the "selection handle drag lock" bug
+    // (handles visible but cannot be dragged to extend/reduce selection) on
+    // every TextField / TextFormField / SelectableText in the entire app.
+    //
+    // Listener simply observes raw pointer events; it never claims gestures,
+    // so selection handles, scrolls, taps, and all other interactions work
+    // normally while we still get an activity tick on every user touch.
+    return Listener(
+      // L3: Record activity on any user pointer-down to keep session alive.
+      // Every user interaction (tap, drag, scroll, selection-handle drag,
+      // long-press, etc.) starts with a pointer-down event, so this single
+      // callback covers all interaction types without interfering with them.
+      onPointerDown: (_) => appConfig.recordActivity(),
+      onPointerMove: (_) => appConfig.recordActivity(),
       child: MaterialApp(
         title: 'KMM',
         debugShowCheckedModeBanner: false,
