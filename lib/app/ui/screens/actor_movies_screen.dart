@@ -72,7 +72,11 @@ class _ActorMoviesScreenState extends State<ActorMoviesScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.actorName),
+        title: Text(
+          widget.actorName,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())

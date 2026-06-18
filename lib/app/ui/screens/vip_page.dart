@@ -220,14 +220,19 @@ class VipPage extends StatelessWidget {
                 ..._vipBenefits.map((benefit) => Padding(
                   padding: const EdgeInsets.only(bottom: 8),
                   child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       Icon(Icons.check_circle, color: Color(0xFF4CAF50), size: 18),
                       const SizedBox(width: 10),
-                      Text(
-                        benefit,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: isDark ? Colors.white70 : Colors.black87,
+                      Expanded(
+                        child: Text(
+                          benefit,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: isDark ? Colors.white70 : Colors.black87,
+                          ),
                         ),
                       ),
                     ],

@@ -546,9 +546,13 @@ class _DownloadPageState extends State<DownloadPage> {
                             ),
                           ),
                           const SizedBox(width: 6),
-                          Text(
-                            task.serverName,
-                            style: TextStyle(color: metaTextColor, fontSize: 10),
+                          Expanded(
+                            child: Text(
+                              task.serverName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(color: metaTextColor, fontSize: 10),
+                            ),
                           ),
                         ],
                       ),
@@ -778,12 +782,16 @@ class _DownloadPageState extends State<DownloadPage> {
                       const SizedBox(width: 6),
                       Icon(Icons.check_circle, size: 12, color: Colors.green.shade400),
                       const SizedBox(width: 3),
-                      Text(
-                        appConfig.translate('completed'),
-                        style: TextStyle(
-                          color: Colors.green.shade400,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w500,
+                      Flexible(
+                        child: Text(
+                          appConfig.translate('completed'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.green.shade400,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                       ),
                     ],
@@ -908,9 +916,13 @@ class _DownloadPageState extends State<DownloadPage> {
                         ),
                       ),
                       const SizedBox(width: 6),
-                      Text(
-                        task.serverName,
-                        style: TextStyle(color: metaTextColor, fontSize: 10),
+                      Expanded(
+                        child: Text(
+                          task.serverName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: metaTextColor, fontSize: 10),
+                        ),
                       ),
                     ],
                   ),

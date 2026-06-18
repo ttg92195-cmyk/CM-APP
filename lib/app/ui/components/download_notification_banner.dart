@@ -244,11 +244,15 @@ class _DownloadNotificationBannerState extends State<DownloadNotificationBanner>
                                   ),
                                 ),
                                 const SizedBox(width: 6),
-                                Text(
-                                  task.downloadedSizeText,
-                                  style: TextStyle(
-                                    color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
-                                    fontSize: 11,
+                                Expanded(
+                                  child: Text(
+                                    task.downloadedSizeText,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                                      fontSize: 11,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -266,7 +270,8 @@ class _DownloadNotificationBannerState extends State<DownloadNotificationBanner>
                           ],
                           const SizedBox(height: 3),
 
-                          // Speed and ETA row
+                          // Speed and ETA row — wrap each Text in Flexible so long
+                          // speed/ETA combos (e.g. "1.5 MB/s · 2h 15m left") don't overflow
                           Row(
                             children: [
                               if (aggregateSpeed.isNotEmpty) ...[
@@ -276,12 +281,16 @@ class _DownloadNotificationBannerState extends State<DownloadNotificationBanner>
                                   color: isDark ? Colors.grey.shade500 : Colors.grey.shade600,
                                 ),
                                 const SizedBox(width: 3),
-                                Text(
-                                  aggregateSpeed,
-                                  style: TextStyle(
-                                    color: isDark ? Colors.grey.shade500 : Colors.grey.shade600,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w500,
+                                Flexible(
+                                  child: Text(
+                                    aggregateSpeed,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: isDark ? Colors.grey.shade500 : Colors.grey.shade600,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w500,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -297,12 +306,16 @@ class _DownloadNotificationBannerState extends State<DownloadNotificationBanner>
                                   ),
                                 ),
                               if (aggregateEta.isNotEmpty)
-                                Text(
-                                  aggregateEta,
-                                  style: TextStyle(
-                                    color: isDark ? Colors.grey.shade500 : Colors.grey.shade600,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w500,
+                                Flexible(
+                                  child: Text(
+                                    aggregateEta,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: isDark ? Colors.grey.shade500 : Colors.grey.shade600,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w500,
+                                    ),
                                   ),
                                 ),
                             ],

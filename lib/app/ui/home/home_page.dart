@@ -628,7 +628,7 @@ class _HomePageState extends State<HomePage> {
             const Icon(
               Icons.workspace_premium_rounded,
               color: Colors.white,
-              size: 26,
+              size: 24,
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -694,7 +694,7 @@ class _HomePageState extends State<HomePage> {
               Icon(
                 Icons.lock_outline,
                 color: const Color(0xFFE50914).withOpacity(0.9),
-                size: 22,
+                size: 24,
               ),
               const SizedBox(width: 10),
               Expanded(

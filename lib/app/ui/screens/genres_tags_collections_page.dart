@@ -580,7 +580,13 @@ class _FilterResultPageState extends State<FilterResultPage> {
     final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: Text(widget.title)),
+      appBar: AppBar(
+        title: Text(
+          widget.title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
       body: _isLoading
           ? _buildSkeletonGrid()
           : RefreshIndicator(

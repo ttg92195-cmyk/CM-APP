@@ -223,51 +223,71 @@ class _MovieCardState extends State<MovieCard> {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 2),
                 child: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (widget.movie.year != null && widget.movie.year!.isNotEmpty)
-                      Text(
-                        widget.movie.year!,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: theme.colorScheme.onSurface.withOpacity(0.6),
-                          fontSize: 10,
-                        ),
+                    Flexible(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (widget.movie.year != null && widget.movie.year!.isNotEmpty)
+                            Flexible(
+                              child: Text(
+                                widget.movie.year!,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: theme.colorScheme.onSurface.withOpacity(0.6),
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ),
+                          // Show "Season X" for series, or duration for movies
+                          if (widget.movie.type == 'series' && widget.movie.seasons != null && widget.movie.seasons!.isNotEmpty) ...[
+                            if (widget.movie.year != null && widget.movie.year!.isNotEmpty)
+                              const SizedBox(width: 4),
+                            Icon(
+                              Icons.tv,
+                              size: 10,
+                              color: theme.colorScheme.onSurface.withOpacity(0.6),
+                            ),
+                            const SizedBox(width: 2),
+                            Flexible(
+                              child: Text(
+                                'Season ${widget.movie.seasons}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: theme.colorScheme.onSurface.withOpacity(0.6),
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ] else if (widget.movie.type != 'series' && widget.movie.duration != null && widget.movie.duration!.isNotEmpty) ...[
+                            if (widget.movie.year != null && widget.movie.year!.isNotEmpty)
+                              const SizedBox(width: 4),
+                            Icon(
+                              Icons.access_time,
+                              size: 10,
+                              color: theme.colorScheme.onSurface.withOpacity(0.6),
+                            ),
+                            const SizedBox(width: 2),
+                            Flexible(
+                              child: Text(
+                                '${widget.movie.duration} min',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: theme.colorScheme.onSurface.withOpacity(0.6),
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
-                    // Show "Season X" for series, or duration for movies
-                    if (widget.movie.type == 'series' && widget.movie.seasons != null && widget.movie.seasons!.isNotEmpty) ...[
-                      if (widget.movie.year != null && widget.movie.year!.isNotEmpty)
-                        const SizedBox(width: 4),
-                      Icon(
-                        Icons.tv,
-                        size: 10,
-                        color: theme.colorScheme.onSurface.withOpacity(0.6),
-                      ),
-                      const SizedBox(width: 2),
-                      Text(
-                        'Season ${widget.movie.seasons}',
-                        style: TextStyle(
-                          color: theme.colorScheme.onSurface.withOpacity(0.6),
-                          fontSize: 9,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ] else if (widget.movie.type != 'series' && widget.movie.duration != null && widget.movie.duration!.isNotEmpty) ...[
-                      if (widget.movie.year != null && widget.movie.year!.isNotEmpty)
-                        const SizedBox(width: 4),
-                      Icon(
-                        Icons.access_time,
-                        size: 10,
-                        color: theme.colorScheme.onSurface.withOpacity(0.6),
-                      ),
-                      const SizedBox(width: 2),
-                      Text(
-                        '${widget.movie.duration} min',
-                        style: TextStyle(
-                          color: theme.colorScheme.onSurface.withOpacity(0.6),
-                          fontSize: 9,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
+                    ),
                     if (_watchProgress != null) ...[
                       if (widget.movie.year != null && widget.movie.year!.isNotEmpty ||
                           (widget.movie.type == 'series' && widget.movie.seasons != null && widget.movie.seasons!.isNotEmpty) ||
@@ -279,12 +299,16 @@ class _MovieCardState extends State<MovieCard> {
                         color: const Color(0xFFE50914).withOpacity(0.8),
                       ),
                       const SizedBox(width: 2),
-                      Text(
-                        _formatWatchPosition(),
-                        style: TextStyle(
-                          color: const Color(0xFFE50914).withOpacity(0.8),
-                          fontSize: 9,
-                          fontWeight: FontWeight.w600,
+                      Flexible(
+                        child: Text(
+                          _formatWatchPosition(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: const Color(0xFFE50914).withOpacity(0.8),
+                            fontSize: 9,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                     ],

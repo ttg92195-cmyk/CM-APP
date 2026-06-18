@@ -196,16 +196,28 @@ class _WatchlistScreenState extends State<WatchlistScreen> {
                           if (movie.year != null && movie.year!.isNotEmpty) ...[
                             Icon(Icons.calendar_today, size: 12, color: metaTextColor),
                             const SizedBox(width: 3),
-                            Text(movie.year!,
-                                style: TextStyle(color: metaTextColor, fontSize: 11)),
+                            Flexible(
+                              child: Text(
+                                movie.year!,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(color: metaTextColor, fontSize: 11),
+                              ),
+                            ),
                             const SizedBox(width: 10),
                           ],
                           if (movie.rating != null && movie.rating!.isNotEmpty) ...[
                             const Icon(Icons.star, size: 13, color: Color(0xFFFF0000)),
                             const SizedBox(width: 2),
-                            Text(movie.rating!,
+                            Flexible(
+                              child: Text(
+                                movie.rating!,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
-                                    color: Color(0xFFFF0000), fontSize: 11, fontWeight: FontWeight.w600)),
+                                    color: Color(0xFFFF0000), fontSize: 11, fontWeight: FontWeight.w600),
+                              ),
+                            ),
                           ],
                         ],
                       ),

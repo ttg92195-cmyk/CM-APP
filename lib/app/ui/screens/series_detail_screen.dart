@@ -392,31 +392,27 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                               ),
                               const SizedBox(height: 8),
                               // Meta: Year ⭐ Rating Season X 🇺🇸 English
-                              Row(
+                              // Use Wrap to gracefully handle overflow on narrow screens
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 4,
+                                crossAxisAlignment: WrapCrossAlignment.center,
                                 children: [
-                                  if (detail.year != null && detail.year!.isNotEmpty) ...[
+                                  if (detail.year != null && detail.year!.isNotEmpty)
                                     Text(detail.year!,
                                         style: TextStyle(color: metaTextColor, fontSize: 13, fontWeight: FontWeight.w500)),
-                                    const SizedBox(width: 8),
+                                  if (detail.year != null && detail.year!.isNotEmpty)
                                     Text('·', style: TextStyle(color: metaTextColor, fontSize: 13)),
-                                    const SizedBox(width: 8),
-                                  ],
-                                  ...[
-                                    Icon(Icons.local_fire_department, size: 16, color: accentColor),
-                                    const SizedBox(width: 3),
-                                    Text(_formatRating(detail.rating),
-                                        style: TextStyle(color: accentColor, fontSize: 13, fontWeight: FontWeight.w600)),
-                                    const SizedBox(width: 8),
-                                    Text('·', style: TextStyle(color: metaTextColor, fontSize: 13)),
-                                    const SizedBox(width: 8),
-                                  ],
-                                  if (totalSeasons > 0) ...[
+                                  Icon(Icons.local_fire_department, size: 16, color: accentColor),
+                                  const SizedBox(width: 2),
+                                  Text(_formatRating(detail.rating),
+                                      style: TextStyle(color: accentColor, fontSize: 13, fontWeight: FontWeight.w600)),
+                                  Text('·', style: TextStyle(color: metaTextColor, fontSize: 13)),
+                                  if (totalSeasons > 0)
                                     Text('Season $totalSeasons',
                                         style: TextStyle(color: metaTextColor, fontSize: 13, fontWeight: FontWeight.w500)),
-                                    const SizedBox(width: 8),
+                                  if (totalSeasons > 0)
                                     Text('·', style: TextStyle(color: metaTextColor, fontSize: 13)),
-                                    const SizedBox(width: 8),
-                                  ],
                                   Text(_getCountryLanguage(detail.country), style: const TextStyle(fontSize: 12)),
                                 ],
                               ),

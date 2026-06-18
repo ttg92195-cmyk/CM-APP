@@ -24,7 +24,10 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final FirestoreContentService _contentService = FirestoreContentService();
   final RecentService _recentService = RecentService();
-  final PageController _bannerController = PageController();
+  // Banner PageController — created lazily once banner image count is known,
+  // so initialPage can be set for the infinite-loop effect. Reused for the
+  // lifetime of the State to avoid per-build memory leaks.
+  PageController? _bannerController;
   int _currentBannerIndex = 0;
   Timer? _autoScrollTimer;
 
@@ -60,7 +63,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _autoScrollTimer?.cancel();
-    _bannerController.dispose();
+    _bannerController?.dispose();
     super.dispose();
   }
 
@@ -68,10 +71,10 @@ class _HomeScreenState extends State<HomeScreen> {
   void _startAutoScroll() {
     _autoScrollTimer?.cancel();
     _autoScrollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
-      if (_bannerImageUrls.isNotEmpty && _bannerController.hasClients) {
+      if (_bannerImageUrls.isNotEmpty && _bannerController != null && _bannerController!.hasClients) {
         final nextIndex = _currentBannerIndex + 1;
         // Use a very large number for infinite loop effect
-        _bannerController.animateToPage(
+        _bannerController!.animateToPage(
           nextIndex,
           duration: const Duration(milliseconds: 500),
           curve: Curves.easeInOut,
@@ -514,8 +517,14 @@ class _HomeScreenState extends State<HomeScreen> {
     // If no banner images configured, show nothing
     if (_bannerImageUrls.isEmpty) return const SizedBox.shrink();
 
-    // Use a very large initial page for infinite loop effect
-    final initialPage = _bannerImageUrls.length * 1000;
+    // Lazily create the banner PageController once we know the image count.
+    // initialPage is set to a large multiple of the image count so the user
+    // can scroll both backwards and forwards (infinite-loop effect).
+    // The controller is reused across rebuilds and disposed in dispose().
+    if (_bannerController == null) {
+      final initialPage = _bannerImageUrls.length * 1000;
+      _bannerController = PageController(initialPage: initialPage);
+    }
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -540,9 +549,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 height: 180,
                 child: Stack(
                   children: [
-                    // Infinite loop PageView
+                    // Infinite loop PageView (reuse single _bannerController to avoid memory leak)
                     PageView.builder(
-                      controller: PageController(initialPage: initialPage),
+                      controller: _bannerController,
                       onPageChanged: (index) {
                         final realIndex = index % _bannerImageUrls.length;
                         setState(() => _currentBannerIndex = realIndex);

@@ -459,52 +459,50 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                               ),
                               const SizedBox(height: 8),
                               // MetaData: Year ⭐ Rating Duration 🇺🇸 English
-                              Row(
+                              // Use Wrap to gracefully handle overflow on narrow screens
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 4,
+                                crossAxisAlignment: WrapCrossAlignment.center,
                                 children: [
                                   if (detail.year != null &&
-                                      detail.year!.isNotEmpty) ...[
+                                      detail.year!.isNotEmpty)
                                     Text(detail.year!,
                                         style: TextStyle(
                                             color: metaTextColor,
                                             fontSize: 13,
                                             fontWeight: FontWeight.w500)),
-                                    const SizedBox(width: 8),
+                                  if (detail.year != null &&
+                                      detail.year!.isNotEmpty)
                                     Text('·',
                                         style: TextStyle(
                                             color: metaTextColor,
                                             fontSize: 13)),
-                                    const SizedBox(width: 8),
-                                  ],
-                                  ...[
-                                    Icon(Icons.local_fire_department,
-                                        size: 16, color: accentColor),
-                                    const SizedBox(width: 3),
-                                    Text(_formatRating(detail.rating),
-                                        style: TextStyle(
-                                            color: accentColor,
-                                            fontSize: 13,
-                                            fontWeight: FontWeight.w600)),
-                                    const SizedBox(width: 8),
-                                    Text('·',
-                                        style: TextStyle(
-                                            color: metaTextColor,
-                                            fontSize: 13)),
-                                    const SizedBox(width: 8),
-                                  ],
+                                  Icon(Icons.local_fire_department,
+                                      size: 16, color: accentColor),
+                                  const SizedBox(width: 2),
+                                  Text(_formatRating(detail.rating),
+                                      style: TextStyle(
+                                          color: accentColor,
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600)),
+                                  Text('·',
+                                      style: TextStyle(
+                                          color: metaTextColor,
+                                          fontSize: 13)),
                                   if (detail.duration != null &&
-                                      detail.duration!.isNotEmpty) ...[
+                                      detail.duration!.isNotEmpty)
                                     Text(_formatDuration(detail.duration),
                                         style: TextStyle(
                                             color: metaTextColor,
                                             fontSize: 13,
                                             fontWeight: FontWeight.w500)),
-                                    const SizedBox(width: 8),
+                                  if (detail.duration != null &&
+                                      detail.duration!.isNotEmpty)
                                     Text('·',
                                         style: TextStyle(
                                             color: metaTextColor,
                                             fontSize: 13)),
-                                    const SizedBox(width: 8),
-                                  ],
                                   Text(_getCountryLanguage(detail.country),
                                       style: const TextStyle(fontSize: 12)),
                                 ],

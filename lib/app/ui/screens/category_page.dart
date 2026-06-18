@@ -215,7 +215,11 @@ class _CategoryPageState extends State<CategoryPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.title),
+        title: Text(
+          widget.title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
