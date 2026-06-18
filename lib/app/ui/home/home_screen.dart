@@ -28,6 +28,12 @@ class _HomeScreenState extends State<HomeScreen> {
   // so initialPage can be set for the infinite-loop effect. Reused for the
   // lifetime of the State to avoid per-build memory leaks.
   PageController? _bannerController;
+  // The ABSOLUTE page index the PageController is currently on (NOT the
+  // modded real index). Used by the auto-scroll timer to advance the
+  // carousel correctly — see _startAutoScroll for why this matters.
+  int _currentAbsolutePage = 0;
+  // The MODDED real banner index (0..length-1) currently displayed — used
+  // only for the dots indicator below the banner.
   int _currentBannerIndex = 0;
   Timer? _autoScrollTimer;
 
@@ -57,7 +63,14 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _loadData();
-    _startAutoScroll();
+    // NOTE: Auto-scroll timer is NOT started here. It is started only after
+    // banner data actually arrives in _loadData() — see the call to
+    // _startAutoScroll() inside the successful setState block. Starting the
+    // timer here (while _bannerImageUrls is still empty) was the original
+    // cause of the "initial rapid scroll" glitch: the timer would tick the
+    // moment data arrived, before the PageController had been lazily created
+    // and settled on its initialPage, causing a giant backward jump from
+    // initialPage (= length * 1000) down to _currentBannerIndex + 1 (= 1).
   }
 
   @override
@@ -67,15 +80,30 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  /// Auto-scroll banner every 4 seconds
+  /// Auto-scroll banner every 4 seconds.
+  ///
+  /// IMPORTANT: We track the ABSOLUTE page index (_currentAbsolutePage), not
+  /// the modded realIndex, because animateToPage() needs the absolute page
+  /// number the PageController is currently on. The previous implementation
+  /// stored the modded realIndex in _currentBannerIndex and then called
+  /// animateToPage(_currentBannerIndex + 1) — which is a tiny number like 1
+  /// or 2 — causing the PageView to scroll backwards from initialPage
+  /// (= length * 1000, e.g. 4000) all the way down to page 1 in a single
+  /// 500ms animation. Visually this looked like a rapid auto-scroll burst
+  /// on app launch. Storing the absolute page fixes it.
   void _startAutoScroll() {
     _autoScrollTimer?.cancel();
+    // Initialize absolute page tracker to the controller's actual current
+    // page (the lazy initialPage). This prevents the first timer tick from
+    // jumping backwards.
+    if (_bannerController != null && _bannerController!.hasClients) {
+      _currentAbsolutePage = _bannerController!.page?.round() ?? _currentAbsolutePage;
+    }
     _autoScrollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
       if (_bannerImageUrls.isNotEmpty && _bannerController != null && _bannerController!.hasClients) {
-        final nextIndex = _currentBannerIndex + 1;
-        // Use a very large number for infinite loop effect
+        _currentAbsolutePage = _currentAbsolutePage + 1;
         _bannerController!.animateToPage(
-          nextIndex,
+          _currentAbsolutePage,
           duration: const Duration(milliseconds: 500),
           curve: Curves.easeInOut,
         );
@@ -129,6 +157,19 @@ class _HomeScreenState extends State<HomeScreen> {
           _allSeries = allSeries;
           _isLoading = false;
           _isLoadingTags = true;
+        });
+
+        // Start the auto-scroll timer ONLY AFTER banner data has actually
+        // arrived. We use addPostFrameCallback so that the lazy
+        // _bannerController (created inside _buildBannerSlider on the next
+        // frame) is fully attached to the PageView before we read its
+        // initial page and start ticking the timer. This guarantees the
+        // timer's first tick targets the correct absolute page instead of
+        // jumping backwards from initialPage.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _bannerImageUrls.isNotEmpty) {
+            _startAutoScroll();
+          }
         });
 
         _loadTagBasedData();
@@ -524,6 +565,10 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_bannerController == null) {
       final initialPage = _bannerImageUrls.length * 1000;
       _bannerController = PageController(initialPage: initialPage);
+      // Keep the absolute-page tracker in sync with the controller's
+      // initialPage so the auto-scroll timer advances from the correct
+      // position instead of jumping backwards.
+      _currentAbsolutePage = initialPage;
     }
 
     return Padding(
@@ -553,6 +598,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     PageView.builder(
                       controller: _bannerController,
                       onPageChanged: (index) {
+                        // Track BOTH the absolute page (for the auto-scroll
+                        // timer's next animateToPage call) AND the modded
+                        // real index (for the dots indicator).
+                        _currentAbsolutePage = index;
                         final realIndex = index % _bannerImageUrls.length;
                         setState(() => _currentBannerIndex = realIndex);
                       },
