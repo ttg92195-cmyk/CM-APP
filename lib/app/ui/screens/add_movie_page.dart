@@ -338,7 +338,10 @@ class _AddMoviePageState extends State<AddMoviePage> {
                         } finally {
                           controller.dispose();
                         }
-                        if (result != null && result.isNotEmpty) setState(() => _directors.add(result));
+                        if (result != null && result.isNotEmpty) {
+                          final directorName = result.trim();
+                          setState(() => _directors.add(directorName));
+                        }
                       },
                       icon: const Icon(Icons.add),
                       label: const Text('Add Director'),
@@ -403,12 +406,16 @@ class _AddMoviePageState extends State<AddMoviePage> {
                           nameController.dispose();
                           profileController.dispose();
                         }
-                        // Now use the captured values.
+                        // Now use the captured values. Capture non-nullable
+                        // locals AFTER the null-check so type promotion
+                        // survives into the setState closure.
                         if (name != null && name.isNotEmpty) {
+                          final castName = name;
+                          final castProfile = (profile == null || profile.isEmpty) ? null : profile;
                           setState(() {
                             _casts.add(CastMember(
-                              name: name,
-                              profilePath: (profile == null || profile.isEmpty) ? null : profile,
+                              name: castName,
+                              profilePath: castProfile,
                             ));
                           });
                         }

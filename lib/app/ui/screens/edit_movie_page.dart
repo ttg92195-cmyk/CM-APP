@@ -427,7 +427,10 @@ class _EditMoviePageState extends State<EditMoviePage> {
                             } finally {
                               controller.dispose();
                             }
-                            if (result != null && result.isNotEmpty) setState(() => _directors[entry.key] = result);
+                            if (result != null && result.isNotEmpty) {
+                              final directorName = result.trim();
+                              setState(() => _directors[entry.key] = directorName);
+                            }
                           }),
                           IconButton(icon: const Icon(Icons.delete, size: 20), onPressed: () => setState(() => _directors.removeAt(entry.key))),
                         ],
@@ -453,7 +456,10 @@ class _EditMoviePageState extends State<EditMoviePage> {
                         } finally {
                           controller.dispose();
                         }
-                        if (result != null && result.isNotEmpty) setState(() => _directors.add(result));
+                        if (result != null && result.isNotEmpty) {
+                          final directorName = result.trim();
+                          setState(() => _directors.add(directorName));
+                        }
                       },
                       icon: const Icon(Icons.add),
                       label: const Text('Add Director'),
@@ -510,10 +516,12 @@ class _EditMoviePageState extends State<EditMoviePage> {
                                 profileController.dispose();
                               }
                               if (name != null && name.isNotEmpty) {
+                                final castName = name;
+                                final castProfile = (profile == null || profile.isEmpty) ? null : profile;
                                 setState(() {
                                   _casts[entry.key] = CastMember(
-                                    name: name,
-                                    profilePath: (profile == null || profile.isEmpty) ? null : profile,
+                                    name: castName,
+                                    profilePath: castProfile,
                                   );
                                 });
                               }
@@ -558,10 +566,12 @@ class _EditMoviePageState extends State<EditMoviePage> {
                           profileController.dispose();
                         }
                         if (name != null && name.isNotEmpty) {
+                          final castName = name;
+                          final castProfile = (profile == null || profile.isEmpty) ? null : profile;
                           setState(() {
                             _casts.add(CastMember(
-                              name: name,
-                              profilePath: (profile == null || profile.isEmpty) ? null : profile,
+                              name: castName,
+                              profilePath: castProfile,
                             ));
                           });
                         }

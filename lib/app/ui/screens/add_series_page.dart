@@ -289,7 +289,10 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
                         } finally {
                           controller.dispose();
                         }
-                        if (result != null && result.isNotEmpty) setState(() => _directors.add(result));
+                        if (result != null && result.isNotEmpty) {
+                          final directorName = result.trim();
+                          setState(() => _directors.add(directorName));
+                        }
                       },
                       icon: const Icon(Icons.add),
                       label: const Text('Add Director'),
@@ -353,10 +356,12 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
                           profileController.dispose();
                         }
                         if (name != null && name.isNotEmpty) {
+                          final castName = name;
+                          final castProfile = (profile == null || profile.isEmpty) ? null : profile;
                           setState(() {
                             _casts.add(CastMember(
-                              name: name,
-                              profilePath: (profile == null || profile.isEmpty) ? null : profile,
+                              name: castName,
+                              profilePath: castProfile,
                             ));
                           });
                         }
