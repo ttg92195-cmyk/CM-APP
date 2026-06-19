@@ -317,18 +317,27 @@ class _AddMoviePageState extends State<AddMoviePage> {
                     )),
                     OutlinedButton.icon(
                       onPressed: () async {
+                        // AUDIT C5 — dispose the controller after the dialog
+                        // closes (try/finally guarantees disposal whether the
+                        // dialog was popped with a result, with null, or
+                        // errored).
                         final controller = TextEditingController();
-                        final result = await showDialog<String>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: const Text('Add Director'),
-                            content: TextField(controller: controller, decoration: const InputDecoration(labelText: 'Director Name'), autofocus: true),
-                            actions: [
-                              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-                              ElevatedButton(onPressed: () => Navigator.pop(ctx, controller.text.trim()), child: const Text('Add')),
-                            ],
-                          ),
-                        );
+                        String? result;
+                        try {
+                          result = await showDialog<String>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('Add Director'),
+                              content: TextField(controller: controller, decoration: const InputDecoration(labelText: 'Director Name'), autofocus: true),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                                ElevatedButton(onPressed: () => Navigator.pop(ctx, controller.text.trim()), child: const Text('Add')),
+                              ],
+                            ),
+                          );
+                        } finally {
+                          controller.dispose();
+                        }
                         if (result != null && result.isNotEmpty) setState(() => _directors.add(result));
                       },
                       icon: const Icon(Icons.add),
@@ -359,31 +368,47 @@ class _AddMoviePageState extends State<AddMoviePage> {
                     }),
                     OutlinedButton.icon(
                       onPressed: () async {
+                        // AUDIT C5 — dispose both controllers in finally.
+                        // Capture the text values BEFORE disposal so we can
+                        // still use them after the controllers are gone.
                         final nameController = TextEditingController();
                         final profileController = TextEditingController();
-                        final result = await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: const Text('Add Cast Member'),
-                            content: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                TextField(controller: nameController, decoration: const InputDecoration(labelText: 'Name *'), autofocus: true),
-                                const SizedBox(height: 8),
-                                TextField(controller: profileController, decoration: const InputDecoration(labelText: 'Profile Photo URL')),
+                        String? name;
+                        String? profile;
+                        try {
+                          final result = await showDialog<bool>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('Add Cast Member'),
+                              content: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  TextField(controller: nameController, decoration: const InputDecoration(labelText: 'Name *'), autofocus: true),
+                                  const SizedBox(height: 8),
+                                  TextField(controller: profileController, decoration: const InputDecoration(labelText: 'Profile Photo URL')),
+                                ],
+                              ),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                                ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
                               ],
                             ),
-                            actions: [
-                              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-                              ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
-                            ],
-                          ),
-                        );
-                        if (result == true && nameController.text.trim().isNotEmpty) {
+                          );
+                          if (result == true) {
+                            // Capture values from controllers BEFORE disposing.
+                            name = nameController.text.trim();
+                            profile = profileController.text.trim();
+                          }
+                        } finally {
+                          nameController.dispose();
+                          profileController.dispose();
+                        }
+                        // Now use the captured values.
+                        if (name != null && name.isNotEmpty) {
                           setState(() {
                             _casts.add(CastMember(
-                              name: nameController.text.trim(),
-                              profilePath: profileController.text.trim().isEmpty ? null : profileController.text.trim(),
+                              name: name,
+                              profilePath: (profile == null || profile.isEmpty) ? null : profile,
                             ));
                           });
                         }
@@ -524,16 +549,30 @@ class _AddMoviePageState extends State<AddMoviePage> {
       ),
     ).then((result) {
       if (result == true && urlController.text.trim().isNotEmpty) {
+        // Capture trimmed values BEFORE disposing controllers below.
+        final url = urlController.text.trim();
+        final quality = qualityController.text.trim();
+        final size = sizeController.text.trim();
+        final fileName = fileNameController.text.trim();
         setState(() {
           _downloadLinks.add(MovieDownloadLink(
             serverName: selectedServer ?? 'Server 1',
-            url: urlController.text.trim(),
-            quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-            size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
-            fileName: fileNameController.text.trim().isEmpty ? null : fileNameController.text.trim(),
+            url: url,
+            quality: quality.isEmpty ? null : quality,
+            size: size.isEmpty ? null : size,
+            fileName: fileName.isEmpty ? null : fileName,
           ));
         });
       }
+    }).whenComplete(() {
+      // AUDIT C5 — dispose all four controllers so their framework listeners
+      // are released. whenComplete runs whether the dialog was popped with
+      // a value, with null (back button), or errored. Previously these
+      // controllers leaked every time the admin opened this dialog.
+      urlController.dispose();
+      qualityController.dispose();
+      sizeController.dispose();
+      fileNameController.dispose();
     });
   }
 
@@ -580,15 +619,24 @@ class _AddMoviePageState extends State<AddMoviePage> {
       ),
     ).then((result) {
       if (result == true && urlController.text.trim().isNotEmpty) {
+        // Capture trimmed values BEFORE disposing controllers below.
+        final url = urlController.text.trim();
+        final quality = qualityController.text.trim();
+        final size = sizeController.text.trim();
         setState(() {
           _watchLinks.add(MovieWatchLink(
             serverName: selectedServer ?? 'Server 1',
-            url: urlController.text.trim(),
-            quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-            size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+            url: url,
+            quality: quality.isEmpty ? null : quality,
+            size: size.isEmpty ? null : size,
           ));
         });
       }
+    }).whenComplete(() {
+      // AUDIT C5 — dispose all three controllers.
+      urlController.dispose();
+      qualityController.dispose();
+      sizeController.dispose();
     });
   }
 

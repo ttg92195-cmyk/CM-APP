@@ -91,6 +91,15 @@ class _AdminPanelPageState extends State<AdminPanelPage>
     _tabController.dispose();
     _searchDebounceTimer?.cancel();
     _searchController.dispose();
+    // AUDIT C4 — these three banner URL controllers were declared at class
+    // level (lines 68-70) but never disposed. They lived for the entire
+    // admin-panel session and were re-leaked every time the admin reopened
+    // the page. Each TextEditingController holds framework listeners
+    // (text selection, focus, change notifications) that are only released
+    // by an explicit dispose() call.
+    _bannerUrl1Controller.dispose();
+    _bannerUrl2Controller.dispose();
+    _bannerUrl3Controller.dispose();
     super.dispose();
   }
 
@@ -1290,6 +1299,11 @@ class _AdminPanelPageState extends State<AdminPanelPage>
 
   void _addGenreTagDialog() {
     final controller = TextEditingController();
+    // AUDIT C5 — dispose the controller after the dialog closes so its
+    // framework listeners are released. `whenComplete` runs whether the
+    // dialog was popped with a result, with null (back button), or even
+    // errored. The previous code only consumed `controller.text` and then
+    // left the controller to leak.
     showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1309,33 +1323,43 @@ class _AdminPanelPageState extends State<AdminPanelPage>
       ),
     ).then((result) async {
       if (result == true && controller.text.trim().isNotEmpty) {
+        // Capture the value BEFORE disposing the controller.
+        final name = controller.text.trim();
         // Add based on current sub-tab in Genres/Tags tab
         final genresTagsSubTab = _genresTagsSubTabIndex;
         if (genresTagsSubTab == 0) {
-          await _contentService.addGenre(controller.text.trim());
+          await _contentService.addGenre(name);
         } else if (genresTagsSubTab == 1) {
-          await _contentService.addTag(controller.text.trim());
+          await _contentService.addTag(name);
         } else if (genresTagsSubTab == 2) {
-          await _contentService.addCollection(controller.text.trim());
+          await _contentService.addCollection(name);
         }
         _loadInitialData();
       }
+    }).whenComplete(() {
+      controller.dispose();
     });
   }
 
   Future<void> _editItemDialog(TagAndGenres item, String type) async {
     final controller = TextEditingController(text: item.name);
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Edit ${type[0].toUpperCase()}${type.substring(1)}'),
-        content: TextField(controller: controller, decoration: InputDecoration(labelText: 'Name'), autofocus: true),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          ElevatedButton(onPressed: () => Navigator.pop(ctx, controller.text.trim()), child: const Text('Save')),
-        ],
-      ),
-    );
+    String? result;
+    try {
+      result = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('Edit ${type[0].toUpperCase()}${type.substring(1)}'),
+          content: TextField(controller: controller, decoration: InputDecoration(labelText: 'Name'), autofocus: true),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            ElevatedButton(onPressed: () => Navigator.pop(ctx, controller.text.trim()), child: const Text('Save')),
+          ],
+        ),
+      );
+    } finally {
+      // AUDIT C5 — dispose regardless of how the dialog closed.
+      controller.dispose();
+    }
     if (result != null && result.isNotEmpty) {
       if (type == 'genre') await _contentService.updateGenre(item.id, result);
       else if (type == 'tag') await _contentService.updateTag(item.id, result);

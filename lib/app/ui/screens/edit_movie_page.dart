@@ -409,18 +409,24 @@ class _EditMoviePageState extends State<EditMoviePage> {
                         children: [
                           Expanded(child: Text(entry.value)),
                           IconButton(icon: const Icon(Icons.edit, size: 20), onPressed: () async {
+                            // AUDIT C5 — dispose in finally.
                             final controller = TextEditingController(text: entry.value);
-                            final result = await showDialog<String>(
-                              context: context,
-                              builder: (ctx) => AlertDialog(
-                                title: const Text('Edit Director'),
-                                content: TextField(controller: controller, decoration: const InputDecoration(labelText: 'Director Name'), autofocus: true),
-                                actions: [
-                                  TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-                                  ElevatedButton(onPressed: () => Navigator.pop(ctx, controller.text.trim()), child: const Text('Save')),
-                                ],
-                              ),
-                            );
+                            String? result;
+                            try {
+                              result = await showDialog<String>(
+                                context: context,
+                                builder: (ctx) => AlertDialog(
+                                  title: const Text('Edit Director'),
+                                  content: TextField(controller: controller, decoration: const InputDecoration(labelText: 'Director Name'), autofocus: true),
+                                  actions: [
+                                    TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                                    ElevatedButton(onPressed: () => Navigator.pop(ctx, controller.text.trim()), child: const Text('Save')),
+                                  ],
+                                ),
+                              );
+                            } finally {
+                              controller.dispose();
+                            }
                             if (result != null && result.isNotEmpty) setState(() => _directors[entry.key] = result);
                           }),
                           IconButton(icon: const Icon(Icons.delete, size: 20), onPressed: () => setState(() => _directors.removeAt(entry.key))),
@@ -429,18 +435,24 @@ class _EditMoviePageState extends State<EditMoviePage> {
                     )),
                     OutlinedButton.icon(
                       onPressed: () async {
+                        // AUDIT C5 — dispose in finally.
                         final controller = TextEditingController();
-                        final result = await showDialog<String>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: const Text('Add Director'),
-                            content: TextField(controller: controller, decoration: const InputDecoration(labelText: 'Director Name'), autofocus: true),
-                            actions: [
-                              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-                              ElevatedButton(onPressed: () => Navigator.pop(ctx, controller.text.trim()), child: const Text('Add')),
-                            ],
-                          ),
-                        );
+                        String? result;
+                        try {
+                          result = await showDialog<String>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('Add Director'),
+                              content: TextField(controller: controller, decoration: const InputDecoration(labelText: 'Director Name'), autofocus: true),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                                ElevatedButton(onPressed: () => Navigator.pop(ctx, controller.text.trim()), child: const Text('Add')),
+                              ],
+                            ),
+                          );
+                        } finally {
+                          controller.dispose();
+                        }
                         if (result != null && result.isNotEmpty) setState(() => _directors.add(result));
                       },
                       icon: const Icon(Icons.add),
@@ -465,31 +477,43 @@ class _EditMoviePageState extends State<EditMoviePage> {
                             const SizedBox(width: 8),
                             Expanded(child: Text(cast.name, style: const TextStyle(fontWeight: FontWeight.w500))),
                             IconButton(icon: const Icon(Icons.edit, size: 20), onPressed: () async {
+                              // AUDIT C5 — dispose both controllers in finally.
                               final nameController = TextEditingController(text: cast.name);
                               final profileController = TextEditingController(text: cast.profilePath ?? '');
-                              final result = await showDialog<bool>(
-                                context: context,
-                                builder: (ctx) => AlertDialog(
-                                  title: const Text('Edit Cast Member'),
-                                  content: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      TextField(controller: nameController, decoration: const InputDecoration(labelText: 'Name *'), autofocus: true),
-                                      const SizedBox(height: 8),
-                                      TextField(controller: profileController, decoration: const InputDecoration(labelText: 'Profile Photo URL')),
+                              String? name;
+                              String? profile;
+                              try {
+                                final result = await showDialog<bool>(
+                                  context: context,
+                                  builder: (ctx) => AlertDialog(
+                                    title: const Text('Edit Cast Member'),
+                                    content: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        TextField(controller: nameController, decoration: const InputDecoration(labelText: 'Name *'), autofocus: true),
+                                        const SizedBox(height: 8),
+                                        TextField(controller: profileController, decoration: const InputDecoration(labelText: 'Profile Photo URL')),
+                                      ],
+                                    ),
+                                    actions: [
+                                      TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                                      ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
                                     ],
                                   ),
-                                  actions: [
-                                    TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-                                    ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
-                                  ],
-                                ),
-                              );
-                              if (result == true && nameController.text.trim().isNotEmpty) {
+                                );
+                                if (result == true) {
+                                  name = nameController.text.trim();
+                                  profile = profileController.text.trim();
+                                }
+                              } finally {
+                                nameController.dispose();
+                                profileController.dispose();
+                              }
+                              if (name != null && name.isNotEmpty) {
                                 setState(() {
                                   _casts[entry.key] = CastMember(
-                                    name: nameController.text.trim(),
-                                    profilePath: profileController.text.trim().isEmpty ? null : profileController.text.trim(),
+                                    name: name,
+                                    profilePath: (profile == null || profile.isEmpty) ? null : profile,
                                   );
                                 });
                               }
@@ -501,31 +525,43 @@ class _EditMoviePageState extends State<EditMoviePage> {
                     }),
                     OutlinedButton.icon(
                       onPressed: () async {
+                        // AUDIT C5 — dispose both controllers in finally.
                         final nameController = TextEditingController();
                         final profileController = TextEditingController();
-                        final result = await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: const Text('Add Cast Member'),
-                            content: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                TextField(controller: nameController, decoration: const InputDecoration(labelText: 'Name *'), autofocus: true),
-                                const SizedBox(height: 8),
-                                TextField(controller: profileController, decoration: const InputDecoration(labelText: 'Profile Photo URL')),
+                        String? name;
+                        String? profile;
+                        try {
+                          final result = await showDialog<bool>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('Add Cast Member'),
+                              content: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  TextField(controller: nameController, decoration: const InputDecoration(labelText: 'Name *'), autofocus: true),
+                                  const SizedBox(height: 8),
+                                  TextField(controller: profileController, decoration: const InputDecoration(labelText: 'Profile Photo URL')),
+                                ],
+                              ),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                                ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
                               ],
                             ),
-                            actions: [
-                              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-                              ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
-                            ],
-                          ),
-                        );
-                        if (result == true && nameController.text.trim().isNotEmpty) {
+                          );
+                          if (result == true) {
+                            name = nameController.text.trim();
+                            profile = profileController.text.trim();
+                          }
+                        } finally {
+                          nameController.dispose();
+                          profileController.dispose();
+                        }
+                        if (name != null && name.isNotEmpty) {
                           setState(() {
                             _casts.add(CastMember(
-                              name: nameController.text.trim(),
-                              profilePath: profileController.text.trim().isEmpty ? null : profileController.text.trim(),
+                              name: name,
+                              profilePath: (profile == null || profile.isEmpty) ? null : profile,
                             ));
                           });
                         }
@@ -636,8 +672,13 @@ class _EditMoviePageState extends State<EditMoviePage> {
                             ),
                           ).then((result) {
                             if (result == true && controller.text.trim().isNotEmpty) {
-                              setState(() => _seasons.add(Season(name: controller.text.trim())));
+                              // Capture value BEFORE disposing controller below.
+                              final seasonName = controller.text.trim();
+                              setState(() => _seasons.add(Season(name: seasonName)));
                             }
+                          }).whenComplete(() {
+                            // AUDIT C5 — dispose controller.
+                            controller.dispose();
                           });
                         },
                         icon: const Icon(Icons.add),
@@ -755,16 +796,27 @@ class _EditMoviePageState extends State<EditMoviePage> {
       ),
     ).then((result) {
       if (result == true && urlController.text.trim().isNotEmpty) {
+        // Capture values BEFORE disposing controllers below.
+        final url = urlController.text.trim();
+        final quality = qualityController.text.trim();
+        final size = sizeController.text.trim();
+        final fileName = fileNameController.text.trim();
         setState(() {
           _downloadLinks.add(MovieDownloadLink(
             serverName: selectedServer ?? 'Server 1',
-            url: urlController.text.trim(),
-            quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-            size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
-            fileName: fileNameController.text.trim().isEmpty ? null : fileNameController.text.trim(),
+            url: url,
+            quality: quality.isEmpty ? null : quality,
+            size: size.isEmpty ? null : size,
+            fileName: fileName.isEmpty ? null : fileName,
           ));
         });
       }
+    }).whenComplete(() {
+      // AUDIT C5 — dispose all four controllers.
+      urlController.dispose();
+      qualityController.dispose();
+      sizeController.dispose();
+      fileNameController.dispose();
     });
   }
 
@@ -806,15 +858,24 @@ class _EditMoviePageState extends State<EditMoviePage> {
       ),
     ).then((result) {
       if (result == true && urlController.text.trim().isNotEmpty) {
+        // Capture values BEFORE disposing controllers below.
+        final url = urlController.text.trim();
+        final quality = qualityController.text.trim();
+        final size = sizeController.text.trim();
         setState(() {
           _watchLinks.add(MovieWatchLink(
             serverName: selectedServer ?? 'Server 1',
-            url: urlController.text.trim(),
-            quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-            size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+            url: url,
+            quality: quality.isEmpty ? null : quality,
+            size: size.isEmpty ? null : size,
           ));
         });
       }
+    }).whenComplete(() {
+      // AUDIT C5 — dispose all three controllers.
+      urlController.dispose();
+      qualityController.dispose();
+      sizeController.dispose();
     });
   }
 
@@ -860,16 +921,27 @@ class _EditMoviePageState extends State<EditMoviePage> {
       ),
     ).then((result) {
       if (result == true && urlController.text.trim().isNotEmpty) {
+        // Capture values BEFORE disposing controllers below.
+        final url = urlController.text.trim();
+        final quality = qualityController.text.trim();
+        final size = sizeController.text.trim();
+        final fileName = fileNameController.text.trim();
         setState(() {
           _downloadLinks[index] = MovieDownloadLink(
             serverName: selectedServer ?? 'Server 1',
-            url: urlController.text.trim(),
-            quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-            size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
-            fileName: fileNameController.text.trim().isEmpty ? null : fileNameController.text.trim(),
+            url: url,
+            quality: quality.isEmpty ? null : quality,
+            size: size.isEmpty ? null : size,
+            fileName: fileName.isEmpty ? null : fileName,
           );
         });
       }
+    }).whenComplete(() {
+      // AUDIT C5 — dispose all four controllers.
+      urlController.dispose();
+      qualityController.dispose();
+      sizeController.dispose();
+      fileNameController.dispose();
     });
   }
 
@@ -912,15 +984,24 @@ class _EditMoviePageState extends State<EditMoviePage> {
       ),
     ).then((result) {
       if (result == true && urlController.text.trim().isNotEmpty) {
+        // Capture values BEFORE disposing controllers below.
+        final url = urlController.text.trim();
+        final quality = qualityController.text.trim();
+        final size = sizeController.text.trim();
         setState(() {
           _watchLinks[index] = MovieWatchLink(
             serverName: selectedServer ?? 'Server 1',
-            url: urlController.text.trim(),
-            quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-            size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+            url: url,
+            quality: quality.isEmpty ? null : quality,
+            size: size.isEmpty ? null : size,
           );
         });
       }
+    }).whenComplete(() {
+      // AUDIT C5 — dispose all three controllers.
+      urlController.dispose();
+      qualityController.dispose();
+      sizeController.dispose();
     });
   }
 
@@ -1114,16 +1195,21 @@ class _EditMoviePageState extends State<EditMoviePage> {
       ),
     ).then((result) {
       if (result == true && episodeNameController.text.trim().isNotEmpty) {
+        // Capture all values BEFORE disposing controllers below.
+        final epName = episodeNameController.text.trim();
+        final url = urlController.text.trim();
+        final quality = qualityController.text.trim();
+        final size = sizeController.text.trim();
+        final fileName = fileNameController.text.trim();
         setState(() {
-          final epName = episodeNameController.text.trim();
           final existingIndex = _seasons[seasonIndex].episodes.indexWhere((e) => e.name == epName);
           if (existingIndex >= 0) {
             _seasons[seasonIndex].episodes[existingIndex].downloadLinks.add(MovieDownloadLink(
               serverName: selectedServer ?? 'Server 1',
-              url: urlController.text.trim(),
-              quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-              size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
-              fileName: fileNameController.text.trim().isEmpty ? null : fileNameController.text.trim(),
+              url: url,
+              quality: quality.isEmpty ? null : quality,
+              size: size.isEmpty ? null : size,
+              fileName: fileName.isEmpty ? null : fileName,
             ));
           } else {
             _seasons[seasonIndex].episodes.add(Episode(
@@ -1131,10 +1217,10 @@ class _EditMoviePageState extends State<EditMoviePage> {
               downloadLinks: [
                 MovieDownloadLink(
                   serverName: selectedServer ?? 'Server 1',
-                  url: urlController.text.trim(),
-                  quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-                  size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
-                  fileName: fileNameController.text.trim().isEmpty ? null : fileNameController.text.trim(),
+                  url: url,
+                  quality: quality.isEmpty ? null : quality,
+                  size: size.isEmpty ? null : size,
+                  fileName: fileName.isEmpty ? null : fileName,
                 ),
               ],
               watchLinks: [],
@@ -1142,6 +1228,13 @@ class _EditMoviePageState extends State<EditMoviePage> {
           }
         });
       }
+    }).whenComplete(() {
+      // AUDIT C5 — dispose all five controllers.
+      episodeNameController.dispose();
+      qualityController.dispose();
+      sizeController.dispose();
+      urlController.dispose();
+      fileNameController.dispose();
     });
   }
 
@@ -1186,15 +1279,19 @@ class _EditMoviePageState extends State<EditMoviePage> {
       ),
     ).then((result) {
       if (result == true && episodeNameController.text.trim().isNotEmpty) {
+        // Capture all values BEFORE disposing controllers below.
+        final epName = episodeNameController.text.trim();
+        final url = urlController.text.trim();
+        final quality = qualityController.text.trim();
+        final size = sizeController.text.trim();
         setState(() {
-          final epName = episodeNameController.text.trim();
           final existingIndex = _seasons[seasonIndex].episodes.indexWhere((e) => e.name == epName);
           if (existingIndex >= 0) {
             _seasons[seasonIndex].episodes[existingIndex].watchLinks.add(MovieWatchLink(
               serverName: selectedServer ?? 'Server 1',
-              url: urlController.text.trim(),
-              quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-              size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+              url: url,
+              quality: quality.isEmpty ? null : quality,
+              size: size.isEmpty ? null : size,
             ));
           } else {
             _seasons[seasonIndex].episodes.add(Episode(
@@ -1203,15 +1300,21 @@ class _EditMoviePageState extends State<EditMoviePage> {
               watchLinks: [
                 MovieWatchLink(
                   serverName: selectedServer ?? 'Server 1',
-                  url: urlController.text.trim(),
-                  quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-                  size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+                  url: url,
+                  quality: quality.isEmpty ? null : quality,
+                  size: size.isEmpty ? null : size,
                 ),
               ],
             ));
           }
         });
       }
+    }).whenComplete(() {
+      // AUDIT C5 — dispose all four controllers.
+      episodeNameController.dispose();
+      qualityController.dispose();
+      sizeController.dispose();
+      urlController.dispose();
     });
   }
 
@@ -1256,16 +1359,27 @@ class _EditMoviePageState extends State<EditMoviePage> {
       ),
     ).then((result) {
       if (result == true && urlController.text.trim().isNotEmpty) {
+        // Capture all values BEFORE disposing controllers below.
+        final url = urlController.text.trim();
+        final quality = qualityController.text.trim();
+        final size = sizeController.text.trim();
+        final fileName = fileNameController.text.trim();
         setState(() {
           _seasons[seasonIndex].episodes[episodeIndex].downloadLinks.add(MovieDownloadLink(
             serverName: selectedServer ?? 'Server 1',
-            url: urlController.text.trim(),
-            quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-            size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
-            fileName: fileNameController.text.trim().isEmpty ? null : fileNameController.text.trim(),
+            url: url,
+            quality: quality.isEmpty ? null : quality,
+            size: size.isEmpty ? null : size,
+            fileName: fileName.isEmpty ? null : fileName,
           ));
         });
       }
+    }).whenComplete(() {
+      // AUDIT C5 — dispose all four controllers.
+      qualityController.dispose();
+      sizeController.dispose();
+      urlController.dispose();
+      fileNameController.dispose();
     });
   }
 
@@ -1307,15 +1421,24 @@ class _EditMoviePageState extends State<EditMoviePage> {
       ),
     ).then((result) {
       if (result == true && urlController.text.trim().isNotEmpty) {
+        // Capture all values BEFORE disposing controllers below.
+        final url = urlController.text.trim();
+        final quality = qualityController.text.trim();
+        final size = sizeController.text.trim();
         setState(() {
           _seasons[seasonIndex].episodes[episodeIndex].watchLinks.add(MovieWatchLink(
             serverName: selectedServer ?? 'Server 1',
-            url: urlController.text.trim(),
-            quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-            size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+            url: url,
+            quality: quality.isEmpty ? null : quality,
+            size: size.isEmpty ? null : size,
           ));
         });
       }
+    }).whenComplete(() {
+      // AUDIT C5 — dispose all three controllers.
+      qualityController.dispose();
+      sizeController.dispose();
+      urlController.dispose();
     });
   }
 
@@ -1362,16 +1485,27 @@ class _EditMoviePageState extends State<EditMoviePage> {
       ),
     ).then((result) {
       if (result == true && urlController.text.trim().isNotEmpty) {
+        // Capture all values BEFORE disposing controllers below.
+        final url = urlController.text.trim();
+        final quality = qualityController.text.trim();
+        final size = sizeController.text.trim();
+        final fileName = fileNameController.text.trim();
         setState(() {
           _seasons[seasonIndex].episodes[episodeIndex].downloadLinks[linkIndex] = MovieDownloadLink(
             serverName: selectedServer ?? 'Server 1',
-            url: urlController.text.trim(),
-            quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-            size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
-            fileName: fileNameController.text.trim().isEmpty ? null : fileNameController.text.trim(),
+            url: url,
+            quality: quality.isEmpty ? null : quality,
+            size: size.isEmpty ? null : size,
+            fileName: fileName.isEmpty ? null : fileName,
           );
         });
       }
+    }).whenComplete(() {
+      // AUDIT C5 — dispose all four controllers.
+      qualityController.dispose();
+      sizeController.dispose();
+      urlController.dispose();
+      fileNameController.dispose();
     });
   }
 
@@ -1415,15 +1549,24 @@ class _EditMoviePageState extends State<EditMoviePage> {
       ),
     ).then((result) {
       if (result == true && urlController.text.trim().isNotEmpty) {
+        // Capture all values BEFORE disposing controllers below.
+        final url = urlController.text.trim();
+        final quality = qualityController.text.trim();
+        final size = sizeController.text.trim();
         setState(() {
           _seasons[seasonIndex].episodes[episodeIndex].watchLinks[linkIndex] = MovieWatchLink(
             serverName: selectedServer ?? 'Server 1',
-            url: urlController.text.trim(),
-            quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-            size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+            url: url,
+            quality: quality.isEmpty ? null : quality,
+            size: size.isEmpty ? null : size,
           );
         });
       }
+    }).whenComplete(() {
+      // AUDIT C5 — dispose all three controllers.
+      qualityController.dispose();
+      sizeController.dispose();
+      urlController.dispose();
     });
   }
 

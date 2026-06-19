@@ -269,18 +269,26 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
                     )),
                     OutlinedButton.icon(
                       onPressed: () async {
+                        // AUDIT C5 — dispose the controller after the dialog
+                        // closes. Director name is captured via the dialog's
+                        // return value, so we can dispose before using it.
                         final controller = TextEditingController();
-                        final result = await showDialog<String>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: const Text('Add Director'),
-                            content: TextField(controller: controller, decoration: const InputDecoration(labelText: 'Director Name'), autofocus: true),
-                            actions: [
-                              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-                              ElevatedButton(onPressed: () => Navigator.pop(ctx, controller.text.trim()), child: const Text('Add')),
-                            ],
-                          ),
-                        );
+                        String? result;
+                        try {
+                          result = await showDialog<String>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('Add Director'),
+                              content: TextField(controller: controller, decoration: const InputDecoration(labelText: 'Director Name'), autofocus: true),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                                ElevatedButton(onPressed: () => Navigator.pop(ctx, controller.text.trim()), child: const Text('Add')),
+                              ],
+                            ),
+                          );
+                        } finally {
+                          controller.dispose();
+                        }
                         if (result != null && result.isNotEmpty) setState(() => _directors.add(result));
                       },
                       icon: const Icon(Icons.add),
@@ -311,31 +319,44 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
                     }),
                     OutlinedButton.icon(
                       onPressed: () async {
+                        // AUDIT C5 — dispose both controllers in finally.
+                        // Capture text values BEFORE disposal.
                         final nameController = TextEditingController();
                         final profileController = TextEditingController();
-                        final result = await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: const Text('Add Cast Member'),
-                            content: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                TextField(controller: nameController, decoration: const InputDecoration(labelText: 'Name *'), autofocus: true),
-                                const SizedBox(height: 8),
-                                TextField(controller: profileController, decoration: const InputDecoration(labelText: 'Profile Photo URL')),
+                        String? name;
+                        String? profile;
+                        try {
+                          final result = await showDialog<bool>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('Add Cast Member'),
+                              content: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  TextField(controller: nameController, decoration: const InputDecoration(labelText: 'Name *'), autofocus: true),
+                                  const SizedBox(height: 8),
+                                  TextField(controller: profileController, decoration: const InputDecoration(labelText: 'Profile Photo URL')),
+                                ],
+                              ),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                                ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
                               ],
                             ),
-                            actions: [
-                              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-                              ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
-                            ],
-                          ),
-                        );
-                        if (result == true && nameController.text.trim().isNotEmpty) {
+                          );
+                          if (result == true) {
+                            name = nameController.text.trim();
+                            profile = profileController.text.trim();
+                          }
+                        } finally {
+                          nameController.dispose();
+                          profileController.dispose();
+                        }
+                        if (name != null && name.isNotEmpty) {
                           setState(() {
                             _casts.add(CastMember(
-                              name: nameController.text.trim(),
-                              profilePath: profileController.text.trim().isEmpty ? null : profileController.text.trim(),
+                              name: name,
+                              profilePath: (profile == null || profile.isEmpty) ? null : profile,
                             ));
                           });
                         }
@@ -456,10 +477,15 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
       ),
     ).then((result) {
       if (result == true && controller.text.trim().isNotEmpty) {
+        // Capture value BEFORE disposing controller.
+        final seasonName = controller.text.trim();
         setState(() {
-          _seasons.add(Season(name: controller.text.trim()));
+          _seasons.add(Season(name: seasonName));
         });
       }
+    }).whenComplete(() {
+      // AUDIT C5 — dispose controller.
+      controller.dispose();
     });
   }
 
@@ -507,18 +533,23 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
       ),
     ).then((result) {
       if (result == true && episodeNameController.text.trim().isNotEmpty) {
+        // Capture all values BEFORE disposing controllers below.
+        final epName = episodeNameController.text.trim();
+        final url = urlController.text.trim();
+        final quality = qualityController.text.trim();
+        final size = sizeController.text.trim();
+        final fileName = fileNameController.text.trim();
         setState(() {
-          final epName = episodeNameController.text.trim();
           // Find existing episode or create new one
           final existingIndex = _seasons[seasonIndex].episodes.indexWhere((e) => e.name == epName);
           if (existingIndex >= 0) {
             // Add download link to existing episode
             _seasons[seasonIndex].episodes[existingIndex].downloadLinks.add(MovieDownloadLink(
               serverName: selectedServer ?? 'Server 1',
-              url: urlController.text.trim(),
-              quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-              size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
-              fileName: fileNameController.text.trim().isEmpty ? null : fileNameController.text.trim(),
+              url: url,
+              quality: quality.isEmpty ? null : quality,
+              size: size.isEmpty ? null : size,
+              fileName: fileName.isEmpty ? null : fileName,
             ));
           } else {
             // Create new episode with this download link
@@ -527,10 +558,10 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
               downloadLinks: [
                 MovieDownloadLink(
                   serverName: selectedServer ?? 'Server 1',
-                  url: urlController.text.trim(),
-                  quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-                  size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
-                  fileName: fileNameController.text.trim().isEmpty ? null : fileNameController.text.trim(),
+                  url: url,
+                  quality: quality.isEmpty ? null : quality,
+                  size: size.isEmpty ? null : size,
+                  fileName: fileName.isEmpty ? null : fileName,
                 ),
               ],
               watchLinks: [],
@@ -538,6 +569,13 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
           }
         });
       }
+    }).whenComplete(() {
+      // AUDIT C5 — dispose all five controllers.
+      episodeNameController.dispose();
+      qualityController.dispose();
+      sizeController.dispose();
+      urlController.dispose();
+      fileNameController.dispose();
     });
   }
 
@@ -582,16 +620,20 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
       ),
     ).then((result) {
       if (result == true && episodeNameController.text.trim().isNotEmpty) {
+        // Capture all values BEFORE disposing controllers below.
+        final epName = episodeNameController.text.trim();
+        final url = urlController.text.trim();
+        final quality = qualityController.text.trim();
+        final size = sizeController.text.trim();
         setState(() {
-          final epName = episodeNameController.text.trim();
           final existingIndex = _seasons[seasonIndex].episodes.indexWhere((e) => e.name == epName);
           if (existingIndex >= 0) {
             // Add watch link to existing episode
             _seasons[seasonIndex].episodes[existingIndex].watchLinks.add(MovieWatchLink(
               serverName: selectedServer ?? 'Server 1',
-              url: urlController.text.trim(),
-              quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-              size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+              url: url,
+              quality: quality.isEmpty ? null : quality,
+              size: size.isEmpty ? null : size,
             ));
           } else {
             // Create new episode with this watch link
@@ -601,15 +643,21 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
               watchLinks: [
                 MovieWatchLink(
                   serverName: selectedServer ?? 'Server 1',
-                  url: urlController.text.trim(),
-                  quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-                  size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+                  url: url,
+                  quality: quality.isEmpty ? null : quality,
+                  size: size.isEmpty ? null : size,
                 ),
               ],
             ));
           }
         });
       }
+    }).whenComplete(() {
+      // AUDIT C5 — dispose all four controllers.
+      episodeNameController.dispose();
+      qualityController.dispose();
+      sizeController.dispose();
+      urlController.dispose();
     });
   }
 
@@ -778,16 +826,27 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
       ),
     ).then((result) {
       if (result == true && urlController.text.trim().isNotEmpty) {
+        // Capture all values BEFORE disposing controllers below.
+        final url = urlController.text.trim();
+        final quality = qualityController.text.trim();
+        final size = sizeController.text.trim();
+        final fileName = fileNameController.text.trim();
         setState(() {
           _seasons[seasonIndex].episodes[episodeIndex].downloadLinks.add(MovieDownloadLink(
             serverName: selectedServer ?? 'Server 1',
-            url: urlController.text.trim(),
-            quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-            size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
-            fileName: fileNameController.text.trim().isEmpty ? null : fileNameController.text.trim(),
+            url: url,
+            quality: quality.isEmpty ? null : quality,
+            size: size.isEmpty ? null : size,
+            fileName: fileName.isEmpty ? null : fileName,
           ));
         });
       }
+    }).whenComplete(() {
+      // AUDIT C5 — dispose all four controllers.
+      qualityController.dispose();
+      sizeController.dispose();
+      urlController.dispose();
+      fileNameController.dispose();
     });
   }
 
@@ -829,15 +888,24 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
       ),
     ).then((result) {
       if (result == true && urlController.text.trim().isNotEmpty) {
+        // Capture all values BEFORE disposing controllers below.
+        final url = urlController.text.trim();
+        final quality = qualityController.text.trim();
+        final size = sizeController.text.trim();
         setState(() {
           _seasons[seasonIndex].episodes[episodeIndex].watchLinks.add(MovieWatchLink(
             serverName: selectedServer ?? 'Server 1',
-            url: urlController.text.trim(),
-            quality: qualityController.text.trim().isEmpty ? null : qualityController.text.trim(),
-            size: sizeController.text.trim().isEmpty ? null : sizeController.text.trim(),
+            url: url,
+            quality: quality.isEmpty ? null : quality,
+            size: size.isEmpty ? null : size,
           ));
         });
       }
+    }).whenComplete(() {
+      // AUDIT C5 — dispose all three controllers.
+      qualityController.dispose();
+      sizeController.dispose();
+      urlController.dispose();
     });
   }
 
