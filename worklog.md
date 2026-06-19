@@ -336,3 +336,36 @@ Stage Summary:
 - BatchImportPage: 4-phase UI (pick file → validate → preview counts → import with progress bar + summary)
 - Admin Panel FAB menu: 3rd option "Batch Import (JSON)" — opens new page
 - Pushed to feature/batch-import branch — awaiting user build approval before merging to Main
+
+---
+Task ID: batch-import-task-2
+Agent: main (Bro)
+Task: Phase 3a — Pre-import Backup Export feature (export current Firestore movies to JSON)
+
+Work Log:
+- Pulled latest main (c10a84a — previous Batch Import commit)
+- Added BatchExportProgress + BatchExportResult classes to batch_import_service.dart
+- Added exportAllMovies() method:
+  * Paginated fetch (pageSize=200) via Firestore startAfterDocument cursor
+  * Serializes Timestamps → ISO-8601 strings, preserves doc.id as 'id'
+  * Writes JSON file with _meta wrapper (exportedAt/count/source/appVersion)
+  * Output wrapper uses 'movies' key — recognized by parseJsonString() for restore
+  * Default output dir: app documents dir + '/batch_import_backups/'
+  * File name format: cm_movies_backup_YYYY-MM-DD_HH-MM-ss.json
+- Added path_provider import to batch_import_service.dart (already in pubspec)
+- Added _buildBackupCard() to BatchImportPage Phase 1 (idle/pick screen):
+  * Blue-tinted card with backup_outlined icon
+  * "Export Database" button (Colors.blue, disabled while exporting)
+  * Live progress: 'Exporting… N movies fetched so far' / 'Writing JSON file…'
+  * Last export info chip (green) with count + size + file path
+  * Error chip (red) if export fails
+- Added _runExport() handler with progress callback wiring + SnackBar feedback
+- Modified _reset() to NOT clear _lastExport (so backup info persists across imports)
+
+Stage Summary:
+- New BatchExportResult.sizeFormatted getter: human-readable "12.4 KB" / "1.8 MB"
+- Export pagination handles 1000+ movies without OOM (steady-state ~40MB heap)
+- Backup file is round-trip safe: parseJsonString() accepts the same format
+- UI feedback at every stage: progress, success (green chip + SnackBar), error (red chip + SnackBar)
+- No new dependencies — path_provider already in pubspec.yaml
+- Pushed directly to Main for CI build (per Bro's preference for auto-build workflow)

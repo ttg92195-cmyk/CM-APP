@@ -49,6 +49,13 @@ class _BatchImportPageState extends State<BatchImportPage> {
   BatchImportProgress? _progress;
   BatchImportResult? _result;
 
+  // Export (backup)
+  bool _isExporting = false;
+  int _exportedSoFar = 0;
+  bool _exportHasMore = true;
+  BatchExportResult? _lastExport;
+  String? _exportError;
+
   @override
   void dispose() {
     super.dispose();
@@ -221,11 +228,280 @@ class _BatchImportPageState extends State<BatchImportPage> {
 
           const SizedBox(height: 28),
 
+          // Backup section — recommended before any large import.
+          _buildBackupCard(isDark),
+
+          const SizedBox(height: 28),
+
           // Help / expected schema
           _buildSchemaHelpCard(isDark),
         ],
       ),
     );
+  }
+
+  // ===========================================================================
+  // BACKUP / EXPORT CARD
+  // ===========================================================================
+
+  Widget _buildBackupCard(bool isDark) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Colors.blue.withOpacity(0.4),
+          width: 1.2,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  Icons.backup_outlined,
+                  size: 20,
+                  color: Colors.blue.shade400,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Backup Before Import',
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Export all current movies & series to a JSON file. '
+                      'Recommended before any large import — if something '
+                      'goes wrong, you can re-import this file to restore.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: isDark ? Colors.white60 : Colors.black54,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // Last export info (if any)
+          if (_lastExport != null) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 8,
+              ),
+              decoration: BoxDecoration(
+                color: Colors.green.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: Colors.green.withOpacity(0.3),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.check_circle,
+                    size: 16,
+                    color: Colors.green.shade400,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Last backup: ${_lastExport!.count} movies • '
+                          '${_lastExport!.sizeFormatted}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.green.shade300,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _lastExport!.filePath,
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            color: isDark ? Colors.white54 : Colors.black54,
+                            fontFamily: 'monospace',
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+
+          // Export error (if any)
+          if (_exportError != null) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 8,
+              ),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: Colors.red.withOpacity(0.3),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.error_outline,
+                    size: 16,
+                    color: Colors.red.shade400,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _exportError!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.red.shade300,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+
+          // Export progress (while running)
+          if (_isExporting) ...[
+            Row(
+              children: [
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    _exportHasMore
+                        ? 'Exporting… $_exportedSoFar movies fetched so far'
+                        : 'Writing JSON file… $_exportedSoFar movies total',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isDark ? Colors.white70 : Colors.black87,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+          ],
+
+          // Action row
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _isExporting ? null : _runExport,
+                  icon: const Icon(Icons.download_outlined, size: 18),
+                  label: Text(
+                    _isExporting ? 'Exporting…' : 'Export Database',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: isDark
+                        ? Colors.white12
+                        : Colors.black12,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _runExport() async {
+    setState(() {
+      _isExporting = true;
+      _exportedSoFar = 0;
+      _exportHasMore = true;
+      _lastExport = null;
+      _exportError = null;
+    });
+
+    try {
+      final result = await _service.exportAllMovies(
+        onProgress: (p) {
+          if (mounted) {
+            setState(() {
+              _exportedSoFar = p.exportedSoFar;
+              _exportHasMore = p.hasMore;
+            });
+          }
+        },
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _lastExport = result;
+        _isExporting = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Backup complete: ${result.count} movies (${result.sizeFormatted})',
+          ),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isExporting = false;
+        _exportError = 'Export failed: $e';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Export failed: $e'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
   }
 
   Widget _buildSchemaHelpCard(bool isDark) {
@@ -1197,6 +1473,12 @@ class _BatchImportPageState extends State<BatchImportPage> {
       _cancelRequested = false;
       _progress = null;
       _result = null;
+      // NOTE: We intentionally do NOT reset _lastExport here — the backup
+      // info card should persist across imports so the user can see which
+      // backup file is the most recent one. Resetting _isExporting / error
+      // is fine in case the user navigated away mid-export.
+      _isExporting = false;
+      _exportError = null;
     });
   }
 }
