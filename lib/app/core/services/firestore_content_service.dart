@@ -1496,7 +1496,13 @@ class FirestoreContentService {
   /// Verify that the current user is an admin by checking Firestore directly.
   /// This provides defense-in-depth beyond just Firestore rules — even if rules
   /// are misconfigured, the client-side check prevents accidental admin operations.
-  Future<bool> _isCurrentUserAdmin() async {
+  ///
+  /// Public so [BatchImportService] can verify admin ONCE at the start of a
+  /// batch run, then pass `skipAdminCheck: true` to the per-item [addMovie]
+  /// calls. Before this was made public, every item in a 100-movie batch
+  /// import re-fetched the user doc, wasting 100 Firestore reads. See audit
+  /// finding C2.
+  Future<bool> isCurrentUserAdmin() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return false;
     try {
@@ -1512,12 +1518,22 @@ class FirestoreContentService {
 
   /// Throws an exception if the current user is not an admin.
   /// Call this at the start of every admin-only operation.
-  Future<void> _requireAdmin() async {
-    final isAdmin = await _isCurrentUserAdmin();
+  ///
+  /// Public so [BatchImportService] can call this ONCE at the start of a
+  /// batch import run. After that, the per-item [addMovie] calls can skip
+  /// the redundant per-item admin check by passing `skipAdminCheck: true`.
+  /// See audit finding C2.
+  Future<void> verifyAdmin() async {
+    final isAdmin = await isCurrentUserAdmin();
     if (!isAdmin) {
       throw Exception('Admin permission required. You are not authorized to perform this action.');
     }
   }
+
+  /// Private alias kept for backward compat with existing internal call sites
+  /// (updateMovie, deleteMovie, addGenre, updateGenre, etc. — none of which
+  /// are called from tight loops, so the per-call admin read is fine there).
+  Future<void> _requireAdmin() => verifyAdmin();
 
   // ==================== ADMIN CRUD OPERATIONS ====================
 
@@ -1534,8 +1550,26 @@ class FirestoreContentService {
   /// Add a new movie (admin only)
   /// Checks for duplicate tmdbId FIRST, then falls back to slug check.
   /// If a document with the same tmdbId exists, it updates instead of creating a duplicate.
-  Future<String> addMovie(Map<String, dynamic> data) async {
-    await _requireAdmin();
+  ///
+  /// {@template skipAdminCheck_param}
+  /// [skipAdminCheck] — when true, skips the per-call admin verification
+  /// Firestore read. CALLER IS RESPONSIBLE for having already verified admin
+  /// status (e.g. via [verifyAdmin]) before calling this in a tight loop.
+  /// Used by [BatchImportService.runImport] to avoid N redundant admin reads
+  /// for an N-movie import. Default is false (safe for one-off callers).
+  /// See audit finding C2.
+  /// {@endtemplate}
+  ///
+  /// Audit finding C1: counter increments / decrements now use a [WriteBatch]
+  /// instead of sequential `_incrementCount` / `_decrementCount` calls. A
+  /// movie with 3 genres + 2 tags used to issue 10 separate Firestore ops
+  /// (5 reads + 5 writes) for counter sync; now it issues 5 reads + 1 batch
+  /// write. For a 100-movie batch import that's 400 fewer writes per run.
+  Future<String> addMovie(
+    Map<String, dynamic> data, {
+    bool skipAdminCheck = false,
+  }) async {
+    if (!skipAdminCheck) await _requireAdmin();
     // Auto-generate slug if not provided
     if (!data.containsKey('slug') || (data['slug'] as String).isEmpty) {
       data['slug'] = _generateSlug(data['title'] as String);
@@ -1566,25 +1600,41 @@ class FirestoreContentService {
         safeData.remove('tags'); // Keep user's tags
         safeData.remove('isTrending'); // Keep user's trending status
 
-        // Update category counts
+        // Update category counts via WriteBatch (audit C1).
+        // We still need the per-name reads to compute current+1, but the
+        // writes are committed together instead of one-by-one.
         final oldCategories = List<String>.from(existingData['categories'] ?? []);
         final oldTags = List<String>.from(existingData['tags'] ?? []);
         final newCategories = List<String>.from(safeData['categories'] ?? oldCategories);
         final newTags = List<String>.from(safeData['tags'] ?? oldTags);
+
+        final batch = _firestore.batch();
+        // Also fold the movie update itself into the same batch — saves one
+        // round-trip. (Existing-by-tmdbId branch is the most common path
+        // for Batch Import because admins usually re-import to update.)
+        batch.update(existingByTmdbId.reference, safeData);
         for (final cat in oldCategories) {
-          if (!newCategories.contains(cat)) await _decrementCount(_genresRef, cat);
+          if (!newCategories.contains(cat)) {
+            await _batchDecrementCount(batch, _genresRef, cat);
+          }
         }
         for (final cat in newCategories) {
-          if (!oldCategories.contains(cat)) await _incrementCount(_genresRef, cat);
+          if (!oldCategories.contains(cat)) {
+            await _batchIncrementCount(batch, _genresRef, cat);
+          }
         }
         for (final tag in oldTags) {
-          if (!newTags.contains(tag)) await _decrementCount(_tagsRef, tag);
+          if (!newTags.contains(tag)) {
+            await _batchDecrementCount(batch, _tagsRef, tag);
+          }
         }
         for (final tag in newTags) {
-          if (!oldTags.contains(tag)) await _incrementCount(_tagsRef, tag);
+          if (!oldTags.contains(tag)) {
+            await _batchIncrementCount(batch, _tagsRef, tag);
+          }
         }
+        await batch.commit();
 
-        await existingByTmdbId.reference.update(safeData);
         return existingByTmdbId.id;
       }
     }
@@ -1610,25 +1660,36 @@ class FirestoreContentService {
       safeData.remove('tags');
       safeData.remove('isTrending');
 
-      // Update category counts
+      // Update category counts via WriteBatch (audit C1).
       final oldCategories = List<String>.from(existingData['categories'] ?? []);
       final oldTags = List<String>.from(existingData['tags'] ?? []);
       final newCategories = List<String>.from(safeData['categories'] ?? oldCategories);
       final newTags = List<String>.from(safeData['tags'] ?? oldTags);
+
+      final batch = _firestore.batch();
+      batch.update(existingDoc.reference, safeData);
       for (final cat in oldCategories) {
-        if (!newCategories.contains(cat)) await _decrementCount(_genresRef, cat);
+        if (!newCategories.contains(cat)) {
+          await _batchDecrementCount(batch, _genresRef, cat);
+        }
       }
       for (final cat in newCategories) {
-        if (!oldCategories.contains(cat)) await _incrementCount(_genresRef, cat);
+        if (!oldCategories.contains(cat)) {
+          await _batchIncrementCount(batch, _genresRef, cat);
+        }
       }
       for (final tag in oldTags) {
-        if (!newTags.contains(tag)) await _decrementCount(_tagsRef, tag);
+        if (!newTags.contains(tag)) {
+          await _batchDecrementCount(batch, _tagsRef, tag);
+        }
       }
       for (final tag in newTags) {
-        if (!oldTags.contains(tag)) await _incrementCount(_tagsRef, tag);
+        if (!oldTags.contains(tag)) {
+          await _batchIncrementCount(batch, _tagsRef, tag);
+        }
       }
+      await batch.commit();
 
-      await existingDoc.reference.update(safeData);
       return existingDoc.id;
     }
 
@@ -1636,23 +1697,26 @@ class FirestoreContentService {
     data['createdAt'] = FieldValue.serverTimestamp();
     data['updatedAt'] = FieldValue.serverTimestamp();
 
-    final docRef = await _moviesRef.add(data);
+    // Audit C1: fold genre/tag counter increments into a single WriteBatch
+    // that ALSO contains the new movie doc add. This saves N writes (one per
+    // genre/tag) plus a round-trip for the movie insert itself.
+    final batch = _firestore.batch();
+    final newDocRef = _moviesRef.doc();
+    batch.set(newDocRef, data);
 
-    // Update genre moviesCount
     if (data.containsKey('categories')) {
       for (final genreName in data['categories'] as List) {
-        await _incrementCount(_genresRef, genreName.toString());
+        await _batchIncrementCount(batch, _genresRef, genreName.toString());
       }
     }
-
-    // Update tag moviesCount
     if (data.containsKey('tags')) {
       for (final tagName in data['tags'] as List) {
-        await _incrementCount(_tagsRef, tagName.toString());
+        await _batchIncrementCount(batch, _tagsRef, tagName.toString());
       }
     }
+    await batch.commit();
 
-    return docRef.id;
+    return newDocRef.id;
   }
 
   /// Build a safe update map from TMDB data that only contains

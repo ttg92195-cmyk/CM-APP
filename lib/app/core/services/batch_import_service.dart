@@ -910,6 +910,21 @@ class BatchImportService {
     BatchImportAuditContext? auditContext,
   }) async {
     final startedAt = DateTime.now();
+
+    // =========================================================================
+    // AUDIT C2 — verify admin ONCE here, then pass skipAdminCheck:true to
+    // addMovie() for every item. Before this fix, addMovie() called
+    // _requireAdmin() on every invocation, which issued a Firestore read to
+    // the user doc per item. For a 1000-movie import that was 1000 wasted
+    // reads just to re-confirm what we already knew at the start of the run.
+    //
+    // Defense-in-depth is preserved: verifyAdmin() throws if the user is
+    // not an admin, and runImport() aborts before touching Firestore.
+    // Firestore security rules still apply to every individual write, so
+    // a privilege escalation (admin demoted mid-import) is contained.
+    // =========================================================================
+    await _contentService.verifyAdmin();
+
     final actionable = items
         .where((i) => i.status != BatchItemStatus.invalid)
         .toList(growable: false);
@@ -948,7 +963,11 @@ class BatchImportService {
         // addMovie() does its own duplicate re-check and counter sync.
         // It returns the doc ID. We don't need it, but the call is required
         // to trigger all the safety logic in FirestoreContentService.
-        await _contentService.addMovie(item.data);
+        //
+        // skipAdminCheck:true — admin was verified once at the start of
+        // runImport() (see top of this method). Skipping the per-item admin
+        // read saves N Firestore reads for an N-item import. See audit C2.
+        await _contentService.addMovie(item.data, skipAdminCheck: true);
 
         if (wasUpdate) {
           updated++;
