@@ -409,12 +409,22 @@ class _AdminPanelPageState extends State<AdminPanelPage>
         ],
         bottom: TabBar(
           controller: _tabController,
-          isScrollable: true,
+          isScrollable: false,
+          labelStyle: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
+          unselectedLabelStyle: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w500,
+          ),
+          labelPadding: const EdgeInsets.symmetric(horizontal: 2),
+          tabAlignment: TabAlignment.fill,
           tabs: [
             Tab(text: 'All (${currentAllPosts.length})'),
             Tab(text: 'Movies (${currentMovies.length})'),
             Tab(text: 'Series (${currentSeries.length})'),
-            const Tab(text: 'Genres/Tags'),
+            const Tab(text: 'Tags'),
             const Tab(text: 'Banner'),
             const Tab(text: 'Notify'),
           ],

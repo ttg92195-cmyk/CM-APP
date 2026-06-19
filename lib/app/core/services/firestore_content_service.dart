@@ -1361,10 +1361,38 @@ class FirestoreContentService {
     final result = <String, dynamic>{};
     for (final field in _tmdbUpdateFields) {
       if (newData.containsKey(field)) {
-        result[field] = newData[field];
+        final value = newData[field];
+
+        // CRITICAL: skip empty / null / blank values so we never overwrite an
+        // existing non-empty value with junk. This was the root cause of the
+        // "posters disappeared after Batch Import" bug — when a JSON import
+        // file omitted the poster field or set it to "", the old code would
+        // happily write an empty string over the existing poster URL, leaving
+        // the admin panel showing movies with no poster image.
+        //
+        // Rules:
+        //   - null            → skip (don't update)
+        //   - empty string    → skip (don't update — keep existing)
+        //   - whitespace-only → skip (don't update)
+        //   - empty list/map  → skip (don't wipe existing categories/tags/etc.)
+        //   - anything else   → update
+        if (_isEmptyValue(value)) continue;
+
+        result[field] = value;
       }
     }
     return result;
+  }
+
+  /// Returns true if [value] is "empty" in the sense that it should NOT be
+  /// used to overwrite an existing non-empty value during an update.
+  /// See [_buildSafeUpdateMap] for the rationale.
+  bool _isEmptyValue(dynamic value) {
+    if (value == null) return true;
+    if (value is String && value.trim().isEmpty) return true;
+    if (value is List && value.isEmpty) return true;
+    if (value is Map && value.isEmpty) return true;
+    return false;
   }
 
   /// Update a movie (admin only)

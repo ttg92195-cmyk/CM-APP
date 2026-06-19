@@ -548,3 +548,72 @@ Stage Summary:
 - Files changed: 2 (batch_import_service.dart +83 lines, batch_import_page.dart +111 lines)
 - Backward compatible: existing small/normal files behave exactly as before
 - Pushed directly to Main for CI build (per Bro's preference for auto-build workflow)
+
+---
+Task ID: fix-poster-and-tabs
+Agent: main (Bro)
+Task: Fix two regressions reported by Bro: (1) posters disappearing after Batch Import, (2) Admin Panel tabs Banner + Notify invisible
+
+Work Log:
+- Pulled latest origin/main (dea9b3e — Phase 3d) into local CM-APP
+- Verified clean working tree before starting work
+- Re-read admin_panel_page.dart TabBar section (lines 410-431)
+- Re-read firestore_content_service.dart _buildSafeUpdateMap() (lines 1349-1368)
+- Re-read movie.dart fullPosterUrl getter (lines 85-89)
+- Analyzed Bro's two screenshots via z-ai vision CLI:
+  * Screenshot 1: Admin Panel shows only 4 tabs (All/Movies/Series/Genres-Tags), Banner+Notify missing, All (0) empty
+  * Screenshot 2: After searching "n", posts appear but NO poster images, just text + grey/red placeholders
+
+ROOT CAUSE 1 — Poster disappearance:
+- The bug was in _buildSafeUpdateMap() in firestore_content_service.dart
+- When Batch Import processes an item with TMDB ID matching an existing movie,
+  addMovie() calls _buildSafeUpdateMap() to build the update payload.
+- The old code did: `if (newData.containsKey(field)) result[field] = newData[field];`
+- This meant: if the JSON file had a 'poster' field but it was an empty string "",
+  the empty string would be written to Firestore, overwriting the existing valid URL.
+- After the update, post.fullPosterUrl would return '' (empty), and the UI would
+  fall back to the grey/error placeholder instead of showing the poster.
+- Same problem applied to backdrop, overview, rating, casts, directors, etc.
+
+ROOT CAUSE 2 — Missing Banner/Notify tabs:
+- The TabBar had `isScrollable: true` with 6 tabs.
+- On narrower screens (Bro's phone), only 4 tabs fit before scrolling was needed.
+- Banner and Notify tabs were pushed off-screen to the right.
+- Bro didn't realize the tab bar was scrollable and thought they were gone.
+
+Fix 1 — _buildSafeUpdateMap() in firestore_content_service.dart (+30 lines):
+- Added new _isEmptyValue() helper that returns true for:
+  * null
+  * empty string
+  * whitespace-only string
+  * empty list
+  * empty map
+- Modified _buildSafeUpdateMap() to skip any field whose value _isEmptyValue()
+  returns true — so existing non-empty values in Firestore are preserved.
+- Added detailed comment explaining the bug and the fix.
+- This is backward-compatible: legitimate updates with non-empty values still
+  work exactly as before. Only empty/junk values are now filtered out.
+
+Fix 2 — TabBar in admin_panel_page.dart (+14 lines, -3 lines):
+- Changed `isScrollable: true` → `isScrollable: false`
+- Added `tabAlignment: TabAlignment.fill` so all 6 tabs share the available width evenly
+- Added explicit `labelStyle` and `unselectedLabelStyle` with fontSize: 11 so the
+  labels fit even when they include the post count ("All (26)")
+- Shortened "Genres/Tags" → "Tags" (the tab itself contains a sub-tab bar with
+  Genres / Tags / Collections, so the label is still accurate)
+- All 6 tabs now visible without scrolling on any screen width
+
+Stage Summary:
+- Posters will no longer be wiped when re-importing movies via Batch Import
+  (or via the existing TMDB generator, which uses the same code path)
+- Already-wiped posters from previous imports will need to be re-imported with
+  a JSON file that includes the correct poster URLs, OR Bro can manually edit
+  each affected movie via the Admin Panel's edit pencil icon.
+- Admin Panel now shows all 6 tabs (All / Movies / Series / Tags / Banner / Notify)
+  on every device, no scrolling needed.
+- Files changed: 2 (firestore_content_service.dart +30, admin_panel_page.dart +14/-3)
+- No Firestore rules changes needed
+- No new dependencies
+- Backward compatible: existing single-movie edits via updateMovie() are unaffected
+  (they use a different code path that doesn't call _buildSafeUpdateMap)
+- Pushed directly to Main for CI build (per Bro's preference for auto-build workflow)
