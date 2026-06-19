@@ -69,6 +69,21 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     }).toList();
   }
 
+  /// AUDIT H4 — Update a single user's fields in the LOCAL in-memory list
+  /// after a successful Firestore write. This avoids a full refetch
+  /// (which costs N reads where N = total user count) after every admin
+  /// action. The user can still pull-to-refresh or tap the refresh icon
+  /// in the AppBar to force a full reload from Firestore.
+  void _updateUserLocally(String uid, Map<String, dynamic> changes) {
+    if (!mounted) return;
+    setState(() {
+      final idx = _users.indexWhere((u) => u['uid'] == uid);
+      if (idx != -1) {
+        _users[idx] = {..._users[idx], ...changes};
+      }
+    });
+  }
+
   Future<void> _toggleBan(String uid, bool currentlyBanned) async {
     try {
       await _firestore.collection('users').doc(uid).update({
@@ -81,8 +96,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
             backgroundColor: currentlyBanned ? Colors.green : Colors.redAccent,
           ),
         );
+        // AUDIT H4 — patch local state instead of refetching all users.
+        _updateUserLocally(uid, {'isBanned': !currentlyBanned});
       }
-      _loadUsers();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -106,8 +122,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
             backgroundColor: Colors.orange,
           ),
         );
+        // AUDIT H4 — no visible field changes here, so no local patch
+        // needed and no full refetch either. The user list UI is unchanged.
       }
-      _loadUsers();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -131,8 +148,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
             backgroundColor: Colors.green,
           ),
         );
+        // AUDIT H4 — patch local state instead of refetching all users.
+        _updateUserLocally(uid, {'isAdmin': newRole == 'admin'});
       }
-      _loadUsers();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -267,7 +285,8 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                             ),
                           );
                         }
-                        _loadUsers();
+                        // AUDIT H4 — patch local state instead of refetching all users.
+                        _updateUserLocally(uid, {'isVip': false, 'vipExpiry': ''});
                       } catch (e) {
                         if (ctx.mounted) {
                           Navigator.pop(ctx);
@@ -322,7 +341,11 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                                 ),
                               );
                             }
-                            _loadUsers();
+                            // AUDIT H4 — patch local state instead of refetching all users.
+                            _updateUserLocally(uid, {
+                              'isVip': true,
+                              'vipExpiry': expiryString,
+                            });
                           } catch (e) {
                             if (ctx.mounted) {
                               Navigator.pop(ctx);
