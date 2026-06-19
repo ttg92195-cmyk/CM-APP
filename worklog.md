@@ -308,3 +308,31 @@ Stage Summary:
 - Auto-dismissing completion (5s) and failure (10s) notifications
 - Throttled notification updates (max 2x per second) to avoid performance impact
 - Unique notification IDs per task via stable hash of task ID
+
+---
+Task ID: batch-import-task-1
+Agent: main (Bro)
+Task: Implement Phase 2 of Batch Import feature — BatchImportService + BatchImportPage + Admin Panel entry point + file_picker dependency
+
+Work Log:
+- Read origin/main latest commits (banner fix c164dec, selection handle fix 88cec91, etc.)
+- Read firestore_content_service.dart addMovie() — has tmdbId+slug duplicate check, counter sync, idempotent updates
+- Read MovieDetail model — full schema with seasons/episodes/casts/downloadLinks/watchLinks
+- Read admin_panel_page.dart — TabBar with 6 tabs, FAB menu with Add Movie/Add Series
+- Read tmdb_generator_page.dart — existing TMDB batch import pattern (sequential loop, progress bar)
+- Read saf_storage_service.dart — folder-picker pattern (not file picker)
+- Created feature/batch-import branch
+- Added file_picker ^8.1.2 to pubspec.yaml (JSON file picking)
+- Created lib/app/core/services/batch_import_service.dart
+- Created lib/app/ui/screens/batch_import_page.dart
+- Added entry point in admin_panel_page.dart FAB menu (3rd option)
+
+Stage Summary:
+- file_picker package added (cross-platform JSON file picking, no native MethodChannel needed)
+- BatchImportService handles: parse → validate → preview classification → sequential import with progress callback
+- Validation: title required, type must be 'movie'/'series', uses MovieDetail.fromMap as schema validator
+- Preview: classifies items into new/update/skip (via tmdbId/slug duplicate check)
+- Import: sequential addMovie() calls (reuses existing safety logic), per-item error capture
+- BatchImportPage: 4-phase UI (pick file → validate → preview counts → import with progress bar + summary)
+- Admin Panel FAB menu: 3rd option "Batch Import (JSON)" — opens new page
+- Pushed to feature/batch-import branch — awaiting user build approval before merging to Main

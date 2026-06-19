@@ -46,6 +46,9 @@ dependencies:
   flutter_cache_manager: ^3.3.1
   # Internet connectivity monitoring — real-time connection state
   connectivity_plus: ^6.0.3
+  # File picker — for Batch Import (JSON file selection)
+  # Pinned to 8.x for Flutter 3.24.5 compatibility
+  file_picker: ^8.1.2
 
 dev_dependencies:
   flutter_launcher_icons: ^0.13.1

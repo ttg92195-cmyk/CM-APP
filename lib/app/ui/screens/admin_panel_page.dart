@@ -12,6 +12,7 @@ import 'package:cm_movies/app/ui/screens/add_series_page.dart';
 import 'package:cm_movies/app/ui/screens/edit_movie_page.dart';
 import 'package:cm_movies/app/ui/screens/admin_notification_page.dart';
 import 'package:cm_movies/app/ui/screens/admin_users_page.dart';
+import 'package:cm_movies/app/ui/screens/batch_import_page.dart';
 
 class AdminPanelPage extends StatefulWidget {
   const AdminPanelPage({super.key});
@@ -474,6 +475,22 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => const AddSeriesPage()),
+                ).then((_) => _loadInitialData());
+              },
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.upload_file, color: Color(0xFFE50914)),
+              title: const Text('Batch Import (JSON)'),
+              subtitle: const Text(
+                'Import multiple movies/series from a JSON file',
+                style: TextStyle(fontSize: 12),
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const BatchImportPage()),
                 ).then((_) => _loadInitialData());
               },
             ),
