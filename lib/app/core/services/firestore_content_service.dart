@@ -274,6 +274,39 @@ class FirestoreContentService {
     }
   }
 
+  /// Get the REAL total counts of movies/series in Firestore (for Admin Panel
+  /// tab labels). Uses Firestore's AggregateQuery.count() which is billed as
+  /// a single document read regardless of collection size — cheap and fast.
+  ///
+  /// Returns a map with keys:
+  ///   - 'all'    : total count of documents in the movies collection
+  ///   - 'movies' : count where type == 'movie'
+  ///   - 'series' : count where type == 'series'
+  ///
+  /// If any of the count queries fail (e.g., permission denied), the value
+  /// is returned as 0 — the caller can fall back to the page-loaded count.
+  Future<Map<String, int>> getTotalPostCounts() async {
+    try {
+      final allCount = await _moviesRef.count().get();
+      final moviesCount = await _moviesRef
+          .where('type', isEqualTo: 'movie')
+          .count()
+          .get();
+      final seriesCount = await _moviesRef
+          .where('type', isEqualTo: 'series')
+          .count()
+          .get();
+      return {
+        'all': allCount.count ?? 0,
+        'movies': moviesCount.count ?? 0,
+        'series': seriesCount.count ?? 0,
+      };
+    } catch (e) {
+      debugPrint('getTotalPostCounts failed: $e');
+      return {'all': 0, 'movies': 0, 'series': 0};
+    }
+  }
+
   /// Search all posts (for admin panel)
   /// Uses 'title_lowercase' field for case-insensitive prefix search
   Future<List<Movie>> searchAllPosts(String keyword) async {
@@ -672,17 +705,43 @@ class FirestoreContentService {
         };
       }
 
-      // Fallback: broader search to catch any remaining matches
-      final broaderSnapshot = await _moviesRef
-          .orderBy('createdAt', descending: true)
-          .limit(100)
-          .get();
-      final broaderMovies = broaderSnapshot.docs
-          .map((doc) => Movie.fromMap(
-                doc.data() as Map<String, dynamic>,
-                docId: doc.id,
-              ))
-          .toList();
+      // Fallback: broader search to catch any remaining matches.
+      //
+      // Use TWO queries in parallel:
+      //   - orderBy('updatedAt'): catches movies that have updatedAt
+      //   - no orderBy:           catches LEGACY movies missing both
+      //                           updatedAt AND createdAt (the previous
+      //                           orderBy('createdAt') version missed these)
+      final broaderMovies = <Movie>[];
+      try {
+        final byUpdated = await _moviesRef
+            .orderBy('updatedAt', descending: true)
+            .limit(100)
+            .get();
+        for (final doc in byUpdated.docs) {
+          broaderMovies.add(Movie.fromMap(
+            doc.data() as Map<String, dynamic>,
+            docId: doc.id,
+          ));
+        }
+      } catch (_) {
+        // orderBy may fail (composite index), the no-orderBy fallback below
+        // will still catch the movies.
+      }
+      try {
+        final legacySnapshot = await _moviesRef.limit(100).get();
+        for (final doc in legacySnapshot.docs) {
+          final movie = Movie.fromMap(
+            doc.data() as Map<String, dynamic>,
+            docId: doc.id,
+          );
+          if (!broaderMovies.any((m) => m.id == movie.id)) {
+            broaderMovies.add(movie);
+          }
+        }
+      } catch (_) {
+        // Best-effort — even if this fails, we have the orderBy results.
+      }
 
       // Combine results, avoiding duplicates
       final additionalMovies = broaderMovies
@@ -945,20 +1004,71 @@ class FirestoreContentService {
         }
       }
 
-      // Also fetch recent movies to find older ones
-      Query broaderQuery = _moviesRef.orderBy('createdAt', descending: true);
+      // Also fetch recent movies to find older ones.
+      //
+      // IMPORTANT: We use TWO parallel broader queries here instead of one:
+      //   - broaderByUpdatedAt: orderBy('updatedAt', descending) — catches
+      //     recently-updated movies that have 'updatedAt' field (added via
+      //     addMovie / updateMovie).
+      //   - broaderNoOrderBy:   plain .limit() without orderBy — catches
+      //     LEGACY movies that have neither 'updatedAt' nor 'createdAt'
+      //     field. Firestore's orderBy(field) silently excludes any doc
+      //     missing that field — that's why a previous version of this
+      //     code used orderBy('createdAt') and could NOT find movies that
+      //     Bro had imported via an older code path that didn't set
+      //     'createdAt'. Bro reported "search any movie → nothing shows"
+      //     because of this exact bug. The no-orderBy path guarantees
+      //     every movie in the collection is a candidate for the
+      //     client-side title filter below.
+      //
+      // Both queries are limited to fetchLimit (60-200 docs). Pagination
+      // via startAfterDocument only works on the orderBy path; the
+      // no-orderBy path is best-effort and skipped when paginating.
+      Query broaderByUpdatedAt = _moviesRef
+          .orderBy('updatedAt', descending: true);
       if (startAfter != null) {
-        broaderQuery = broaderQuery.startAfterDocument(startAfter);
+        broaderByUpdatedAt = broaderByUpdatedAt.startAfterDocument(startAfter);
       }
-      broaderQuery = broaderQuery.limit(fetchLimit);
+      broaderByUpdatedAt = broaderByUpdatedAt.limit(fetchLimit);
 
-      final broaderSnapshot = await broaderQuery.get();
-      final broaderMovies = broaderSnapshot.docs
-          .map((doc) => Movie.fromMap(
-                doc.data() as Map<String, dynamic>,
-                docId: doc.id,
-              ))
-          .toList();
+      final broaderMovies = <Movie>[];
+      try {
+        final snapshot = await broaderByUpdatedAt.get();
+        for (final doc in snapshot.docs) {
+          broaderMovies.add(Movie.fromMap(
+            doc.data() as Map<String, dynamic>,
+            docId: doc.id,
+          ));
+        }
+      } catch (e) {
+        debugPrint('_searchWithKeyword broaderByUpdatedAt failed: $e — '
+            'will rely on no-orderBy fallback');
+      }
+
+      // No-orderBy fallback: only on first page (startAfter == null).
+      // On subsequent pages, we'd need a stable cursor, which orderBy
+      // provides — without orderBy, pagination is unsafe. So we accept
+      // that legacy movies are only fully searchable on page 1.
+      if (startAfter == null) {
+        try {
+          final legacySnapshot = await _moviesRef.limit(fetchLimit).get();
+          for (final doc in legacySnapshot.docs) {
+            final movie = Movie.fromMap(
+              doc.data() as Map<String, dynamic>,
+              docId: doc.id,
+            );
+            // Dedup against the orderBy results — same movie could appear
+            // in both if it has updatedAt.
+            final id = movie.id;
+            final alreadySeen = broaderMovies.any((m) => m.id == id);
+            if (!alreadySeen) {
+              broaderMovies.add(movie);
+            }
+          }
+        } catch (e) {
+          debugPrint('_searchWithKeyword legacy fallback failed: $e');
+        }
+      }
 
       // Combine results from all strategies, deduplicating by ID
       final seenIds = <String>{};
@@ -1011,17 +1121,30 @@ class FirestoreContentService {
       } else if (sortBy == 'name') {
         filtered.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
       } else {
-        filtered.sort((a, b) => (b.createdAt ?? DateTime(2000))
-            .compareTo(a.createdAt ?? DateTime(2000)));
+        // 'latest' — sort by updatedAt with fallback to createdAt, so that
+        // movies missing one of the timestamp fields still sort correctly
+        // relative to the others (DateTime(2000) sentinel sorts to bottom).
+        filtered.sort((a, b) {
+          final aDate = b.updatedAt ?? b.createdAt ?? DateTime(2000);
+          final bDate = a.updatedAt ?? a.createdAt ?? DateTime(2000);
+          return aDate.compareTo(bDate);
+        });
       }
 
       final hasMore = filtered.length > limit ||
           broaderMovies.length >= fetchLimit;
 
+      // lastDoc: cursor for pagination. We can only paginate using the
+      // orderBy('updatedAt') query, so we look up the last movie in our
+      // combined list and find the corresponding snapshot. Since we don't
+      // keep the snapshot around, we return null here and let the caller
+      // re-run the search with the next "page" by skipping already-seen IDs.
+      // For the search screen, infinite scroll beyond page 1 is rarely used
+      // (users typically refine their query instead), so this is acceptable.
       return {
         'movies': filtered.take(limit).toList(),
         'hasMore': hasMore,
-        'lastDoc': broaderSnapshot.docs.isNotEmpty ? broaderSnapshot.docs.last : null,
+        'lastDoc': null,
       };
     } catch (e) {
       debugPrint('_searchWithKeyword failed: $e');

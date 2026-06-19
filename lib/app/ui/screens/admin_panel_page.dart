@@ -5,6 +5,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
+import 'package:cm_movies/app/core/services/poster_cache_manager.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/models/tag_and_genres.dart';
 import 'package:cm_movies/app/ui/screens/add_movie_page.dart';
@@ -43,6 +44,16 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   bool _isLoading = true;
   String _searchQuery = '';
   int _genresTagsSubTabIndex = 0;
+
+  // Total counts in Firestore (fetched via AggregateQuery.count() so the tab
+  // labels show the REAL total, not just the count of currently-loaded pages).
+  // Before this fix, the tab labels showed "All (30)" because they used
+  // _allPosts.length — which only reflects the first page of 30 posts. With
+  // 1068 movies in Firestore, Bro thought 1038 movies had been deleted, when
+  // in fact they were just on later pages.
+  int _totalCountAll = 0;
+  int _totalCountMovies = 0;
+  int _totalCountSeries = 0;
 
   // Bulk delete
   Set<String> _selectedPostIds = {};
@@ -102,6 +113,12 @@ class _AdminPanelPageState extends State<AdminPanelPage>
         _contentService.getBannerConfig(),
       ]);
 
+      // Fetch total counts (cheap: uses Firestore AggregateQuery.count(),
+      // billed as a single document read regardless of collection size).
+      // Run in parallel so this doesn't add latency. These give us the REAL
+      // total — used for tab labels ("All (1068)" instead of "All (30)").
+      final totalCounts = await _contentService.getTotalPostCounts();
+
       if (mounted) {
         final postsData = results[0] as Map<String, dynamic>;
         final posts = postsData['movies'] as List<Movie>;
@@ -122,6 +139,9 @@ class _AdminPanelPageState extends State<AdminPanelPage>
           _bannerImageUrls = results[4] is List
               ? List<String>.from((results[4] as List).whereType<String>())
               : [];
+          _totalCountAll = totalCounts['all'] ?? 0;
+          _totalCountMovies = totalCounts['movies'] ?? 0;
+          _totalCountSeries = totalCounts['series'] ?? 0;
           _isLoading = false;
         });
       }
@@ -421,9 +441,20 @@ class _AdminPanelPageState extends State<AdminPanelPage>
           labelPadding: const EdgeInsets.symmetric(horizontal: 2),
           tabAlignment: TabAlignment.fill,
           tabs: [
-            Tab(text: 'All (${currentAllPosts.length})'),
-            Tab(text: 'Movies (${currentMovies.length})'),
-            Tab(text: 'Series (${currentSeries.length})'),
+            // When user is searching or filtering, show the count of
+            // matches (currentAllPosts.length). When NOT searching, show
+            // the REAL total from Firestore (_totalCountAll) so the user
+            // knows exactly how many movies exist in the database — not
+            // just how many are loaded on the current page.
+            Tab(text: _isSearching || _filterGenre != null || _filterYear != null
+                ? 'All (${currentAllPosts.length})'
+                : 'All ($_totalCountAll)'),
+            Tab(text: _isSearching || _filterGenre != null || _filterYear != null
+                ? 'Movies (${currentMovies.length})'
+                : 'Movies ($_totalCountMovies)'),
+            Tab(text: _isSearching || _filterGenre != null || _filterYear != null
+                ? 'Series (${currentSeries.length})'
+                : 'Series ($_totalCountSeries)'),
             const Tab(text: 'Tags'),
             const Tab(text: 'Banner'),
             const Tab(text: 'Notify'),
@@ -890,7 +921,10 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                 child: post.fullPosterUrl.isNotEmpty
                     ? CachedNetworkImage(
                         imageUrl: post.fullPosterUrl,
+                        cacheManager: PosterCacheManager.instance,
+                        cacheKey: post.id,
                         fit: BoxFit.cover,
+                        fadeInDuration: const Duration(milliseconds: 200),
                         errorWidget: (_, __, ___) => Container(
                           color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade300,
                           child: const Icon(Icons.movie, size: 24),

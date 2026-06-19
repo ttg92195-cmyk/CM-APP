@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
+import 'package:cm_movies/app/core/services/poster_cache_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class MovieCard extends StatefulWidget {
@@ -67,7 +68,10 @@ class _MovieCardState extends State<MovieCard> {
                     child: widget.movie.fullPosterUrl.isNotEmpty
                         ? CachedNetworkImage(
                             imageUrl: widget.movie.fullPosterUrl,
+                            cacheManager: PosterCacheManager.instance,
+                            cacheKey: widget.movie.id, // stable key per movie
                             fit: BoxFit.cover,
+                            fadeInDuration: const Duration(milliseconds: 200),
                             placeholder: (context, url) => Container(
                               color: theme.colorScheme.surfaceContainerHighest,
                               child: const Center(
