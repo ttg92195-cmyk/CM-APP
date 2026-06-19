@@ -123,8 +123,8 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _loadGenres();
-    _loadImportedTmdbIds();
-    _loadDashboardStats();
+    // Single combined query — see _loadMoviesSnapshot() doc for why.
+    _loadMoviesSnapshot();
   }
 
   @override
@@ -161,43 +161,38 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
     }
   }
 
-  Future<void> _loadImportedTmdbIds() async {
+  /// =========================================================================
+  /// ONE-PASS DATA LOADER (replaces former _loadImportedTmdbIds + _loadDashboardStats)
+  /// =========================================================================
+  /// BEFORE this fix, opening the TMDB Generator page fired TWO separate
+  /// `movies.limit(5000).get()` queries — one in `_loadImportedTmdbIds()`
+  /// (extracted only tmdbId for the _importedTmdbIds set) and another in
+  /// `_loadDashboardStats()` (computed totalMovies / totalSeries / sync
+  /// counters / series status). Both iterated the same 5000 docs.
+  ///
+  /// Audit finding H1: this doubled Firebase reads on every page open.
+  /// Bro reported Firebase usage rising from 4.4% → 19% in one week; this
+  /// page was a major contributor since it's opened often during imports.
+  ///
+  /// NOW: one query, one pass. _importedTmdbIds + all dashboard stats are
+  /// populated in the same setState. Callers that previously invoked
+  /// `_loadImportedTmdbIds(); _loadDashboardStats();` in pairs now call
+  /// `_loadMoviesSnapshot();` once.
+  ///
+  /// Public aliases `_loadImportedTmdbIds()` and `_loadDashboardStats()`
+  /// are kept as thin wrappers so external references (e.g., the refresh
+  /// button on line 1131) continue to work without code churn.
+  /// =========================================================================
+  Future<void> _loadMoviesSnapshot() async {
+    if (mounted) setState(() => _isStatsLoading = true);
     try {
       final snapshot = await FirebaseFirestore.instance
           .collection('movies')
           .limit(5000)
           .get();
 
-      if (mounted) {
-        setState(() {
-          _importedTmdbIds.clear();
-          for (final doc in snapshot.docs) {
-            final rawTmdbId = doc.data()['tmdbId'];
-            if (rawTmdbId == null) continue;
-            final tmdbId = rawTmdbId is int
-                ? rawTmdbId
-                : int.tryParse(rawTmdbId.toString());
-            if (tmdbId != null && tmdbId > 0) {
-              _importedTmdbIds.add(tmdbId);
-            }
-          }
-        });
-        debugPrint('Imported tmdbIds loaded: ${_importedTmdbIds.length} items');
-      }
-    } catch (e) {
-      debugPrint('Error loading imported tmdbIds: $e');
-    }
-  }
-
-  /// Load comprehensive dashboard stats from Firestore in a single pass
-  Future<void> _loadDashboardStats() async {
-    setState(() => _isStatsLoading = true);
-    try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('movies')
-          .limit(5000)
-          .get();
-
+      // Local accumulators — populated in a single pass.
+      final importedTmdbIds = <int>{};
       int totalMovies = 0;
       int totalSeries = 0;
       int moviesNeedSync = 0;
@@ -207,13 +202,24 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
 
       for (final doc in snapshot.docs) {
         final data = doc.data();
-        final type = data['type']?.toString();
-        final tmdbId = data['tmdbId'];
+        final rawTmdbId = data['tmdbId'];
 
+        // --- collect tmdbId for _importedTmdbIds ---
+        if (rawTmdbId != null) {
+          final tmdbId = rawTmdbId is int
+              ? rawTmdbId
+              : int.tryParse(rawTmdbId.toString());
+          if (tmdbId != null && tmdbId > 0) {
+            importedTmdbIds.add(tmdbId);
+          }
+        }
+
+        // --- compute dashboard stats ---
+        final type = data['type']?.toString();
         if (type == 'movie') {
           totalMovies++;
           // Need sync: has tmdbId but no lastSyncDate
-          if (tmdbId != null && tmdbId is int && tmdbId > 0) {
+          if (rawTmdbId != null && rawTmdbId is int && rawTmdbId > 0) {
             if (!data.containsKey('lastSyncDate')) {
               moviesNeedSync++;
             }
@@ -221,7 +227,7 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
         } else if (type == 'series') {
           totalSeries++;
           // Need sync: has tmdbId but no lastSyncDate
-          if (tmdbId != null && tmdbId is int && tmdbId > 0) {
+          if (rawTmdbId != null && rawTmdbId is int && rawTmdbId > 0) {
             if (!data.containsKey('lastSyncDate')) {
               seriesNeedSync++;
             }
@@ -238,6 +244,9 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
 
       if (mounted) {
         setState(() {
+          _importedTmdbIds
+            ..clear()
+            ..addAll(importedTmdbIds);
           _totalMovies = totalMovies;
           _totalSeries = totalSeries;
           _moviesNeedSync = moviesNeedSync;
@@ -248,14 +257,27 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
           _syncRemainingSeries = seriesNeedSync;
           _isStatsLoading = false;
         });
+        debugPrint('Movies snapshot loaded: '
+            '${_importedTmdbIds.length} tmdbIds, '
+            '$totalMovies movies, $totalSeries series, '
+            '$moviesNeedSync movies need sync, $seriesNeedSync series need sync');
       }
     } catch (e) {
-      debugPrint('Error loading dashboard stats: $e');
+      debugPrint('Error loading movies snapshot: $e');
       if (mounted) {
         setState(() => _isStatsLoading = false);
       }
     }
   }
+
+  /// Thin wrapper kept for backward compatibility with existing call sites
+  /// (e.g. the refresh button on the dashboard). Always refreshes BOTH the
+  /// imported tmdbId set AND the dashboard stats in a single Firestore query.
+  Future<void> _loadImportedTmdbIds() => _loadMoviesSnapshot();
+
+  /// Thin wrapper kept for backward compatibility. Always refreshes BOTH
+  /// the imported tmdbId set AND the dashboard stats in a single query.
+  Future<void> _loadDashboardStats() => _loadMoviesSnapshot();
 
   // ==================== SEARCH & IMPORT ====================
 
@@ -521,8 +543,8 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
         _selectedIds.clear();
       });
 
-      _loadImportedTmdbIds();
-      _loadDashboardStats();
+      // Single combined query (replaces the former pair).
+      _loadMoviesSnapshot();
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -713,8 +735,8 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
 
       if (mounted) {
         setState(() => _isSyncing = false);
-        _loadImportedTmdbIds();
-        _loadDashboardStats();
+        // Single combined query (replaces the former pair).
+        _loadMoviesSnapshot();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -909,8 +931,8 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
 
       if (mounted) {
         setState(() => _isSyncing = false);
-        _loadImportedTmdbIds();
-        _loadDashboardStats();
+        // Single combined query (replaces the former pair).
+        _loadMoviesSnapshot();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -1041,8 +1063,8 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
               onPressed: _isImporting || _isSyncing
                   ? null
                   : () {
-                      _loadImportedTmdbIds();
-                      _loadDashboardStats();
+                      // Single combined query (replaces the former pair).
+                      _loadMoviesSnapshot();
                     },
               tooltip: 'Refresh status',
             ),
@@ -1128,7 +1150,7 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
               if (!_isStatsLoading)
                 IconButton(
                   icon: const Icon(Icons.refresh, size: 20),
-                  onPressed: _loadDashboardStats,
+                  onPressed: _loadMoviesSnapshot,
                   tooltip: 'Refresh stats',
                 ),
             ],
