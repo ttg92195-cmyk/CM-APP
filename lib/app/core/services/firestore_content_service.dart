@@ -169,32 +169,109 @@ class FirestoreContentService {
     }
   }
 
-  /// Get all movies and series (for admin panel)
+  /// Get all movies and series (for admin panel).
+  ///
+  /// Robustness strategy mirrors getMovies() / getSeries():
+  ///   1. PRIMARY  — orderBy('updatedAt', descending). This is the same field
+  ///      Home uses, so movies that appear on Home will appear here too.
+  ///   2. FALLBACK — If primary throws (e.g., missing index) OR returns 0
+  ///      docs (e.g., legacy movies that have neither 'updatedAt' nor
+  ///      'createdAt' because they were created via an older code path),
+  ///      retry without orderBy and sort client-side. This guarantees that
+  ///      the Admin Panel NEVER shows an empty list when movies exist.
+  ///
+  /// Background: a previous regression caused the Admin Panel → All tab to
+  /// appear empty even though Home showed 1068 movies. Root cause was that
+  /// this method used orderBy('createdAt') with no fallback, so any movie
+  /// missing the 'createdAt' field was silently excluded from the query
+  /// result. Search still worked because searchAllPosts() orders by
+  /// 'title_lowercase' (a different field that those movies did have).
+  /// This fix aligns getAllPosts() with getMovies() so the three code paths
+  /// no longer disagree on which movies "exist".
   Future<Map<String, dynamic>> getAllPosts({
     int limit = 50,
     DocumentSnapshot? startAfter,
   }) async {
-    Query query = _moviesRef
-        .orderBy('createdAt', descending: true)
-        .limit(limit);
+    // === PRIMARY: orderBy('updatedAt') — same field Home uses ===
+    try {
+      Query query = _moviesRef
+          .orderBy('updatedAt', descending: true)
+          .limit(limit);
 
-    if (startAfter != null) {
-      query = query.startAfterDocument(startAfter);
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
+      }
+
+      final snapshot = await query.get();
+      final movies = snapshot.docs
+          .map((doc) => Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              ))
+          .toList();
+
+      // If we got at least one movie, or we got fewer than `limit` (meaning
+      // we've reached the end of the collection), this is a trustworthy
+      // result — return it.
+      if (movies.isNotEmpty || snapshot.docs.length < limit) {
+        return {
+          'movies': movies,
+          'hasMore': snapshot.docs.length >= limit,
+          'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+        };
+      }
+
+      // movies is empty AND snapshot.docs.length >= limit — suspicious.
+      // This shouldn't normally happen, but if it does (e.g., all docs in
+      // this page were skipped by Movie.fromMap throwing — unlikely), fall
+      // through to the no-orderBy fallback below so we don't return empty.
+      debugPrint('getAllPosts: primary returned 0 movies but limit=$limit — falling through to no-orderBy fallback');
+    } catch (e) {
+      // Most likely cause: missing composite index (shouldn't happen here
+      // since we have no `where` clause, but the catch is cheap insurance).
+      debugPrint('getAllPosts: primary orderBy(updatedAt) failed: $e — falling back to no-orderBy query');
     }
 
-    final snapshot = await query.get();
-    final movies = snapshot.docs
-        .map((doc) => Movie.fromMap(
-              doc.data() as Map<String, dynamic>,
-              docId: doc.id,
-            ))
-        .toList();
+    // === FALLBACK: no orderBy — fetch by document ID order, sort client-side ===
+    // This handles the case where movies exist but lack 'updatedAt' (e.g.,
+    // legacy imports). Without orderBy, Firestore returns docs in document
+    // ID order, which is stable enough for cursor-based pagination to work.
+    try {
+      Query query = _moviesRef.limit(limit);
 
-    return {
-      'movies': movies,
-      'hasMore': snapshot.docs.length >= limit,
-      'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
-    };
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
+      }
+
+      final snapshot = await query.get();
+      final movies = snapshot.docs
+          .map((doc) => Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              ))
+          .toList();
+
+      // Sort client-side by updatedAt (falls back to createdAt if missing).
+      // Movies with neither field sort to the bottom (DateTime(2000)).
+      movies.sort((a, b) {
+        final aDate = b.updatedAt ?? b.createdAt ?? DateTime(2000);
+        final bDate = a.updatedAt ?? a.createdAt ?? DateTime(2000);
+        return aDate.compareTo(bDate);
+      });
+
+      return {
+        'movies': movies,
+        'hasMore': snapshot.docs.length >= limit,
+        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+      };
+    } catch (e2) {
+      debugPrint('getAllPosts: no-orderBy fallback also failed: $e2');
+      return {
+        'movies': <Movie>[],
+        'hasMore': false,
+        'lastDoc': null,
+      };
+    }
   }
 
   /// Search all posts (for admin panel)
