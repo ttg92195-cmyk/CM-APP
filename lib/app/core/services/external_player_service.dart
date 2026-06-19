@@ -126,31 +126,4 @@ class ExternalPlayerService {
       return false;
     }
   }
-
-  /// Check if any external video player is available on the device
-  static Future<bool> isExternalPlayerAvailable() async {
-    if (!Platform.isAndroid) return true; // Assume available on non-Android
-
-    try {
-      // Try checking if VLC is available
-      final vlcIntent = Uri.parse(
-        'intent:#Intent;action=android.intent.action.VIEW;type=video/*;package=$_vlcPackage;end',
-      );
-      if (await canLaunchUrl(vlcIntent)) return true;
-
-      // Try checking if MX Player is available
-      final mxIntent = Uri.parse(
-        'intent:#Intent;action=android.intent.action.VIEW;type=video/*;package=$_mxPlayerPackage;end',
-      );
-      if (await canLaunchUrl(mxIntent)) return true;
-
-      // Generic video intent
-      final genericIntent = Uri.parse(
-        'intent:#Intent;action=android.intent.action.VIEW;type=video/*;end',
-      );
-      return await canLaunchUrl(genericIntent);
-    } catch (e) {
-      return false;
-    }
-  }
 }

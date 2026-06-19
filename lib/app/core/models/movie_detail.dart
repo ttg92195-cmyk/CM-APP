@@ -155,12 +155,6 @@ class MovieDetail {
     if (poster!.startsWith('http')) return poster!;
     return '';
   }
-
-  String get fullBackdropUrl {
-    if (backdrop == null || backdrop!.isEmpty) return '';
-    if (backdrop!.startsWith('http')) return backdrop!;
-    return '';
-  }
 }
 
 class CastMember {
