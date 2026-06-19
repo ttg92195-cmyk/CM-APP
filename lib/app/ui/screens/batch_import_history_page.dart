@@ -260,14 +260,45 @@ class _HistoryTile extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Title line: file name or "Import"
-                    Text(
-                      summary.sourceFileName ?? 'Import',
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    // Title line: file name (or "Import") + optional retry badge
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            summary.sourceFileName ?? 'Import',
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (summary.isRetry) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 5,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.purple.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(
+                                color: Colors.purple.withOpacity(0.5),
+                              ),
+                            ),
+                            child: const Text(
+                              '↻ RETRY',
+                              style: TextStyle(
+                                color: Colors.purple,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                     const SizedBox(height: 2),
                     // Meta line: timestamp + admin + duration
@@ -567,6 +598,7 @@ class _DetailBody extends StatelessWidget {
                     : '${record.durationMs} ms',
               ),
               _kv('Admin', record.adminEmail ?? record.id.substring(0, 8)),
+              _kv('Type', record.isRetry ? '↻ Retry (of failed items)' : 'Fresh import'),
               if (record.cancelled)
                 _kv('Status', 'Cancelled (partial)')
               else if (record.failed > 0)

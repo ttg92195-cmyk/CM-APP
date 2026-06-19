@@ -51,6 +51,9 @@ class _BatchImportPageState extends State<BatchImportPage> {
   bool _cancelRequested = false;
   BatchImportProgress? _progress;
   BatchImportResult? _result;
+  /// True when [_result] came from a retry run — used by the summary header
+  /// to say "Retry Complete!" instead of "Import Complete!".
+  bool _isRetryResult = false;
 
   // Export (backup)
   bool _isExporting = false;
@@ -1000,6 +1003,7 @@ class _BatchImportPageState extends State<BatchImportPage> {
       _phase = _Phase.importing;
       _progress = null;
       _result = null;
+      _isRetryResult = false;
     });
 
     // Build audit context (best-effort: if the user is somehow not signed
@@ -1044,6 +1048,106 @@ class _BatchImportPageState extends State<BatchImportPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Import aborted: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  /// Re-import only the items that failed in the previous run.
+  ///
+  /// This is invoked from the summary phase's "Retry Failed" button. It
+  /// re-uses the in-memory `_result.items` list (so we still have the full
+  /// movie data for each failed item) and delegates to
+  /// `BatchImportService.retryFailed()`.
+  ///
+  /// On completion, the summary screen shows the retry's outcomes (created /
+  /// updated / failed / skipped) — NOT the original batch's. The previous
+  /// failed-items list is replaced with whatever failed AGAIN in this retry.
+  /// A fresh audit log row is written with `isRetry: true`.
+  Future<void> _retryFailed() async {
+    final previousResult = _result;
+    if (previousResult == null) return;
+    if (previousResult.failed == 0) {
+      // Nothing to retry — defensive; the button should be hidden in this case.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No failed items to retry.'),
+          backgroundColor: Colors.blueGrey,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isImporting = true;
+      _cancelRequested = false;
+      _phase = _Phase.importing;
+      _progress = null;
+      // Keep _result around so _buildImportingPhase can show the total
+      // count of actionable items from the retry's perspective. We replace
+      // it with the retry result on completion.
+    });
+
+    // Build audit context with isRetry: true so the new audit row is marked.
+    String? appVersion;
+    try {
+      final info = await PackageInfo.fromPlatform();
+      appVersion = info.buildNumber.isEmpty
+          ? info.version
+          : '${info.version}+${info.buildNumber}';
+    } catch (_) {
+      // Non-fatal.
+    }
+
+    final auditContext = BatchImportService.currentAdminContext(
+      sourceFileName: _fileName != null ? '(retry) $_fileName' : '(retry)',
+      sourceFileSizeBytes: _fileSizeBytes,
+      appVersion: appVersion,
+    )?.copyWith(isRetry: true);
+
+    try {
+      final retryResult = await _service.retryFailed(
+        previousResult.items,
+        onProgress: (p) {
+          if (mounted) setState(() => _progress = p);
+        },
+        shouldStop: () => _cancelRequested,
+        auditContext: auditContext,
+      );
+      if (!mounted) return;
+      setState(() {
+        _result = retryResult;
+        _isRetryResult = true;
+        _isImporting = false;
+        _phase = _Phase.summary;
+      });
+
+      // Brief SnackBar to confirm what just happened.
+      final msg = retryResult.failed == 0
+          ? 'Retry complete: all ${retryResult.created + retryResult.updated} '
+              'previously-failed items now succeeded.'
+          : 'Retry partial: ${retryResult.created + retryResult.updated} '
+              'succeeded, ${retryResult.failed} still failing.';
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(msg),
+            backgroundColor:
+                retryResult.failed == 0 ? Colors.green : Colors.orange,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isImporting = false;
+        _phase = _Phase.summary;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Retry aborted: $e'),
           backgroundColor: Colors.red,
         ),
       );
@@ -1209,7 +1313,13 @@ class _BatchImportPageState extends State<BatchImportPage> {
               ),
               const SizedBox(height: 8),
               Text(
-                hasFailures ? 'Import Completed (with failures)' : 'Import Complete!',
+                _isRetryResult
+                    ? (hasFailures
+                        ? 'Retry Completed (with failures)'
+                        : 'Retry Complete!')
+                    : (hasFailures
+                        ? 'Import Completed (with failures)'
+                        : 'Import Complete!'),
                 style: theme.textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.w800,
                 ),
@@ -1342,30 +1452,64 @@ class _BatchImportPageState extends State<BatchImportPage> {
               ),
             ),
           ),
-          child: Row(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _reset,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Import Another'),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
+              // Retry button — full-width, only shown when there are failures.
+              // Suppressed after a retry run to avoid an infinite retry loop
+              // in the UI (admin can hit "Import Another" to start fresh).
+              if (hasFailures && !_isRetryResult) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: _retryFailed,
+                    icon: const Icon(Icons.replay),
+                    label: Text(
+                      'Retry ${failedItems.length} Failed Item'
+                      '${failedItems.length == 1 ? '' : 's'}',
+                    ),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.orange.shade700,
+                      foregroundColor: Colors.white,
+                      disabledBackgroundColor: isDark
+                          ? Colors.white12
+                          : Colors.black12,
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: () => Navigator.of(context).pop(result),
-                  icon: const Icon(Icons.check),
-                  label: const Text('Done'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFFE50914),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
+                const SizedBox(height: 10),
+              ],
+              // Bottom row: Import Another (outlined) + Done (filled red)
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _reset,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Import Another'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: () => Navigator.of(context).pop(result),
+                      icon: const Icon(Icons.check),
+                      label: const Text('Done'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFFE50914),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -1512,6 +1656,7 @@ class _BatchImportPageState extends State<BatchImportPage> {
       _cancelRequested = false;
       _progress = null;
       _result = null;
+      _isRetryResult = false;
       // NOTE: We intentionally do NOT reset _lastExport here — the backup
       // info card should persist across imports so the user can see which
       // backup file is the most recent one. Resetting _isExporting / error

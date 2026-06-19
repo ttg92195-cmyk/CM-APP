@@ -214,12 +214,19 @@ class BatchImportAuditContext {
   /// App version string (e.g. "2.0.1") — pulled from PackageInfo at call site.
   final String? appVersion;
 
+  /// True if this is a retry of a previous import's failed items.
+  /// The UI sets this when the admin taps "Retry Failed" on the summary
+  /// screen. The audit log uses this to display a "↻ Retry" badge so the
+  /// admin can distinguish a fresh import from a retry.
+  final bool isRetry;
+
   const BatchImportAuditContext({
     required this.adminUid,
     this.adminEmail,
     this.sourceFileName,
     this.sourceFileSizeBytes,
     this.appVersion,
+    this.isRetry = false,
   });
 
   /// Serialise to a Firestore-ready map (excluding timing fields, which are
@@ -230,7 +237,30 @@ class BatchImportAuditContext {
         'sourceFileName': sourceFileName,
         'sourceFileSizeBytes': sourceFileSizeBytes,
         'appVersion': appVersion,
+        'isRetry': isRetry,
       };
+
+  /// Returns a copy of this context with the given fields overridden.
+  /// Used by the UI when retrying failed items — the admin / source file
+  /// info stays the same, but [isRetry] is flipped to true and
+  /// [sourceFileName] gets a `(retry)` prefix.
+  BatchImportAuditContext copyWith({
+    String? adminUid,
+    String? adminEmail,
+    String? sourceFileName,
+    int? sourceFileSizeBytes,
+    String? appVersion,
+    bool? isRetry,
+  }) {
+    return BatchImportAuditContext(
+      adminUid: adminUid ?? this.adminUid,
+      adminEmail: adminEmail ?? this.adminEmail,
+      sourceFileName: sourceFileName ?? this.sourceFileName,
+      sourceFileSizeBytes: sourceFileSizeBytes ?? this.sourceFileSizeBytes,
+      appVersion: appVersion ?? this.appVersion,
+      isRetry: isRetry ?? this.isRetry,
+    );
+  }
 }
 
 /// One row in the import-history list (a thin view-model built from the
@@ -249,6 +279,7 @@ class BatchImportAuditSummary {
   final int skipped;
   final int? durationMs;
   final bool cancelled;
+  final bool isRetry;
   final int failedItemCount;
 
   const BatchImportAuditSummary({
@@ -264,6 +295,7 @@ class BatchImportAuditSummary {
     required this.skipped,
     required this.durationMs,
     required this.cancelled,
+    required this.isRetry,
     required this.failedItemCount,
   });
 
@@ -289,6 +321,7 @@ class BatchImportAuditSummary {
       skipped: (data['skipped'] as num?)?.toInt() ?? 0,
       durationMs: (data['durationMs'] as num?)?.toInt(),
       cancelled: (data['cancelled'] as bool?) ?? false,
+      isRetry: (data['isRetry'] as bool?) ?? false,
       failedItemCount: failedItems is List ? failedItems.length : 0,
     );
   }
@@ -320,6 +353,7 @@ class BatchImportAuditRecord extends BatchImportAuditSummary {
     required super.skipped,
     required super.durationMs,
     required super.cancelled,
+    required super.isRetry,
     required super.failedItemCount,
     required this.failedItems,
     required this.sampleCreated,
@@ -358,6 +392,7 @@ class BatchImportAuditRecord extends BatchImportAuditSummary {
       skipped: summary.skipped,
       durationMs: summary.durationMs,
       cancelled: summary.cancelled,
+      isRetry: summary.isRetry,
       failedItemCount: summary.failedItemCount,
       failedItems: failedItems,
       sampleCreated: toStringList(data['sampleCreated']),
@@ -890,6 +925,72 @@ class BatchImportService {
     }
 
     return result;
+  }
+
+  /// Re-import only the items that failed in a previous [runImport] call.
+  ///
+  /// Pass the SAME [items] list that was returned in [BatchImportResult.items]
+  /// — this method filters internally to just those whose `importResult ==
+  /// 'failure'`. Items that previously succeeded are NOT touched (they're
+  /// already in Firestore, and addMovie() would just no-op them anyway, but
+  /// skipping them is faster and produces a cleaner audit record).
+  ///
+  /// Each failed item's `importResult` / `importError` are reset to null so
+  /// the new attempt gets a fresh outcome. The original item `status`
+  /// (willCreate / willUpdate) is preserved — addMovie() re-checks duplicates
+  /// anyway, so a stale classification is harmless.
+  ///
+  /// If [auditContext] is provided, a NEW audit doc is written for the retry
+  /// run with `isRetry: true`. This way the history list shows both the
+  /// original import and the retry as separate entries — useful when
+  /// investigating what fixed (or didn't fix) a failure.
+  ///
+  /// Returns a [BatchImportResult] that covers ONLY the retried items —
+  /// `total` is the count of items retried (not the original batch size),
+  /// and `items` is the filtered list with fresh outcomes. The caller can
+  /// merge this back into its own state or display it standalone.
+  Future<BatchImportResult> retryFailed(
+    List<BatchImportItem> items, {
+    void Function(BatchImportProgress)? onProgress,
+    bool Function()? shouldStop,
+    BatchImportAuditContext? auditContext,
+  }) async {
+    // Filter to only the failed items. We use a growable=false list for
+    // consistency with runImport() and to avoid accidental mutation.
+    final failedItems = items
+        .where((i) => i.importResult == 'failure')
+        .toList(growable: false);
+
+    if (failedItems.isEmpty) {
+      // Nothing to retry — return an empty result. The caller should normally
+      // not even show a Retry button in this case, but we handle it safely.
+      return const BatchImportResult(
+        total: 0,
+        created: 0,
+        updated: 0,
+        failed: 0,
+        skipped: 0,
+        items: [],
+      );
+    }
+
+    // Reset failure state so we get fresh results from this attempt.
+    // Status (willCreate/willUpdate) is preserved — addMovie() re-checks.
+    for (final item in failedItems) {
+      item.importResult = null;
+      item.importError = null;
+    }
+
+    // Re-use the existing import loop. Since failedItems all have a non-invalid
+    // status (they made it past validation but failed at addMovie()), none
+    // will be filtered out by runImport's `status != invalid` check.
+    // runImport will record its own audit entry using the provided context.
+    return runImport(
+      failedItems,
+      onProgress: onProgress,
+      shouldStop: shouldStop,
+      auditContext: auditContext,
+    );
   }
 
   // ===========================================================================

@@ -426,3 +426,58 @@ Stage Summary:
 - Files changed: 3 (batch_import_service.dart +346 lines, batch_import_page.dart +43 lines, batch_import_history_page.dart +864 new)
 - Rules file: firestore.rules +11 lines (new batch_imports block)
 - Pushed directly to Main for CI build (per Bro's preference for auto-build workflow)
+
+---
+Task ID: phase-3c
+Agent: main (Bro)
+Task: Phase 3c — Per-failed-item retry (re-import only items that failed)
+
+Work Log:
+- Pulled latest origin/main (9605fa4 — Phase 3b audit log) into local CM-APP
+- Verified clean working tree before starting work
+- Re-read batch_import_service.dart end-to-end (1-1149 lines) to refresh full context
+
+Service layer (batch_import_service.dart):
+- Added isRetry field to BatchImportAuditContext (default false)
+- Added copyWith() method to BatchImportAuditContext for retry-flow (UI flips isRetry=true, prefixes sourceFileName with '(retry)')
+- toPartialFirestoreMap() now includes 'isRetry' so it's written to Firestore
+- Added isRetry field to BatchImportAuditSummary + fromDoc() (reads 'isRetry' with ?? false default — backward compatible with existing audit docs)
+- Added isRetry field to BatchImportAuditRecord (passes through to super)
+- Added new retryFailed() method (~50 lines):
+  * Filters items to only those with importResult == 'failure'
+  * Resets each failed item's importResult/importError to null
+  * Preserves item.status (willCreate/willUpdate) — addMovie() re-checks duplicates anyway
+  * Delegates to existing runImport() — no loop duplication, all safety logic reused
+  * If auditContext provided, runImport records a fresh audit doc with isRetry=true
+  * Returns new BatchImportResult covering only retried items (total = failed count, not original batch size)
+  * Empty-failed-list case returns empty result safely
+
+UI layer (batch_import_page.dart):
+- Added _isRetryResult state field — tracks whether _result came from a retry
+- Reset _isRetryResult=false in _reset() and at start of _startImport()
+- Added new _retryFailed() method:
+  * Defensive check: if result.failed == 0, show SnackBar and return
+  * Sets phase to importing, resets _cancelRequested/_progress
+  * Builds audit context with currentAdminContext, then copyWith(isRetry: true) + '(retry) filename' prefix
+  * Calls _service.retryFailed(previousResult.items, ...)
+  * On success: replaces _result with retryResult, sets _isRetryResult=true, shows SnackBar (green if all-good, orange if partial)
+  * On error: returns to summary phase, shows red SnackBar
+- Updated _buildSummaryPhase header text: 'Retry Complete!' / 'Retry Completed (with failures)' when _isRetryResult
+- Updated summary action bar: now a Column with full-width 'Retry N Failed Items' button (orange) when hasFailures && !_isRetryResult, then the existing row of Import Another + Done buttons
+  * Retry button is HIDDEN after a retry run to prevent UI-level infinite retry loops (admin can hit Import Another to start fresh)
+  * Button label dynamically pluralizes: 'Retry 1 Failed Item' vs 'Retry 3 Failed Items'
+
+History UI (batch_import_history_page.dart):
+- _HistoryTile: title row now uses a Row with Flexible(Text) + optional '↻ RETRY' badge (purple chip) when summary.isRetry
+- _DetailBody Overview section: added 'Type' row showing '↻ Retry (of failed items)' vs 'Fresh import'
+
+Stage Summary:
+- Retry flow: tap Retry Failed → re-imports only failed items → fresh audit log row with isRetry=true → summary shows retry outcomes (created/updated/failed/skipped of the retry, not original)
+- Retry is safe: re-uses runImport's existing addMovie() safety (duplicate detection, counter sync, idempotent updates)
+- Retry button is hidden after a retry to prevent UI loops — admin can still tap 'Import Another' to start over
+- Audit log distinguishes retry runs from fresh imports via isRetry field — visible in both list ('↻ RETRY' badge) and detail (Type row)
+- Backward compatible: old audit docs without 'isRetry' field default to false via ?? false
+- Files changed: 3 (batch_import_service.dart +99 lines, batch_import_page.dart +106 lines, batch_import_history_page.dart +37 lines)
+- No new dependencies — all features use existing firebase_auth, cloud_firestore, package_info_plus
+- No Firestore rules changes needed — retry writes to same batch_imports collection with same admin-only permission
+- Pushed directly to Main for CI build (per Bro's preference for auto-build workflow)
