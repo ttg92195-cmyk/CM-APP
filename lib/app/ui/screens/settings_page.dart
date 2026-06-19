@@ -2,13 +2,13 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/ui/screens/help_support_page.dart';
 import 'package:cm_movies/app/ui/screens/about_kmm_page.dart';
 import 'package:cm_movies/app/ui/screens/privacy_policy_page.dart';
 import 'package:cm_movies/app/ui/screens/vip_page.dart';
+import 'package:cm_movies/app/core/services/poster_cache_manager.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -33,13 +33,58 @@ class _SettingsPageState extends State<SettingsPage> {
   static const Color _cHelp = Color(0xFF8D6E63);
   static const Color _cPrivacy = Color(0xFF5C6BC0);
 
-  // Feature 3: Clear cache method — clears cached images, temp files, and non-critical preferences
+  // =========================================================================
+  // Clear cache — DESIGN CHANGE (audit finding C7)
+  // =========================================================================
+  // BEFORE this fix, _clearCache() did 3 things:
+  //   1. DefaultCacheManager().emptyCache()   ✓ OK — image cache
+  //   2. Wipe temp directory                  ✓ OK — temp files
+  //   3. WIPE SharedPreferences except 6 keys ✗ BUG — destroyed user data
+  //
+  // The 3rd step was a critical data-loss bug. The 6 "preserved" keys were
+  // only the AppConfig settings (theme/language/player/etc.), but
+  // SharedPreferences ALSO stores:
+  //   - 'bookmarked_movies'      -> user's bookmarks (BookmarkService)
+  //   - 'watchlist_movies'       -> user's watchlist (WatchlistService)
+  //   - 'recent_movies'          -> recently-viewed movies (RecentService)
+  //   - 'search_history_v1'      -> search history (SearchHistoryService)
+  //   - 'download_tasks'         -> download task list (DownloadManagerService)
+  //   - 'custom_download_dir'    -> user's chosen download folder
+  //   - 'saf_tree_uri/path'      -> SAF folder selection for downloads
+  //   - 'downloads_migrated_v2'  -> migration flag (wiping triggers re-migration)
+  //   - 'watch_pos_<id>' x N     -> video resume positions (video_player_screen)
+  //   - 'watch_dur_<id>' x N     -> video durations for resume
+  //
+  // Tapping "Clear Cache" silently destroyed ALL of the above. Bro would
+  // have lost bookmarks, watch progress, search history, and downloads.
+  //
+  // FIX: Removed the SharedPreferences wipe entirely. SharedPreferences
+  // doesn't actually store any "cache" — every key in there is either a
+  // user setting or user data that the user expects to persist. Real
+  // cache lives on disk in the cache directory, which is already cleared
+  // by steps 1 + 2 (DefaultCacheManager + temp dir).
+  //
+  // ALSO ADDED: PosterCacheManager.emptyCache() — the custom long-lived
+  // poster cache we added in commit 2c68b60. Without this, "Clear Cache"
+  // would leave 365-day-old posters on disk indefinitely.
+  // =========================================================================
   Future<void> _clearCache(BuildContext context) async {
     try {
-      // 1. Clear CachedNetworkImage cache (libcached_network_image)
+      // 1. Clear the default CachedNetworkImage cache.
       await DefaultCacheManager().emptyCache();
 
-      // 2. Clear temporary directory files
+      // 2. Clear our custom long-lived PosterCacheManager (posters +
+      //    backdrops cached for 365 days). This is the bulk of "cache"
+      //    on disk for CM Movies.
+      try {
+        await PosterCacheManager.instance.clearAllPosters();
+      } catch (e) {
+        // Best-effort — don't fail the whole clear if this one errors.
+        debugPrint('PosterCacheManager.emptyCache failed: $e');
+      }
+
+      // 3. Clear the OS temporary directory (where CachedNetworkImage
+      //    and other libs stash transient files).
       try {
         final tempDir = await getTemporaryDirectory();
         if (tempDir.existsSync()) {
@@ -60,22 +105,12 @@ class _SettingsPageState extends State<SettingsPage> {
         // Temp directory cleanup is best-effort
       }
 
-      // 3. Clear SharedPreferences except critical keys (theme, language, video player mode)
-      final prefs = await SharedPreferences.getInstance();
-      const criticalKeys = {
-        'app_theme',
-        'app_language',
-        'video_player_mode',
-        'download_enabled',
-        'downloads_notification',
-        'notification_enabled',
-      };
-      final allKeys = prefs.getKeys();
-      final keysToRemove =
-          allKeys.where((key) => !criticalKeys.contains(key)).toList();
-      for (final key in keysToRemove) {
-        await prefs.remove(key);
-      }
+      // 4. SharedPreferences is INTENTIONALLY NOT TOUCHED.
+      // Every key in there is either a user setting (theme, language,
+      // player mode, notification toggles) or user data (bookmarks,
+      // watchlist, recents, search history, download tasks, SAF folder
+      // selection, video resume positions, migration flags). Wiping
+      // them = silent data loss for the user. See method doc above.
 
       if (mounted) {
         final appConfig = Provider.of<AppConfig>(context, listen: false);
