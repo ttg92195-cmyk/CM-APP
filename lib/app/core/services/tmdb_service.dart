@@ -4,8 +4,43 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class TmdbService {
-  // API key loaded from .env file for security (not hardcoded in source code)
-  static String get _apiKey => dotenv.env['TMDB_API_KEY'] ?? '2e928cd76f7f5ae46f6e022f5dcc2612';
+  // ===========================================================================
+  // API key — SECURITY FIX (audit finding C8)
+  // ===========================================================================
+  // BEFORE this fix, the API key was hardcoded as a fallback in source code:
+  //   static String get _apiKey =>
+  //       dotenv.env['TMDB_API_KEY'] ?? '2e928cd76f7f5ae46f6e022f5dcc2612';
+  //
+  // That fallback defeated the whole purpose of using dotenv. Anyone reading
+  // the source (or the git history) could see the key, and the .env-based
+  // override became meaningless because the fallback always worked.
+  //
+  // FIX: Removed the hardcoded fallback. The key MUST come from .env now:
+  //   - Local dev: .env file (committed, contains the key)
+  //   - CI builds: .env file from checkout (same file)
+  //
+  // If TMDB_API_KEY is missing from .env, every TMDB call will HTTP 401 and
+  // _get() will throw a DioException. Callers already handle that path
+  // (TMDB lookups are best-effort, app continues to work using Firestore
+  // data alone). We also print a loud debugPrint so the missing key is
+  // obvious during development.
+  //
+  // NOTE: This is a client app, so the key is still bundled into the APK
+  // either way. The improvement is code organization (secrets in .env,
+  // not in source) and making the dependency on .env explicit.
+  // ===========================================================================
+  static String get _apiKey {
+    final key = dotenv.env['TMDB_API_KEY'] ?? '';
+    if (key.isEmpty) {
+      debugPrint(
+        '[TmdbService] TMDB_API_KEY is missing from .env file. '
+        'All TMDB API calls will fail with HTTP 401. '
+        'Add TMDB_API_KEY=<your_key> to .env (see .env.example).',
+      );
+    }
+    return key;
+  }
+
   static const String _baseUrl = 'https://api.themoviedb.org/3';
   static const String _imageBase = 'https://image.tmdb.org/t/p/w500';
 
