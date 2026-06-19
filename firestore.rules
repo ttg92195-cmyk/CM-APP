@@ -82,6 +82,18 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // BATCH_IMPORTS: audit log of past Batch Import runs.
+    // One document per import — contains adminUid, adminEmail, source file
+    // name, counts, failed-items list, etc. Admin-only because it exposes
+    // admin account info and source-file metadata that non-admins shouldn't
+    // see. The actual movie writes are still gated by the /movies/ rules
+    // above; this collection is purely for audit history.
+    match /batch_imports/{importId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update, delete: if isAdmin();
+    }
+
     // USER_DEVICES: device-tracking for device-limit feature.
     // Each user can read/write only their own device documents.
     // The doc ID is the device fingerprint; the doc stores uid, deviceName,

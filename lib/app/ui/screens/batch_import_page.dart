@@ -2,7 +2,9 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:cm_movies/app/core/services/batch_import_service.dart';
+import 'package:cm_movies/app/ui/screens/batch_import_history_page.dart';
 
 /// Full-screen page that walks the admin through a Batch Import flow:
 ///
@@ -32,6 +34,7 @@ class _BatchImportPageState extends State<BatchImportPage> {
   // File pick
   String? _filePath;
   String? _fileName;
+  int? _fileSizeBytes;
 
   // Parse
   BatchParseResult? _parseResult;
@@ -71,6 +74,18 @@ class _BatchImportPageState extends State<BatchImportPage> {
       appBar: AppBar(
         title: const Text('Batch Import (JSON)'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.history),
+            tooltip: 'Import History',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const BatchImportHistoryPage(),
+                ),
+              );
+            },
+          ),
           if (_phase == _Phase.preview || _phase == _Phase.parseError)
             IconButton(
               icon: const Icon(Icons.refresh),
@@ -600,11 +615,15 @@ class _BatchImportPageState extends State<BatchImportPage> {
         withData: false,
       );
       if (result == null) return;
-      final path = result.files.single.path;
+      final picked = result.files.single;
+      final path = picked.path;
       if (path == null) return;
       setState(() {
         _filePath = path;
-        _fileName = result.files.single.name;
+        _fileName = picked.name;
+        // file_picker returns size in bytes for most platforms; may be null
+        // on web-only flows, in which case we just record null.
+        _fileSizeBytes = picked.size > 0 ? picked.size : null;
         _parseResult = null;
         _parseError = null;
       });
@@ -983,6 +1002,24 @@ class _BatchImportPageState extends State<BatchImportPage> {
       _result = null;
     });
 
+    // Build audit context (best-effort: if the user is somehow not signed
+    // in, runImport() will still work — it just won't write an audit row).
+    String? appVersion;
+    try {
+      final info = await PackageInfo.fromPlatform();
+      appVersion = info.buildNumber.isEmpty
+          ? info.version
+          : '${info.version}+${info.buildNumber}';
+    } catch (_) {
+      // Non-fatal: audit log will simply have a null appVersion.
+    }
+
+    final auditContext = BatchImportService.currentAdminContext(
+      sourceFileName: _fileName,
+      sourceFileSizeBytes: _fileSizeBytes,
+      appVersion: appVersion,
+    );
+
     try {
       final result = await _service.runImport(
         _items!,
@@ -990,6 +1027,7 @@ class _BatchImportPageState extends State<BatchImportPage> {
           if (mounted) setState(() => _progress = p);
         },
         shouldStop: () => _cancelRequested,
+        auditContext: auditContext,
       );
       if (!mounted) return;
       setState(() {
@@ -1463,6 +1501,7 @@ class _BatchImportPageState extends State<BatchImportPage> {
       _phase = _Phase.idle;
       _filePath = null;
       _fileName = null;
+      _fileSizeBytes = null;
       _parseResult = null;
       _parseError = null;
       _isClassifying = false;

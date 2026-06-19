@@ -369,3 +369,60 @@ Stage Summary:
 - UI feedback at every stage: progress, success (green chip + SnackBar), error (red chip + SnackBar)
 - No new dependencies — path_provider already in pubspec.yaml
 - Pushed directly to Main for CI build (per Bro's preference for auto-build workflow)
+
+---
+Task ID: phase-3b
+Agent: main (Bro)
+Task: Phase 3b — Audit Log (record every batch import run + history UI)
+
+Work Log:
+- Pulled latest origin/main (d11af2a — Phase 3a backup/export) into local CM-APP
+- Added 3 new classes to batch_import_service.dart:
+  * BatchImportAuditContext (adminUid, adminEmail, sourceFileName, sourceFileSizeBytes, appVersion)
+  * BatchImportAuditSummary (lightweight list-row view-model, fromDoc factory)
+  * BatchImportAuditRecord (full detail view-model with failedItems + sample titles)
+- Added firebase_auth import to batch_import_service.dart (already in pubspec as ^5.3.1)
+- Modified runImport() to:
+  * Accept optional BatchImportAuditContext? auditContext param
+  * Track startedAt/completedAt/durationMs
+  * Set `cancelled` flag when shouldStop() triggers early exit
+  * After completion, call _recordAudit() (wrapped in try/catch so audit failures never break the import flow)
+- Added Phase 4 section to BatchImportService:
+  * auditCollectionName = 'batch_imports'
+  * _recordAudit() — writes one doc with full payload (failedItems capped at 200, sampleCreated/Updated capped at 20)
+  * listImports({limit = 50}) — newest-first one-shot fetch for history list
+  * getImport(String id) — full detail fetch including failed-items list
+  * deleteImport(String id) — for cleaning up accidental test imports
+  * static currentAdminContext() helper — wraps FirebaseAuth.instance.currentUser
+- Created new file: lib/app/ui/screens/batch_import_history_page.dart (864 lines)
+  * BatchImportHistoryPage — FutureBuilder + RefreshIndicator list of past imports
+  * _HistoryTile — colored status dot, file name, meta line (timestamp • duration • admin), count chips
+  * BatchImportAuditDetailPage — full record view with Overview / Counts / Failed Items / Sample Created / Sample Updated sections
+  * Delete record button with confirmation dialog (only removes audit entry, NOT the imported movies)
+  * Pull-to-refresh support (AlwaysScrollableScrollPhysics)
+  * Empty / error / loading states all implemented
+- Modified batch_import_page.dart:
+  * Added imports: package_info_plus, batch_import_history_page.dart
+  * Added History icon button to AppBar (always visible — opens BatchImportHistoryPage)
+  * Added _fileSizeBytes state field (populated from FilePicker result.size)
+  * _pickFile() now captures file size into _fileSizeBytes
+  * _startImport() now:
+    - Fetches app version via PackageInfo.fromPlatform() (best-effort, try/catch)
+    - Builds BatchImportAuditContext via BatchImportService.currentAdminContext()
+    - Passes auditContext to runImport()
+  * _reset() now clears _fileSizeBytes too
+- Updated firestore.rules:
+  * Added new match /batch_imports/{importId} block
+  * read/create/update/delete all admin-only (matches /movies/ pattern)
+  * Reason: collection exposes admin emails + source-file metadata
+  * NOTE: rules file change is in the commit, but actual deployment requires `firebase deploy --only firestore:rules` (not done by GitHub Actions build workflow)
+
+Stage Summary:
+- Every batch import now leaves a permanent audit trail in Firestore
+- Admin can browse past imports via the History icon in the AppBar
+- Each audit doc captures: who (adminUid/email), when (startedAt/completedAt/durationMs), what (sourceFileName/size), outcome (total/created/updated/failed/skipped/cancelled), and detail (failedItems list + sample titles)
+- Audit write is non-fatal: if Firestore rules reject it or network fails, the import itself still completes successfully
+- New Firestore collection 'batch_imports' requires rules deployment — Bro needs to run `firebase deploy --only firestore:rules` or paste the rules into Firebase Console
+- Files changed: 3 (batch_import_service.dart +346 lines, batch_import_page.dart +43 lines, batch_import_history_page.dart +864 new)
+- Rules file: firestore.rules +11 lines (new batch_imports block)
+- Pushed directly to Main for CI build (per Bro's preference for auto-build workflow)

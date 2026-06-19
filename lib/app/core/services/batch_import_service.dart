@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 
@@ -188,6 +189,181 @@ class BatchImportResult {
     required this.skipped,
     required this.items,
   });
+}
+
+/// Context passed into [BatchImportService.runImport] so the service can
+/// record an audit-log entry in the `batch_imports` Firestore collection
+/// after the import finishes (whether it succeeded, failed, or was cancelled).
+///
+/// The UI is responsible for filling in [adminUid] / [adminEmail] from
+/// `FirebaseAuth.instance.currentUser`. [sourceFileName] and
+/// [sourceFileSizeBytes] should come from the file picker result.
+class BatchImportAuditContext {
+  /// Firebase Auth UID of the admin who triggered the import.
+  final String adminUid;
+
+  /// Email of the admin (may be null for anonymous / phone-auth admins).
+  final String? adminEmail;
+
+  /// Display name of the JSON file the admin picked (basename only, no path).
+  final String? sourceFileName;
+
+  /// File size in bytes (helps when investigating large-file failures later).
+  final int? sourceFileSizeBytes;
+
+  /// App version string (e.g. "2.0.1") — pulled from PackageInfo at call site.
+  final String? appVersion;
+
+  const BatchImportAuditContext({
+    required this.adminUid,
+    this.adminEmail,
+    this.sourceFileName,
+    this.sourceFileSizeBytes,
+    this.appVersion,
+  });
+
+  /// Serialise to a Firestore-ready map (excluding timing fields, which are
+  /// filled in by [BatchImportService._recordAudit] at import-completion time).
+  Map<String, dynamic> toPartialFirestoreMap() => {
+        'adminUid': adminUid,
+        'adminEmail': adminEmail,
+        'sourceFileName': sourceFileName,
+        'sourceFileSizeBytes': sourceFileSizeBytes,
+        'appVersion': appVersion,
+      };
+}
+
+/// One row in the import-history list (a thin view-model built from the
+/// Firestore document). Kept deliberately small — the full failed-items
+/// list is only loaded when the user taps a row.
+class BatchImportAuditSummary {
+  final String id;
+  final DateTime? startedAt;
+  final DateTime? completedAt;
+  final String? adminEmail;
+  final String? sourceFileName;
+  final int total;
+  final int created;
+  final int updated;
+  final int failed;
+  final int skipped;
+  final int? durationMs;
+  final bool cancelled;
+  final int failedItemCount;
+
+  const BatchImportAuditSummary({
+    required this.id,
+    required this.startedAt,
+    required this.completedAt,
+    required this.adminEmail,
+    required this.sourceFileName,
+    required this.total,
+    required this.created,
+    required this.updated,
+    required this.failed,
+    required this.skipped,
+    required this.durationMs,
+    required this.cancelled,
+    required this.failedItemCount,
+  });
+
+  factory BatchImportAuditSummary.fromDoc(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>? ?? {};
+    DateTime? ts(dynamic v) {
+      if (v is Timestamp) return v.toDate();
+      if (v is DateTime) return v;
+      return null;
+    }
+
+    final failedItems = data['failedItems'];
+    return BatchImportAuditSummary(
+      id: doc.id,
+      startedAt: ts(data['startedAt']),
+      completedAt: ts(data['completedAt']),
+      adminEmail: data['adminEmail'] as String?,
+      sourceFileName: data['sourceFileName'] as String?,
+      total: (data['total'] as num?)?.toInt() ?? 0,
+      created: (data['created'] as num?)?.toInt() ?? 0,
+      updated: (data['updated'] as num?)?.toInt() ?? 0,
+      failed: (data['failed'] as num?)?.toInt() ?? 0,
+      skipped: (data['skipped'] as num?)?.toInt() ?? 0,
+      durationMs: (data['durationMs'] as num?)?.toInt(),
+      cancelled: (data['cancelled'] as bool?) ?? false,
+      failedItemCount: failedItems is List ? failedItems.length : 0,
+    );
+  }
+}
+
+/// Full audit record — including the failed-items list and sample
+/// created/updated titles. Returned by [BatchImportService.getImport].
+class BatchImportAuditRecord extends BatchImportAuditSummary {
+  /// Per-failed-item details: each entry has `sourceIndex`, `title`,
+  /// `tmdbId`, `type`, `error`.
+  final List<Map<String, dynamic>> failedItems;
+
+  /// Up to 20 titles that were successfully created (for quick eyeballing).
+  final List<String> sampleCreated;
+
+  /// Up to 20 titles that were successfully updated.
+  final List<String> sampleUpdated;
+
+  const BatchImportAuditRecord({
+    required super.id,
+    required super.startedAt,
+    required super.completedAt,
+    required super.adminEmail,
+    required super.sourceFileName,
+    required super.total,
+    required super.created,
+    required super.updated,
+    required super.failed,
+    required super.skipped,
+    required super.durationMs,
+    required super.cancelled,
+    required super.failedItemCount,
+    required this.failedItems,
+    required this.sampleCreated,
+    required this.sampleUpdated,
+  });
+
+  factory BatchImportAuditRecord.fromDoc(DocumentSnapshot doc) {
+    final summary = BatchImportAuditSummary.fromDoc(doc);
+    final data = doc.data() as Map<String, dynamic>? ?? {};
+
+    final rawFailed = data['failedItems'];
+    final failedItems = <Map<String, dynamic>>[];
+    if (rawFailed is List) {
+      for (final e in rawFailed) {
+        if (e is Map) {
+          failedItems.add(Map<String, dynamic>.from(e));
+        }
+      }
+    }
+
+    List<String> toStringList(dynamic v) {
+      if (v is List) return v.map((e) => e?.toString() ?? '').toList();
+      return const [];
+    }
+
+    return BatchImportAuditRecord(
+      id: summary.id,
+      startedAt: summary.startedAt,
+      completedAt: summary.completedAt,
+      adminEmail: summary.adminEmail,
+      sourceFileName: summary.sourceFileName,
+      total: summary.total,
+      created: summary.created,
+      updated: summary.updated,
+      failed: summary.failed,
+      skipped: summary.skipped,
+      durationMs: summary.durationMs,
+      cancelled: summary.cancelled,
+      failedItemCount: summary.failedItemCount,
+      failedItems: failedItems,
+      sampleCreated: toStringList(data['sampleCreated']),
+      sampleUpdated: toStringList(data['sampleUpdated']),
+    );
+  }
 }
 
 /// Service that orchestrates a Batch Import flow:
@@ -602,12 +778,20 @@ class BatchImportService {
   /// Calls [onProgress] after every item so the UI can update its progress bar.
   /// Stops early if [shouldStop] returns true — useful for a Cancel button.
   ///
+  /// If [auditContext] is provided, an entry is written to the
+  /// `batch_imports` Firestore collection after the import finishes
+  /// (whether it succeeded, partially failed, or was cancelled). The audit
+  /// write is wrapped in a try/catch so a Firestore permission or network
+  /// error never causes the import itself to appear failed.
+  ///
   /// Returns a [BatchImportResult] with per-item outcomes.
   Future<BatchImportResult> runImport(
     List<BatchImportItem> items, {
     void Function(BatchImportProgress)? onProgress,
     bool Function()? shouldStop,
+    BatchImportAuditContext? auditContext,
   }) async {
+    final startedAt = DateTime.now();
     final actionable = items
         .where((i) => i.status != BatchItemStatus.invalid)
         .toList(growable: false);
@@ -616,6 +800,7 @@ class BatchImportService {
     int updated = 0;
     int failed = 0;
     int skipped = items.length - actionable.length;
+    bool cancelled = false;
 
     final total = actionable.length;
     for (var i = 0; i < total; i++) {
@@ -625,6 +810,7 @@ class BatchImportService {
           actionable[j].importResult = 'skipped';
         }
         skipped += (total - i);
+        cancelled = true;
         break;
       }
 
@@ -677,13 +863,173 @@ class BatchImportService {
       ));
     }
 
-    return BatchImportResult(
+    final completedAt = DateTime.now();
+    final result = BatchImportResult(
       total: items.length,
       created: created,
       updated: updated,
       failed: failed,
       skipped: skipped,
       items: items,
+    );
+
+    // Record audit log entry. Failures here MUST NOT propagate — the import
+    // itself has already happened and the user needs to see its result.
+    if (auditContext != null) {
+      try {
+        await _recordAudit(
+          context: auditContext,
+          startedAt: startedAt,
+          completedAt: completedAt,
+          result: result,
+          cancelled: cancelled,
+        );
+      } catch (e) {
+        debugPrint('BatchImport audit log write failed (non-fatal): $e');
+      }
+    }
+
+    return result;
+  }
+
+  // ===========================================================================
+  // PHASE 4 — AUDIT LOG
+  // ===========================================================================
+
+  /// Firestore collection name where one document is written per import run.
+  /// Path: `batch_imports/{importId}`.
+  static const String auditCollectionName = 'batch_imports';
+
+  /// Write a single audit document to `batch_imports` describing the import
+  /// that just finished. The document ID is auto-generated by Firestore.
+  ///
+  /// Schema (see [BatchImportAuditContext] + [BatchImportResult]):
+  ///   {
+  ///     "startedAt":        Timestamp,
+  ///     "completedAt":      Timestamp,
+  ///     "durationMs":       int,
+  ///     "cancelled":        bool,
+  ///     "adminUid":         String,
+  ///     "adminEmail":       String?,
+  ///     "sourceFileName":   String?,
+  ///     "sourceFileSizeBytes": int?,
+  ///     "appVersion":       String?,
+  ///     "total":            int,
+  ///     "created":          int,
+  ///     "updated":          int,
+  ///     "failed":           int,
+  ///     "skipped":          int,
+  ///     "failedItems":      [{sourceIndex,title,tmdbId,type,error}, ...],
+  ///     "sampleCreated":    [String],   // up to 20 titles
+  ///     "sampleUpdated":    [String]    // up to 20 titles
+  ///   }
+  Future<void> _recordAudit({
+    required BatchImportAuditContext context,
+    required DateTime startedAt,
+    required DateTime completedAt,
+    required BatchImportResult result,
+    required bool cancelled,
+  }) async {
+    // Build the failed-items payload. Cap at 200 entries — anything bigger
+    // would push the doc above Firestore's 1 MB limit and isn't useful to
+    // review inline anyway (admin should re-import to fix).
+    final failedItems = <Map<String, dynamic>>[];
+    final failedFull =
+        result.items.where((i) => i.importResult == 'failure').toList();
+    for (final item in failedFull.take(200)) {
+      failedItems.add({
+        'sourceIndex': item.sourceIndex,
+        'title': item.displayTitle,
+        'tmdbId': item.tmdbId,
+        'type': item.displayType,
+        'error': item.importError,
+      });
+    }
+
+    // Capture up to 20 sample titles for each outcome so the history detail
+    // page can show "what got created" without re-fetching all movies.
+    final sampleCreated = result.items
+        .where((i) => i.importResult == 'success_create')
+        .take(20)
+        .map((i) => i.displayTitle)
+        .toList();
+    final sampleUpdated = result.items
+        .where((i) => i.importResult == 'success_update')
+        .take(20)
+        .map((i) => i.displayTitle)
+        .toList();
+
+    final payload = <String, dynamic>{
+      ...context.toPartialFirestoreMap(),
+      'startedAt': startedAt.toUtc(),
+      'completedAt': completedAt.toUtc(),
+      'durationMs': completedAt.difference(startedAt).inMilliseconds,
+      'cancelled': cancelled,
+      'total': result.total,
+      'created': result.created,
+      'updated': result.updated,
+      'failed': result.failed,
+      'skipped': result.skipped,
+      'failedItems': failedItems,
+      'sampleCreated': sampleCreated,
+      'sampleUpdated': sampleUpdated,
+    };
+
+    await _firestore.collection(auditCollectionName).add(payload);
+  }
+
+  /// Fetch the most recent [limit] audit entries, newest first.
+  ///
+  /// Used by the history list view. We deliberately use a one-shot `get()`
+  /// (not a stream) — the list doesn't need to live-update, and a one-shot
+  /// fetch is cheaper and simpler.
+  Future<List<BatchImportAuditSummary>> listImports({int limit = 50}) async {
+    final snap = await _firestore
+        .collection(auditCollectionName)
+        .orderBy('startedAt', descending: true)
+        .limit(limit)
+        .get();
+
+    return snap.docs.map(BatchImportAuditSummary.fromDoc).toList();
+  }
+
+  /// Fetch a single audit record by ID — including the full failed-items
+  /// list and sample title lists.
+  ///
+  /// Used by the history detail view when the admin taps a row.
+  Future<BatchImportAuditRecord> getImport(String id) async {
+    final doc = await _firestore.collection(auditCollectionName).doc(id).get();
+    if (!doc.exists) {
+      throw BatchImportException('Audit record not found: $id');
+    }
+    return BatchImportAuditRecord.fromDoc(doc);
+  }
+
+  /// Delete an audit record. Useful for cleaning up accidental test imports.
+  /// The actual imported movies are NOT touched — this only removes the
+  /// audit-log entry itself.
+  Future<void> deleteImport(String id) async {
+    await _firestore.collection(auditCollectionName).doc(id).delete();
+  }
+
+  /// Convenience helper: get the current admin's UID + email from
+  /// FirebaseAuth. Returns null if no user is signed in (in which case
+  /// the caller should skip the audit-context and just import without
+  /// recording — the import itself still works because addMovie() does
+  /// its own admin check).
+  static BatchImportAuditContext? currentAdminContext({
+    String? sourceFileName,
+    int? sourceFileSizeBytes,
+    String? appVersion,
+  }) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return null;
+    return BatchImportAuditContext(
+      adminUid: user.uid,
+      adminEmail: user.email,
+      sourceFileName: sourceFileName,
+      sourceFileSizeBytes: sourceFileSizeBytes,
+      appVersion: appVersion,
     );
   }
 
