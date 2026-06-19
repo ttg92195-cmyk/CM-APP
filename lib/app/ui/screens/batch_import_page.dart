@@ -62,6 +62,13 @@ class _BatchImportPageState extends State<BatchImportPage> {
   BatchExportResult? _lastExport;
   String? _exportError;
 
+  /// True when the picked file is above the service's soft warning threshold
+  /// (5 MB). Drives the orange "large file" chip styling and forces a
+  /// confirmation dialog before parsing.
+  bool get _isLargeFile =>
+      _fileSizeBytes != null &&
+      _fileSizeBytes! > BatchImportService.largeFileWarningBytes;
+
   @override
   void dispose() {
     super.dispose();
@@ -182,19 +189,47 @@ class _BatchImportPageState extends State<BatchImportPage> {
                 color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
-                  color: const Color(0xFFE50914).withOpacity(0.4),
+                  color: _isLargeFile
+                      ? Colors.orange.withOpacity(0.6)
+                      : const Color(0xFFE50914).withOpacity(0.4),
                 ),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.insert_drive_file, color: Color(0xFFE50914), size: 20),
+                  Icon(
+                    _isLargeFile ? Icons.warning_amber_rounded : Icons.insert_drive_file,
+                    color: _isLargeFile ? Colors.orange : const Color(0xFFE50914),
+                    size: 20,
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: Text(
-                      _fileName!,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _fileName!,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (_fileSizeBytes != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            _isLargeFile
+                                ? '${BatchImportService.formatFileSize(_fileSizeBytes!)} • large file — confirm before parsing'
+                                : BatchImportService.formatFileSize(_fileSizeBytes!),
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: _isLargeFile
+                                  ? Colors.orange.shade300
+                                  : (isDark ? Colors.white54 : Colors.black54),
+                              fontWeight: _isLargeFile ? FontWeight.w600 : FontWeight.w400,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                   IconButton(
@@ -202,6 +237,7 @@ class _BatchImportPageState extends State<BatchImportPage> {
                     onPressed: () => setState(() {
                       _filePath = null;
                       _fileName = null;
+                      _fileSizeBytes = null;
                     }),
                   ),
                 ],
@@ -645,6 +681,17 @@ class _BatchImportPageState extends State<BatchImportPage> {
 
   Future<void> _parseFile() async {
     if (_filePath == null) return;
+
+    // Large-file confirmation gate. The service has a hard 50 MB cap that
+    // throws after picking — but for files between 5 MB and 50 MB we want
+    // to give the admin a chance to back out BEFORE we kick off the parse,
+    // since parsing a 30 MB JSON file can take 5+ seconds on a low-end
+    // phone and uses ~200 MB of heap.
+    if (_isLargeFile) {
+      final confirmed = await _showLargeFileConfirmDialog();
+      if (!confirmed) return;
+    }
+
     setState(() {
       _phase = _Phase.parsing;
       _parseError = null;
@@ -682,6 +729,56 @@ class _BatchImportPageState extends State<BatchImportPage> {
         _phase = _Phase.parseError;
       });
     }
+  }
+
+  /// Confirmation dialog shown before parsing a file above
+  /// [BatchImportService.largeFileWarningBytes]. Returns true if the admin
+  /// tapped "Parse Anyway", false if they cancelled.
+  ///
+  /// This is a UX nudge only — the service's [BatchImportService.parseFile]
+  /// has its own hard cap that throws a [BatchImportException] for files
+  /// above [BatchImportService.maxFileSizeBytes].
+  Future<bool> _showLargeFileConfirmDialog() async {
+    if (!mounted) return false;
+    final sizeStr = _fileSizeBytes != null
+        ? BatchImportService.formatFileSize(_fileSizeBytes!)
+        : 'unknown';
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return AlertDialog(
+          icon: const Icon(Icons.warning_amber_rounded, color: Colors.orange),
+          title: const Text('Large File Warning'),
+          content: Text(
+            'The selected file is $sizeStr.\n\n'
+            'Parsing a large JSON file can take several seconds and uses '
+            'a lot of memory on low-end devices. If the app feels sluggish '
+            'or crashes, consider splitting the file into smaller batches '
+            'of ~1000 movies each.\n\n'
+            'Files larger than ${BatchImportService.formatFileSize(
+              BatchImportService.maxFileSizeBytes,
+            )} will be refused outright.\n\n'
+            'Do you want to continue?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Parse Anyway'),
+            ),
+          ],
+        );
+      },
+    );
+    return result ?? false;
   }
 
   // ===========================================================================

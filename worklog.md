@@ -481,3 +481,70 @@ Stage Summary:
 - No new dependencies — all features use existing firebase_auth, cloud_firestore, package_info_plus
 - No Firestore rules changes needed — retry writes to same batch_imports collection with same admin-only permission
 - Pushed directly to Main for CI build (per Bro's preference for auto-build workflow)
+
+---
+Task ID: phase-3d
+Agent: main (Bro)
+Task: Phase 3d — Memory safety for large files (hard caps + pre-parse warning UX)
+
+Work Log:
+- Pulled latest origin/main (2f9b551 — Phase 3c retry) into local CM-APP
+- Verified clean working tree before starting work
+- Re-read batch_import_service.dart end-to-end (1-1237 lines) to refresh full context
+- Re-read batch_import_page.dart end-to-end (1-1680 lines) to refresh full context
+
+Service layer (batch_import_service.dart):
+- Added 3 new static constants in a new "PHASE 3d — MEMORY SAFETY GUARDS" section:
+  * maxFileSizeBytes = 50 * 1024 * 1024 (50 MB hard cap)
+  * maxItemsPerImport = 5000 (hard cap on array length)
+  * largeFileWarningBytes = 5 * 1024 * 1024 (5 MB soft UX threshold)
+- Added static formatFileSize(int bytes) helper — returns "12.4 KB" / "1.8 MB" / etc.
+  Used by both service (in error messages) and UI (in chip + dialog), so they format consistently.
+- Modified parseFile():
+  * After file.exists() check, before reading bytes:
+    if (fileSize > maxFileSizeBytes) throw BatchImportException(...)
+  * Error message is admin-friendly: shows actual size, the limit, and what to do
+    ("split the file into smaller chunks of ~1000 movies each")
+  * Doc-comment updated to explain the layered guard (hard cap here + soft warning in UI)
+- Modified parseJsonString():
+  * After extracting the array (and confirming non-empty), before iterating:
+    if (array.length > maxItemsPerImport) throw BatchImportException(...)
+  * Error message tells admin exactly how many items they have, the limit, and that
+    re-running Batch Import on split files is safe (duplicates are auto-skipped)
+
+UI layer (batch_import_page.dart):
+- Added _isLargeFile getter on _BatchImportPageState:
+  returns true when _fileSizeBytes > BatchImportService.largeFileWarningBytes
+- Updated file chip (in _buildPickPhase):
+  * Border turns orange (instead of red) when _isLargeFile
+  * Icon switches to warning_amber_rounded (orange) when _isLargeFile
+  * Now shows a second line below the filename with the formatted file size
+  * For large files, that line says "12.3 MB • large file — confirm before parsing"
+    in orange bold; for normal files just shows "234 KB" in muted grey
+- Updated _parseFile():
+  * At the very start, before any state changes, if _isLargeFile is true:
+    show confirmation dialog via _showLargeFileConfirmDialog()
+  * If admin cancels (returns false), bail out without changing phase
+  * Only proceed to _Phase.parsing if confirmed or file is small
+- Added _showLargeFileConfirmDialog() (~40 lines):
+  * AlertDialog with warning_amber_rounded icon
+  * Title: "Large File Warning"
+  * Body: shows actual file size, explains memory/time implications, mentions
+    the 50 MB hard cap, suggests splitting into ~1000-movie batches
+  * Two buttons: "Cancel" (TextButton) + "Parse Anyway" (orange FilledButton)
+  * barrierDismissible: false — forces an explicit choice (no accidental parse)
+  * Returns bool? — null/false treated as cancel
+
+Stage Summary:
+- Three layers of protection against OOM/billing surprises:
+  1. UI soft warning (5 MB+): chip turns orange + dialog forces explicit confirm
+  2. Service hard cap on file size (50 MB): throws before any bytes are read
+  3. Service hard cap on item count (5000): throws after JSON decode, before iteration
+- All error messages are admin-actionable — they say exactly what's wrong and what to do
+- File size now visible in the chip for ALL files (not just large ones) — admin can
+  sanity-check at a glance that they picked the right file
+- No Firestore rules changes needed (no new collections / no new write paths)
+- No new dependencies — uses only existing dart:io File API
+- Files changed: 2 (batch_import_service.dart +83 lines, batch_import_page.dart +111 lines)
+- Backward compatible: existing small/normal files behave exactly as before
+- Pushed directly to Main for CI build (per Bro's preference for auto-build workflow)

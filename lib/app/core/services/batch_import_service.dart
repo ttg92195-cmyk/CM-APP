@@ -421,6 +421,55 @@ class BatchImportService {
         _firestore = firestore ?? FirebaseFirestore.instance;
 
   // ===========================================================================
+  // PHASE 3d — MEMORY SAFETY GUARDS
+  // ===========================================================================
+  //
+  // Hard caps to protect low-end devices from OOM-kills and Firestore from
+  // billing surprises. Tuned conservatively — typical admin exports are well
+  // under both limits.
+  //
+  //   maxFileSizeBytes:   a 50 MB JSON file decodes to ~300 MB of heap on a
+  //                       mid-range phone, which is enough to trigger Android's
+  //                       low-memory killer. Admins with bigger datasets should
+  //                       split the file or use Firestore's native import tools.
+  //
+  //   maxItemsPerImport:  5000 items × ~2 Firestore reads each (classify) +
+  //                       1 write each (addMovie) = ~15000 Firestore ops.
+  //                       That's still within free-tier daily quotas but takes
+  //                       ~10-15 minutes to import on a stable connection.
+  //                       Beyond this, the linear progress UX feels broken.
+
+  /// Absolute upper bound on the JSON file size we'll attempt to parse.
+  /// Files larger than this are refused outright — the admin should split
+  /// them or use Firestore's native import tools.
+  static const int maxFileSizeBytes = 50 * 1024 * 1024; // 50 MB
+
+  /// Absolute upper bound on the number of items we'll process in one import.
+  /// Larger arrays are refused to avoid (a) hours-long imports with no
+  /// resumability, (b) hitting Firestore daily write quotas accidentally,
+  /// (c) overwhelming the audit-log doc size when many items fail.
+  static const int maxItemsPerImport = 5000;
+
+  /// Soft warning threshold (5 MB). The UI uses this to show a confirmation
+  /// dialog before kicking off parse — gives the admin a chance to back out
+  /// if they accidentally picked a 40 MB file.
+  static const int largeFileWarningBytes = 5 * 1024 * 1024; // 5 MB
+
+  /// Human-readable file size, e.g. "12.4 KB" or "1.8 MB".
+  /// Kept as a static helper so the UI can format the same way the service
+  /// reports sizes in error messages.
+  static String formatFileSize(int bytes) {
+    const units = ['B', 'KB', 'MB', 'GB'];
+    var size = bytes.toDouble();
+    var unit = 0;
+    while (size >= 1024 && unit < units.length - 1) {
+      size /= 1024;
+      unit++;
+    }
+    return '${size.toStringAsFixed(size < 10 ? 1 : 0)} ${units[unit]}';
+  }
+
+  // ===========================================================================
   // PHASE 0 — EXPORT (BACKUP)
   // ===========================================================================
 
@@ -623,6 +672,12 @@ class BatchImportService {
   /// must be 'movie' or 'series' if present). Invalid items are kept in the
   /// returned list but flagged with status == invalid so the UI can preview
   /// them; they will be skipped during the import phase.
+  ///
+  /// Memory safety: files larger than [maxFileSizeBytes] are refused with a
+  /// clear [BatchImportException] before any bytes are read into memory.
+  /// The UI is expected to ALSO warn the admin before calling this method
+  /// when the file is above [largeFileWarningBytes] (5 MB) — that's a
+  /// soft UX nudge, this is a hard guard.
   Future<BatchParseResult> parseFile(String path) async {
     final file = File(path);
     if (!await file.exists()) {
@@ -635,6 +690,19 @@ class BatchImportService {
         items: [],
         parseErrors: [],
         isEmpty: true,
+      );
+    }
+
+    // Hard cap: refuse to even read files above the absolute max size.
+    // This prevents OOM-kills on low-end devices where the OS would
+    // otherwise let us allocate ~300 MB of heap and then crash the app.
+    if (fileSize > maxFileSizeBytes) {
+      throw BatchImportException(
+        'File is too large to import safely.\n'
+        'Size: ${formatFileSize(fileSize)} (limit: '
+        '${formatFileSize(maxFileSizeBytes)}).\n'
+        'Please split the file into smaller chunks of ~1000 movies each, '
+        'or use Firestore\'s native import tools for very large datasets.',
       );
     }
 
@@ -691,6 +759,21 @@ class BatchImportService {
         items: [],
         parseErrors: [],
         isEmpty: true,
+      );
+    }
+
+    // Hard cap on item count. Beyond this the import becomes impractical:
+    //   - Linear Firestore reads/writes would take 10+ minutes
+    //   - The audit-log doc would be oversized if many items failed
+    //   - Memory pressure from holding all BatchImportItem objects in RAM
+    //   - No resumability — if the app dies mid-import, all progress is lost
+    if (array.length > maxItemsPerImport) {
+      throw BatchImportException(
+        'Too many items in the JSON array.\n'
+        'Count: ${array.length} (limit: $maxItemsPerImport).\n'
+        'Please split the file into smaller batches of ~1000 movies each. '
+        'You can re-run Batch Import as many times as you want — duplicates '
+        'are detected and skipped automatically.',
       );
     }
 
