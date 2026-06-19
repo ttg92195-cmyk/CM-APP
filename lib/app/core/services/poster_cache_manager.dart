@@ -14,8 +14,15 @@ import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 ///
 /// This custom CacheManager:
 ///   - stalePeriod = 365 days: cached files stay on disk for a year
-///   - maxCacheSize = 500 MB: roughly ~5000-10000 posters (avg 50-100 KB each)
-///   - maxNrOfCacheObjects = 1000: more than enough for any browsing session
+///   - maxNrOfCacheObjects = 2000: roughly ~2000-4000 posters
+///
+/// NOTE on maxCacheSize:
+///   flutter_cache_manager 3.4.1 REMOVED the `maxCacheSize` parameter
+///   from `Config`. The library no longer enforces size-based eviction
+///   (it was buggy). Only `maxNrOfCacheObjects` and `stalePeriod` are
+///   honored now. We bumped `maxNrOfCacheObjects` from 1000 → 2000 to
+///   compensate (a typical poster is 50-100 KB, so 2000 objects ≈
+///   100-200 MB on disk — well within reasonable app cache limits).
 ///
 /// Usage in CachedNetworkImage:
 ///   CachedNetworkImage(
@@ -39,8 +46,9 @@ class PosterCacheManager extends CacheManager {
       : super(Config(
           key,
           stalePeriod: const Duration(days: 365),
-          maxNrOfCacheObjects: 1000,
-          maxCacheSize: 500 * 1024 * 1024, // 500 MB
+          maxNrOfCacheObjects: 2000,
+          // maxCacheSize was removed in flutter_cache_manager 3.4.1.
+          // See class doc above for the rationale.
         ));
 
   /// Convenience accessor used by CachedNetworkImage.cacheManager.
@@ -48,20 +56,17 @@ class PosterCacheManager extends CacheManager {
 
   /// Removes all cached files for this manager. Called from
   /// Settings → Clear Cache. Returns the count of files removed.
+  ///
+  /// NOTE: In flutter_cache_manager 3.4.1, `FileSystem.directory(key)`
+  /// was removed from the public API. The recommended way to clear the
+  /// cache is the public `emptyCache()` method, which does not return
+  /// a count. We return 0 to indicate "success, count unknown" —
+  /// callers that need an exact count should rely on the cache being
+  /// empty after this call rather than on the return value.
   Future<int> clearAllPosters() async {
     try {
-      int removed = 0;
-      await for (final file in store.fileSystem.directory(key).list(recursive: true)) {
-        if (file is dynamic && (file as dynamic).statSync != null) {
-          try {
-            await (file as dynamic).delete();
-            removed++;
-          } catch (_) {
-            // best-effort
-          }
-        }
-      }
-      return removed;
+      await emptyCache();
+      return 0;
     } catch (e) {
       debugPrint('PosterCacheManager.clearAllPosters failed: $e');
       return 0;

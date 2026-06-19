@@ -42,8 +42,13 @@ dependencies:
   flutter_local_notifications: ^17.0.0
   # URL launcher — open Telegram, external links
   url_launcher: ^6.2.4
-  # Cache manager — for clearing cached images
-  flutter_cache_manager: ^3.3.1
+  # Cache manager — for PosterCacheManager (long-lived poster caching).
+  # NOTE: Pinned with `>=` lower bound + `<` upper bound to avoid
+  # silent API breakage from minor version bumps. 3.4.0 removed
+  # `Config.maxCacheSize` and `FileSystem.directory(key)`, which
+  # broke our build once already. Allow 3.4.x (we've adapted the
+  # code to its API) but block 3.5.x+ until we review its changes.
+  flutter_cache_manager: '>=3.3.1 <3.5.0'
   # Internet connectivity monitoring — real-time connection state
   connectivity_plus: ^6.0.3
   # File picker — for Batch Import (JSON file selection)
