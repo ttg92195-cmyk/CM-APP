@@ -123,6 +123,31 @@ class _HomeScreenState extends State<HomeScreen> {
   /// initial load (initState → _loadData) and on pull-to-refresh.
   Future<void> refresh() => _refreshSilently();
 
+  /// Stop the auto-scroll timer WITHOUT touching the PageController.
+  /// Used during loading/refresh transitions so the timer doesn't keep
+  /// firing animateToPage() against a controller that may be unmounted
+  /// (because the skeleton replaces the banner in the widget tree).
+  void _pauseAutoScroll() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
+  }
+
+  /// Tear down the banner PageController so a fresh one is created on the
+  /// next _buildBannerSlider call. Used whenever the banner is about to
+  /// disappear from the widget tree (e.g. skeleton loading appears during
+  /// pull-to-refresh). Disposing the controller prevents the OLD detached
+  /// controller from being animated by a lingering timer and keeps
+  /// _currentAbsolutePage in sync with the new initialPage on rebuild.
+  void _resetBannerController() {
+    _pauseAutoScroll();
+    _bannerController?.dispose();
+    _bannerController = null;
+    // Reset to a safe default; _buildBannerSlider will set it to the
+    // new initialPage once the controller is recreated.
+    _currentAbsolutePage = 0;
+    _currentBannerIndex = 0;
+  }
+
   /// Silent background refresh — does NOT show skeleton loader. Used by
   /// refresh() above and by Navigator.push(...).then() callbacks in
   /// home_page.dart. Falls back to _loadData if lists are still empty.
@@ -183,6 +208,16 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadData() async {
+    // PAUSE the auto-scroll timer and tear down the banner controller
+    // BEFORE the skeleton replaces the banner in the widget tree. This
+    // closes the 'banner glitches during pull-to-refresh' bug: previously
+    // the timer kept ticking against the OLD (now-detached) controller
+    // while the skeleton was visible, and on data arrival a NEW controller
+    // was created with a fresh initialPage but the lingering timer was
+    // still pointing at the stale _currentAbsolutePage — producing rapid
+    // jumps/glitches.
+    _resetBannerController();
+
     setState(() {
       _isLoading = true;
       _error = null;
@@ -231,14 +266,21 @@ class _HomeScreenState extends State<HomeScreen> {
         });
 
         // Start the auto-scroll timer ONLY AFTER banner data has actually
-        // arrived. We use addPostFrameCallback so that the lazy
-        // _bannerController (created inside _buildBannerSlider on the next
-        // frame) is fully attached to the PageView before we read its
-        // initial page and start ticking the timer. This guarantees the
-        // timer's first tick targets the correct absolute page instead of
-        // jumping backwards from initialPage.
+        // arrived AND the banner widget is back in the tree (i.e. we are
+        // no longer showing the skeleton). We use addPostFrameCallback so
+        // that the lazy _bannerController (created inside _buildBannerSlider
+        // on the next frame) is fully attached to the PageView before we
+        // read its initial page and start ticking the timer. This
+        // guarantees the timer's first tick targets the correct absolute
+        // page instead of jumping backwards from initialPage.
+        //
+        // Defensive: also cancel any stale timer that may have survived
+        // from a previous load cycle — _startAutoScroll already does this,
+        // but doing it here makes the intent explicit and protects against
+        // future regressions.
+        _pauseAutoScroll();
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted && _bannerImageUrls.isNotEmpty) {
+          if (mounted && _bannerImageUrls.isNotEmpty && !_isLoading) {
             _startAutoScroll();
           }
         });
