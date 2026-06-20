@@ -403,10 +403,23 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                                         style: TextStyle(color: metaTextColor, fontSize: 13, fontWeight: FontWeight.w500)),
                                   if (detail.year != null && detail.year!.isNotEmpty)
                                     Text('·', style: TextStyle(color: metaTextColor, fontSize: 13)),
-                                  Icon(Icons.local_fire_department, size: 16, color: accentColor),
-                                  const SizedBox(width: 2),
-                                  Text(_formatRating(detail.rating),
-                                      style: TextStyle(color: accentColor, fontSize: 13, fontWeight: FontWeight.w600)),
+                                  // Rating: flame icon + rating text packed into a
+                                  // single Row so the Wrap's `spacing: 8` doesn't
+                                  // push them apart. Previously these were three
+                                  // separate Wrap children (icon, SizedBox(2),
+                                  // text) and the Wrap applied 8px of space
+                                  // between every pair — so the icon and its
+                                  // number ended up ~10px apart instead of the
+                                  // intended 4px. See Bro's '🔥       6.0' report.
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.local_fire_department, size: 16, color: accentColor),
+                                      const SizedBox(width: 4),
+                                      Text(_formatRating(detail.rating),
+                                          style: TextStyle(color: accentColor, fontSize: 13, fontWeight: FontWeight.w600)),
+                                    ],
+                                  ),
                                   Text('·', style: TextStyle(color: metaTextColor, fontSize: 13)),
                                   if (totalSeasons > 0)
                                     Text('Season $totalSeasons',
