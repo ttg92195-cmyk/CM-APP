@@ -134,6 +134,16 @@ class WatchlistService {
     }
   }
 
+  /// Wipe the LOCAL (logged-out) watchlist cache from SharedPreferences.
+  /// Called on logout to prevent one user's local-only watchlist from
+  /// leaking to another user on the same device. Firestore watchlist
+  /// (under /users/{uid}/watchlist) is per-UID by design and needs no
+  /// clearing here — it simply disappears with the auth session.
+  Future<void> clearAllLocalForLogout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_watchlistKey);
+  }
+
   Future<void> _saveLocalWatchlist(List<Movie> watchlist) async {
     final prefs = await SharedPreferences.getInstance();
     final encoded = json.encode(watchlist.map((m) => m.toMap()).toList());

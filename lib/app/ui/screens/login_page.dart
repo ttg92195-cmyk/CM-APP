@@ -118,8 +118,13 @@ class _LoginPageState extends State<LoginPage>
           final deviceResult = await deviceService.checkDeviceLimit(user.uid);
 
           if (!deviceResult.allowed) {
-            // Sign out the user since device limit is reached
-            await FirebaseAuth.instance.signOut();
+            // Sign out the user since device limit is reached.
+            // Use AppConfig.logoutUser() instead of FirebaseAuth.signOut()
+            // directly so that any local user-scoped caches (recents,
+            // local bookmark/watchlist fallbacks) are wiped before the
+            // auth session ends — prevents leakage between accounts on
+            // the same device.
+            await appConfig.logoutUser();
 
             if (mounted) {
               showDialog(

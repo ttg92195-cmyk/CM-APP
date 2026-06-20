@@ -143,6 +143,16 @@ class BookmarkService {
     await prefs.setString(_bookmarkKey, encoded);
   }
 
+  /// Wipe the LOCAL (logged-out) bookmark cache from SharedPreferences.
+  /// Called on logout to prevent one user's local-only bookmarks from
+  /// leaking to another user on the same device. Firestore bookmarks
+  /// (under /users/{uid}/bookmarks) are per-UID by design and need no
+  /// clearing here — they simply disappear with the auth session.
+  Future<void> clearAllLocalForLogout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_bookmarkKey);
+  }
+
   // Clear all bookmarks
   Future<void> clearBookmarks() async {
     if (_isLoggedIn && _userId != null) {

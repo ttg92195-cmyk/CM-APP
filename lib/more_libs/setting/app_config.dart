@@ -3,6 +3,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:onesignal_flutter/onesignal_flutter.dart';
+import 'package:cm_movies/app/core/services/recent_service.dart';
+import 'package:cm_movies/app/core/services/bookmark_service.dart';
+import 'package:cm_movies/app/core/services/watchlist_service.dart';
 
 class AppConfig extends ChangeNotifier {
   static const String _themeKey = 'app_theme';
@@ -265,6 +268,7 @@ class AppConfig extends ChangeNotifier {
 
         // Check if admin has banned this user — force logout
         if (data['isBanned'] == true) {
+          await _clearLocalUserData();
           await _auth.signOut();
           _currentUser = null;
           _isLoadingAuth = false;
@@ -278,6 +282,7 @@ class AppConfig extends ChangeNotifier {
           await _firestore.collection('users').doc(uid).update({
             'forceLogout': false,
           });
+          await _clearLocalUserData();
           await _auth.signOut();
           _currentUser = null;
           _isLoadingAuth = false;
@@ -499,6 +504,13 @@ class AppConfig extends ChangeNotifier {
 
   // Logout
   Future<void> logoutUser() async {
+    // Wipe per-user local caches BEFORE signing out so that the next
+    // account that logs in on this device starts from a clean state.
+    // This closes the 'Recently Viewed leakage between accounts' bug:
+    // previously, recents were stored under a GLOBAL SharedPreferences
+    // key, so Admin's recently-viewed list would appear under a freshly-
+    // logged-in regular user's Recently Viewed tab.
+    await _clearLocalUserData();
     try {
       await _auth.signOut();
     } catch (e) {
@@ -506,6 +518,37 @@ class AppConfig extends ChangeNotifier {
     }
     _currentUser = null;
     notifyListeners();
+  }
+
+  /// Wipe ALL user-scoped local data from SharedPreferences. Called by
+  /// every logout path (manual logout, banned-user auto-logout, force-
+  /// logout-by-admin, session-timeout auto-logout, device-limit-reached
+  /// sign-out, and account deletion) to guarantee session isolation.
+  ///
+  /// - RecentService: clears every `recent_movies_*` key (per-UID + anon)
+  /// - BookmarkService: clears the global `bookmarked_movies` local cache
+  ///   (Firestore bookmarks are per-UID by design and disappear with the
+  ///   auth session — no clearing needed for those)
+  /// - WatchlistService: clears the global `watchlist_movies` local cache
+  ///   (Firestore watchlist is per-UID by design — same reasoning)
+  ///
+  /// Idempotent and safe to call when no user is signed in.
+  Future<void> _clearLocalUserData() async {
+    try {
+      await RecentService().clearAllForLogout();
+    } catch (e) {
+      debugPrint('Clear recents on logout failed: $e');
+    }
+    try {
+      await BookmarkService().clearAllLocalForLogout();
+    } catch (e) {
+      debugPrint('Clear local bookmarks on logout failed: $e');
+    }
+    try {
+      await WatchlistService().clearAllLocalForLogout();
+    } catch (e) {
+      debugPrint('Clear local watchlist on logout failed: $e');
+    }
   }
 
   // M8: Delete user account (GDPR compliance)
@@ -542,7 +585,12 @@ class AppConfig extends ChangeNotifier {
       // 2. Delete Firebase Auth account
       await user.delete();
 
-      // 3. Clear local state
+      // 3. Wipe ALL local user-scoped caches (recents, local bookmark/
+      //    watchlist fallbacks) so nothing from this account leaks to
+      //    a future account on the same device.
+      await _clearLocalUserData();
+
+      // 4. Clear local state
       _currentUser = null;
       notifyListeners();
 
