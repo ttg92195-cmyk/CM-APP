@@ -309,6 +309,8 @@ class FirestoreContentService {
 
   /// Search all posts (for admin panel)
   /// Uses 'title_lowercase' field for case-insensitive prefix search
+  /// with substring fallback for short queries (1-2 chars) so that
+  /// single-character searches like "o" still return matches.
   Future<List<Movie>> searchAllPosts(String keyword) async {
     if (keyword.trim().isEmpty) return [];
 
@@ -324,12 +326,33 @@ class FirestoreContentService {
           .limit(50)
           .get();
 
-      return snapshot.docs
+      final prefixResults = snapshot.docs
           .map((doc) => Movie.fromMap(
                 doc.data() as Map<String, dynamic>,
                 docId: doc.id,
               ))
           .toList();
+
+      // SUBSTRING FALLBACK for short queries (<=2 chars).
+      // Same rationale as _searchWithKeyword Strategy 1.5 — see comment there.
+      // Triggered only when prefix search returned nothing AND the query is
+      // 1-2 characters, to catch titles like "Spider-Man" when user types "o".
+      if (prefixResults.isEmpty && lowerKeyword.length <= 2) {
+        try {
+          final subSnapshot = await _moviesRef.limit(200).get();
+          return subSnapshot.docs
+              .map((doc) => Movie.fromMap(
+                    doc.data() as Map<String, dynamic>,
+                    docId: doc.id,
+                  ))
+              .where((m) => m.titleLowercase.contains(lowerKeyword))
+              .toList();
+        } catch (_) {
+          return prefixResults;
+        }
+      }
+
+      return prefixResults;
     } catch (e) {
       // Fallback: if title_lowercase index doesn't exist, try old 'title' field
       debugPrint('searchAllPosts with title_lowercase failed, trying fallback: $e');
@@ -509,6 +532,45 @@ class FirestoreContentService {
       doc.data() as Map<String, dynamic>,
       docId: doc.id,
     );
+  }
+
+  /// Batch-fetch latest Movie data for a list of movie IDs.
+  ///
+  /// Used by Bookmark/Recent pages to refresh stale cached ratings:
+  /// when a user bookmarks a movie, the Movie object is snapshotted to
+  /// Firestore/local storage at that moment. If the admin later edits
+  /// the rating (or any field), the cached copy stays stale. This method
+  /// re-fetches the latest Movie data in a single Firestore call (using
+  /// 'in' query — up to 30 IDs per call, Firestore limit) so the UI can
+  /// display the current rating instead of the cached "N/A".
+  ///
+  /// Returns a Map<movieId, Movie> for O(1) lookup. Movies that no
+  /// longer exist are silently skipped (their IDs won't appear in the
+  /// returned map).
+  ///
+  /// Cost: 1 read per movie ID, batched into 1 query per 30 IDs.
+  /// For typical bookmark/recent lists (10-50 items), this is 1-2 queries.
+  Future<Map<String, Movie>> getMoviesByIds(List<String> ids) async {
+    if (ids.isEmpty) return {};
+    final result = <String, Movie>{};
+    // Firestore 'in' query supports max 30 values per call.
+    final chunks = <List<String>>[];
+    for (var i = 0; i < ids.length; i += 30) {
+      chunks.add(ids.sublist(i, (i + 30).clamp(0, ids.length)));
+    }
+    try {
+      final futures = chunks.map((chunk) async {
+        final snap = await _moviesRef.where(FieldPath.documentId, whereIn: chunk).get();
+        for (final doc in snap.docs) {
+          final movie = Movie.fromMap(doc.data() as Map<String, dynamic>, docId: doc.id);
+          result[movie.id] = movie;
+        }
+      });
+      await Future.wait(futures);
+    } catch (e) {
+      debugPrint('getMoviesByIds failed: $e');
+    }
+    return result;
   }
 
   /// Get movies by genre name
@@ -838,12 +900,57 @@ class FirestoreContentService {
         }
       }
 
+      // Strategy 1.5: SUBSTRING FALLBACK for short queries (1-2 chars)
+      // =========================================================================
+      // Bro reported that searching a single character like "o" returned NO
+      // results, while "os" or "ot" returned some. Root cause:
+      //   - Strategy 1 (prefix search) only matches titles that START with "o"
+      //     (e.g. "Once Upon a Time"). It does NOT find "Spider-Man" or "Solo".
+      //   - Strategy 2 (search_keywords arrayContains) only matches if "o" is
+      //     a complete token in the search_keywords array — which never happens
+      //     for typical English titles (no movie is titled just "O").
+      //   - The broader fallback at Strategy 3 below uses token-based filtering
+      //     with `every(token => title.contains(token))` — but that only runs
+      //     when the early exit check finds zero matches, AND it only fetches
+      //     60-200 docs by updatedAt, which may miss older movies.
+      //
+      // FIX: For short queries (length <= 2), do an extra dedicated broad
+      // fetch (no orderBy, so legacy docs without updatedAt are included)
+      // and apply a client-side `title.contains(query)` filter. This catches
+      // any movie whose title CONTAINS the query as a substring, regardless
+      // of whether it starts with it.
+      //
+      // Cost: +1 Firestore query (~fetchLimit reads) ONLY when the query is
+      // 1-2 characters AND Strategies 1+2 returned zero early matches. In
+      // practice this is rare (user typing first char of a name), so the
+      // extra reads are minimal.
+      final substringResults = <Movie>[];
+      if (lowerKeyword.length <= 2 &&
+          prefixMovies.isEmpty &&
+          keywordResults.isEmpty) {
+        try {
+          final subSnapshot = await _moviesRef.limit(fetchLimit).get();
+          for (final doc in subSnapshot.docs) {
+            final movie = Movie.fromMap(
+              doc.data() as Map<String, dynamic>,
+              docId: doc.id,
+            );
+            // Case-insensitive substring match on title
+            if (movie.titleLowercase.contains(lowerKeyword)) {
+              substringResults.add(movie);
+            }
+          }
+        } catch (e) {
+          debugPrint('_searchWithKeyword substring fallback failed: $e');
+        }
+      }
+
       // Pre-combine what we have so far. If primary queries already returned
       // movies that match every name token AND year token, we can SKIP the
       // expensive broader fallback queries below (saves ~200 reads).
       final earlySeenIds = <String>{};
       final earlyAllMovies = <Movie>[];
-      for (final m in [...prefixMovies, ...keywordResults]) {
+      for (final m in [...prefixMovies, ...keywordResults, ...substringResults]) {
         if (!earlySeenIds.contains(m.id)) {
           earlySeenIds.add(m.id);
           earlyAllMovies.add(m);
@@ -851,8 +958,13 @@ class FirestoreContentService {
       }
       final earlyFiltered = earlyAllMovies.where((m) {
         final lowerTitle = m.titleLowercase;
+        // For short single-token queries (<=2 chars), use substring match
+        // instead of token-every-contains. This prevents "o" from being
+        // rejected just because it isn't a full word in the title.
         final nameMatch = nameTokens.isEmpty ||
-            nameTokens.every((token) => lowerTitle.contains(token));
+            (lowerKeyword.length <= 2 && nameTokens.length == 1
+                ? lowerTitle.contains(nameTokens.first)
+                : nameTokens.every((token) => lowerTitle.contains(token)));
         final yearMatch = yearTokens.isEmpty ||
             (m.year != null && yearTokens.contains(m.year!.toLowerCase()));
         return nameMatch && yearMatch;
@@ -972,7 +1084,7 @@ class FirestoreContentService {
       final seenIds = <String>{};
       final allMovies = <Movie>[];
 
-      for (final m in [...prefixMovies, ...keywordResults, ...broaderMovies]) {
+      for (final m in [...prefixMovies, ...keywordResults, ...substringResults, ...broaderMovies]) {
         if (!seenIds.contains(m.id)) {
           seenIds.add(m.id);
           allMovies.add(m);
@@ -1716,11 +1828,18 @@ class FirestoreContentService {
   /// Splits title into individual lowercase words, stripping punctuation.
   /// e.g. "The Avengers: Endgame" → ["the", "avengers", "endgame"]
   List<String> _generateSearchKeywords(String title) {
+    // IMPORTANT: Do NOT skip single-character tokens here. A previous version
+    // used `word.length >= 2` which broke single-character searches like "o"
+    // or "a" — the arrayContains query needs those single-char tokens to be
+    // present in the search_keywords array for a 1-character query to match.
+    // Single-char tokens are very common in titles like "A.I.", "X-Men",
+    // "R.E.D.", "MIB", "O Brother, Where Art Thou?", etc. Including them
+    // ensures searching "o" finds "O Brother" and searching "x" finds "X-Men".
     return title
         .toLowerCase()
         .replaceAll(RegExp(r'[^\w\s]'), ' ')  // Replace non-word chars with space
         .split(RegExp(r'\s+'))                     // Split on whitespace
-        .where((word) => word.isNotEmpty && word.length >= 2)  // Skip empty & single-char
+        .where((word) => word.isNotEmpty)          // Skip empty only
         .toList();
   }
 

@@ -128,7 +128,17 @@ class _MovieCardState extends State<MovieCard> {
                   ),
 
                 // IMDb Rating Badge - bottom right corner
-                Positioned(
+                // HIDDEN when rating is null/empty/0.0 — previously this
+                // showed "N/A" which Bro reported as a bug because users
+                // expected to see the actual rating (e.g. "7.4"). With the
+                // bookmark/recent refresh fix (see recent_page.dart and
+                // movie_bookmark_screen.dart), the rating will now come
+                // from the latest Firestore doc, so this badge will almost
+                // always have a real value. We still hide it for the rare
+                // case where the movie genuinely has no rating in the DB,
+                // rather than showing the unhelpful "N/A" placeholder.
+                if (_hasValidRating(widget.movie.rating))
+                  Positioned(
                     bottom: 6,
                     right: 6,
                     child: Container(
@@ -339,6 +349,16 @@ class _MovieCardState extends State<MovieCard> {
     final parsed = double.tryParse(rating);
     if (parsed == null || parsed == 0.0) return 'N/A';
     return rating;
+  }
+
+  /// Returns true if the rating is a non-zero, parseable number.
+  /// Used to decide whether to show the rating badge at all — if the
+  /// movie has no real rating in the DB, we hide the badge rather than
+  /// showing the unhelpful "N/A" placeholder.
+  static bool _hasValidRating(String? rating) {
+    if (rating == null || rating.trim().isEmpty) return false;
+    final parsed = double.tryParse(rating);
+    return parsed != null && parsed > 0.0;
   }
 
   /// Get standardized quality label from resolution string

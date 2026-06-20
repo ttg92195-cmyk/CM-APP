@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/services/recent_service.dart';
+import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/ui/components/movie_card.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
 import 'package:cm_movies/app/ui/screens/series_detail_screen.dart';
@@ -15,6 +16,7 @@ class RecentPage extends StatefulWidget {
 
 class _RecentPageState extends State<RecentPage> {
   final RecentService _recentService = RecentService();
+  final FirestoreContentService _contentService = FirestoreContentService();
   List<Movie> _recentMovies = [];
   bool _isLoading = true;
 
@@ -26,11 +28,45 @@ class _RecentPageState extends State<RecentPage> {
 
   Future<void> _loadRecents() async {
     final recents = await _recentService.getRecentMovies();
-    if (mounted) {
+    if (!mounted) return;
+
+    if (recents.isEmpty) {
       setState(() {
-        _recentMovies = recents;
+        _recentMovies = [];
         _isLoading = false;
       });
+      return;
+    }
+
+    // Refresh stale cached fields (especially rating, which Bro reported
+    // was showing "N/A" because the bookmark/recent cache snapshotted the
+    // Movie object at add-time and never updated it when the admin later
+    // set a rating on the movie). We batch-fetch the latest Movie data
+    // for all recent IDs and merge the fresh fields into the local list.
+    try {
+      final ids = recents.map((m) => m.id).where((id) => id.isNotEmpty).toList();
+      final freshMap = await _contentService.getMoviesByIds(ids);
+      final merged = recents.map((m) {
+        final fresh = freshMap[m.id];
+        // If the movie still exists in Firestore, prefer the fresh copy
+        // (latest rating, poster, title, etc.). If it was deleted, fall
+        // back to the cached snapshot so the user still sees something.
+        return fresh ?? m;
+      }).toList();
+      if (mounted) {
+        setState(() {
+          _recentMovies = merged;
+          _isLoading = false;
+        });
+      }
+    } catch (_) {
+      // Network error — fall back to cached data without refresh.
+      if (mounted) {
+        setState(() {
+          _recentMovies = recents;
+          _isLoading = false;
+        });
+      }
     }
   }
 

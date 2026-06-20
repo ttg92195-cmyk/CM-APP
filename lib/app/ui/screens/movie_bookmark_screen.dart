@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/services/bookmark_service.dart';
+import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/ui/components/movie_card.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
 import 'package:cm_movies/app/ui/screens/series_detail_screen.dart';
@@ -16,6 +17,7 @@ class MovieBookmarkScreen extends StatefulWidget {
 
 class _MovieBookmarkScreenState extends State<MovieBookmarkScreen> {
   final BookmarkService _bookmarkService = BookmarkService();
+  final FirestoreContentService _contentService = FirestoreContentService();
   List<Movie> _bookmarks = [];
   bool _isLoading = true;
 
@@ -27,11 +29,42 @@ class _MovieBookmarkScreenState extends State<MovieBookmarkScreen> {
 
   Future<void> _loadBookmarks() async {
     final bookmarks = await _bookmarkService.getBookmarks();
-    if (mounted) {
+    if (!mounted) return;
+
+    if (bookmarks.isEmpty) {
       setState(() {
-        _bookmarks = bookmarks;
+        _bookmarks = [];
         _isLoading = false;
       });
+      return;
+    }
+
+    // Refresh stale cached fields (especially rating). See comment in
+    // recent_page.dart for full rationale. Short version: the bookmark
+    // cache snapshots the Movie object at add-time, so if the admin
+    // later edits the rating (or any field), the cached copy stays
+    // stale. We batch-fetch the latest Movie data for all bookmark IDs
+    // and merge the fresh fields into the local list.
+    try {
+      final ids = bookmarks.map((m) => m.id).where((id) => id.isNotEmpty).toList();
+      final freshMap = await _contentService.getMoviesByIds(ids);
+      final merged = bookmarks.map((m) {
+        final fresh = freshMap[m.id];
+        return fresh ?? m;
+      }).toList();
+      if (mounted) {
+        setState(() {
+          _bookmarks = merged;
+          _isLoading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _bookmarks = bookmarks;
+          _isLoading = false;
+        });
+      }
     }
   }
 
