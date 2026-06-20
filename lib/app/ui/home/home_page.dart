@@ -39,6 +39,12 @@ class _HomePageState extends State<HomePage> {
   // Global keys for tab pages to allow refresh
   final GlobalKey<State<MoviesPage>> _moviesKey = GlobalKey();
   final GlobalKey<State<SeriesPage>> _seriesKey = GlobalKey();
+  // Home has its own key so we can call its public refresh() method after
+  // returning from content-modifying screens (TMDB Generator, Admin Panel,
+  // Add Movie, Edit Movie, Batch Import). Without this, Home keeps showing
+  // stale data because IndexedStack keeps HomeScreen alive across tab
+  // switches and does NOT auto-reload on Navigator.pop().
+  final GlobalKey<State<HomeScreen>> _homeKey = GlobalKey();
 
   // Tab pages - created once to preserve state across tab switches
   late final List<Widget> _bottomNavPages;
@@ -55,24 +61,27 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _loadAppVersion();
     _bottomNavPages = [
-      HomeScreen(onNavigateToTab: (index) {
-        // Switch tab first
-        setState(() => _currentIndex = index);
-        // Trigger data refresh with skeleton loading when navigating via "More" button
-        // This ensures skeleton shows first, then fresh data loads
-        if (index == kMoviesTab) {
-          // Use addPostFrameCallback to ensure the tab is visible before refreshing
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            final state = _moviesKey.currentState;
-            if (state != null) (state as dynamic).onTabSelected();
-          });
-        } else if (index == kSeriesTab) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            final state = _seriesKey.currentState;
-            if (state != null) (state as dynamic).onTabSelected();
-          });
-        }
-      }),
+      HomeScreen(
+        key: _homeKey,
+        onNavigateToTab: (index) {
+          // Switch tab first
+          setState(() => _currentIndex = index);
+          // Trigger data refresh with skeleton loading when navigating via "More" button
+          // This ensures skeleton shows first, then fresh data loads
+          if (index == kMoviesTab) {
+            // Use addPostFrameCallback to ensure the tab is visible before refreshing
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              final state = _moviesKey.currentState;
+              if (state != null) (state as dynamic).onTabSelected();
+            });
+          } else if (index == kSeriesTab) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              final state = _seriesKey.currentState;
+              if (state != null) (state as dynamic).onTabSelected();
+            });
+          }
+        },
+      ),
       MoviesPage(key: _moviesKey),
       SeriesPage(key: _seriesKey),
       const SettingsPage(),
@@ -97,6 +106,21 @@ class _HomePageState extends State<HomePage> {
       }
     } catch (_) {
       // Fallback: leave empty so UI can fall back to a static label
+    }
+  }
+
+  /// Silently refresh the Home tab's data. Called after returning from
+  /// content-modifying screens (TMDB Generator, Admin Panel, etc.) so that
+  /// newly-added or edited posts appear at the top of the Home feed
+  /// without requiring the user to pull-to-refresh.
+  ///
+  /// Safe to call when Home is not the current tab — IndexedStack keeps
+  /// HomeScreen alive, so the GlobalKey state is always available.
+  void _refreshHomeIfMounted() {
+    final state = _homeKey.currentState;
+    if (state != null) {
+      // ignore: avoid_dynamic_calls — HomeScreen.refresh() is a public API
+      (state as dynamic).refresh();
     }
   }
 
@@ -258,6 +282,14 @@ class _HomePageState extends State<HomePage> {
         child: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: (index) {
+          // If user taps Home tab while already on Home, treat it as a
+          // refresh trigger (silently — no skeleton). This mirrors the
+          // common "tap the active tab to refresh" pattern in apps like
+          // Twitter / Instagram. Otherwise just switch tabs.
+          if (index == _currentIndex && index == kHomeTab) {
+            _refreshHomeIfMounted();
+            return;
+          }
           setState(() {
             _currentIndex = index;
           });
@@ -268,6 +300,10 @@ class _HomePageState extends State<HomePage> {
           } else if (index == kSeriesTab) {
             final state = _seriesKey.currentState;
             if (state != null) (state as dynamic).onTabSelected();
+          } else if (index == kHomeTab) {
+            // Returning to Home — silently refresh in case the user
+            // added/edited content elsewhere since Home was last visible.
+            _refreshHomeIfMounted();
           }
         },
         destinations: [
@@ -459,7 +495,7 @@ class _HomePageState extends State<HomePage> {
                         Navigator.push(
                           context,
                           MaterialPageRoute(builder: (_) => const AdminPanelPage()),
-                        );
+                        ).then((_) => _refreshHomeIfMounted());
                       },
                     ),
                     _buildDrawerItem(
@@ -474,7 +510,7 @@ class _HomePageState extends State<HomePage> {
                           MaterialPageRoute(
                             builder: (_) => const TmdbGeneratorPage(),
                           ),
-                        );
+                        ).then((_) => _refreshHomeIfMounted());
                       },
                     ),
                   ],

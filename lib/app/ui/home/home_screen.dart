@@ -111,6 +111,77 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  /// Public refresh hook for external callers (e.g. home_page.dart after
+  /// returning from TMDB Generator / Admin Panel where the user may have
+  /// added or edited posts). Without this, Home shows stale data because
+  /// IndexedStack keeps HomeScreen alive across tab switches.
+  ///
+  /// NOTE: We DO NOT set _isLoading = true here, because that would flash
+  /// the skeleton loader every time the user returns from Admin Panel —
+  /// very jarring. Instead we silently refetch in the background and
+  /// update the lists in place. The existing skeleton only shows on
+  /// initial load (initState → _loadData) and on pull-to-refresh.
+  Future<void> refresh() => _refreshSilently();
+
+  /// Silent background refresh — does NOT show skeleton loader. Used by
+  /// refresh() above and by Navigator.push(...).then() callbacks in
+  /// home_page.dart. Falls back to _loadData if lists are still empty.
+  Future<void> _refreshSilently() async {
+    if (_allMovies.isEmpty && _allSeries.isEmpty && _trendingMovies.isEmpty) {
+      // Initial load never completed — fall back to full load with skeleton.
+      return _loadData();
+    }
+    try {
+      final results = await Future.wait([
+        _contentService.getBannerConfig().catchError((e) => <String>[]),
+        _contentService.getTrendingMovies().catchError((_) => <Movie>[]),
+        _contentService.getTrendingTvShows().catchError((_) => <Movie>[]),
+        _contentService.getMovies(limit: _homeLimit).catchError((_) => <Map<String, dynamic>>{}),
+        _contentService.getSeries(limit: _homeLimit).catchError((_) => <Map<String, dynamic>>{}),
+      ]);
+
+      final bannerUrls = results[0] as List<String>;
+      final trendingMovies = results[1] as List<Movie>;
+      final trendingTvShows = results[2] as List<Movie>;
+      final moviesResult = results[3];
+      final seriesResult = results[4];
+
+      List<Movie> allMovies = [];
+      List<Movie> allSeries = [];
+      if (moviesResult is Map<String, dynamic>) {
+        allMovies = List<Movie>.from(moviesResult['movies'] ?? []);
+      }
+      if (seriesResult is Map<String, dynamic>) {
+        allSeries = List<Movie>.from(seriesResult['movies'] ?? []);
+      }
+
+      if (mounted) {
+        // Restart the auto-scroll timer if banner count changed.
+        final bannerChanged = bannerUrls.length != _bannerImageUrls.length;
+        setState(() {
+          _bannerImageUrls = bannerUrls;
+          _trendingMovies = trendingMovies;
+          _trendingTvShows = trendingTvShows;
+          _allMovies = allMovies;
+          _allSeries = allSeries;
+        });
+        if (bannerChanged) {
+          _autoScrollTimer?.cancel();
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && _bannerImageUrls.isNotEmpty) {
+              _startAutoScroll();
+            }
+          });
+        }
+        // Reload tag-based sections in the background.
+        _loadTagBasedData();
+      }
+    } catch (e) {
+      debugPrint('Home silent refresh failed: $e');
+      // Don't show error UI — keep the previously-loaded data visible.
+    }
+  }
+
   Future<void> _loadData() async {
     setState(() {
       _isLoading = true;
