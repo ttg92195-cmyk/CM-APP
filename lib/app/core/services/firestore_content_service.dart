@@ -36,9 +36,12 @@ class FirestoreContentService {
     int limit = 50,
     DocumentSnapshot? startAfter,
   }) async {
+    // === PRIMARY: orderBy('updatedAt', descending) — admin edits bump to top ===
+    // Requires composite index (type ASC, updatedAt DESC). Declared in
+    // firestore.indexes.json. If the index isn't deployed yet (e.g., Bro
+    // hasn't run `firebase deploy --only firestore:indexes`), this query
+    // throws and we fall through to the SECONDARY path below.
     try {
-      // Sort by updatedAt (descending) so that admin edits push the movie to
-      // the front of the Home list. Newly added movies also have updatedAt set.
       Query query = _moviesRef
           .where('type', isEqualTo: 'movie')
           .orderBy('updatedAt', descending: true)
@@ -62,41 +65,89 @@ class FirestoreContentService {
         'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
       };
     } catch (e) {
-      // Fallback: if composite index doesn't exist, try without orderBy
-      debugPrint('getMovies with orderBy failed, trying fallback: $e');
-      try {
-        Query query = _moviesRef
-            .where('type', isEqualTo: 'movie')
-            .limit(limit);
+      debugPrint('getMovies: primary orderBy(updatedAt) failed: $e — trying createdAt fallback');
+    }
 
-        final snapshot = await query.get();
-        final movies = snapshot.docs
-            .map((doc) => Movie.fromMap(
-                  doc.data() as Map<String, dynamic>,
-                  docId: doc.id,
-                ))
-            .toList();
+    // === SECONDARY: orderBy('createdAt', descending) ===
+    // Uses the EXISTING composite index (type ASC, createdAt DESC) declared
+    // in firestore.indexes.json. New movies (created via TMDB Generator /
+    // Admin Panel / Batch Import) all have createdAt set to server
+    // timestamp at creation time, so this puts newly-added movies at the
+    // top of the list — fixing Bro's 'TMDB Generator new movie doesn't
+    // appear at top of Home' bug.
+    //
+    // Trade-off vs primary: admin EDITS won't bump a movie to the top
+    // (createdAt is preserved on update, only updatedAt changes). That's
+    // an acceptable degradation when the updatedAt index isn't deployed
+    // yet — better than showing a stale random sample.
+    try {
+      Query query = _moviesRef
+          .where('type', isEqualTo: 'movie')
+          .orderBy('createdAt', descending: true)
+          .limit(limit);
 
-        // Sort client-side by updatedAt (falls back to createdAt if updatedAt missing)
-        movies.sort((a, b) {
-          final aDate = b.updatedAt ?? b.createdAt ?? DateTime(2000);
-          final bDate = a.updatedAt ?? a.createdAt ?? DateTime(2000);
-          return aDate.compareTo(bDate);
-        });
-
-        return {
-          'movies': movies,
-          'hasMore': snapshot.docs.length >= limit,
-          'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
-        };
-      } catch (e2) {
-        debugPrint('getMovies fallback also failed: $e2');
-        return {
-          'movies': <Movie>[],
-          'hasMore': false,
-          'lastDoc': null,
-        };
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
       }
+
+      final snapshot = await query.get();
+      final movies = snapshot.docs
+          .map((doc) => Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              ))
+          .toList();
+
+      return {
+        'movies': movies,
+        'hasMore': snapshot.docs.length >= limit,
+        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+      };
+    } catch (e) {
+      debugPrint('getMovies: secondary orderBy(createdAt) also failed: $e — falling back to no-orderBy');
+    }
+
+    // === TERTIARY: no orderBy — last-resort for legacy docs missing both
+    //     timestamps. Fetches by document ID order (essentially arbitrary)
+    //     and sorts client-side. With small `limit` (e.g., Home's 10),
+    //     this returns a non-representative sample — new movies likely
+    //     missing. Acceptable only when primary and secondary both fail.
+    try {
+      Query query = _moviesRef
+          .where('type', isEqualTo: 'movie')
+          .limit(limit);
+
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
+      }
+
+      final snapshot = await query.get();
+      final movies = snapshot.docs
+          .map((doc) => Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              ))
+          .toList();
+
+      // Sort client-side by updatedAt (falls back to createdAt if updatedAt missing)
+      movies.sort((a, b) {
+        final aDate = b.updatedAt ?? b.createdAt ?? DateTime(2000);
+        final bDate = a.updatedAt ?? a.createdAt ?? DateTime(2000);
+        return aDate.compareTo(bDate);
+      });
+
+      return {
+        'movies': movies,
+        'hasMore': snapshot.docs.length >= limit,
+        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+      };
+    } catch (e2) {
+      debugPrint('getMovies: no-orderBy fallback also failed: $e2');
+      return {
+        'movies': <Movie>[],
+        'hasMore': false,
+        'lastDoc': null,
+      };
     }
   }
 
@@ -105,9 +156,9 @@ class FirestoreContentService {
     int limit = 50,
     DocumentSnapshot? startAfter,
   }) async {
+    // === PRIMARY: orderBy('updatedAt', descending) — admin edits bump to top ===
+    // See getMovies() for the rationale behind the 3-tier fallback strategy.
     try {
-      // Sort by updatedAt (descending) so that admin edits push the series to
-      // the front of the Home list. Newly added series also have updatedAt set.
       Query query = _moviesRef
           .where('type', isEqualTo: 'series')
           .orderBy('updatedAt', descending: true)
@@ -131,41 +182,78 @@ class FirestoreContentService {
         'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
       };
     } catch (e) {
-      // Fallback: if composite index doesn't exist, try without orderBy
-      debugPrint('getSeries with orderBy failed, trying fallback: $e');
-      try {
-        Query query = _moviesRef
-            .where('type', isEqualTo: 'series')
-            .limit(limit);
+      debugPrint('getSeries: primary orderBy(updatedAt) failed: $e — trying createdAt fallback');
+    }
 
-        final snapshot = await query.get();
-        final series = snapshot.docs
-            .map((doc) => Movie.fromMap(
-                  doc.data() as Map<String, dynamic>,
-                  docId: doc.id,
-                ))
-            .toList();
+    // === SECONDARY: orderBy('createdAt', descending) ===
+    // Uses the EXISTING composite index (type ASC, createdAt DESC). New
+    // series appear at the top of the list. See getMovies() for full
+    // explanation of the trade-off vs primary.
+    try {
+      Query query = _moviesRef
+          .where('type', isEqualTo: 'series')
+          .orderBy('createdAt', descending: true)
+          .limit(limit);
 
-        // Sort client-side by updatedAt (falls back to createdAt if updatedAt missing)
-        series.sort((a, b) {
-          final aDate = b.updatedAt ?? b.createdAt ?? DateTime(2000);
-          final bDate = a.updatedAt ?? a.createdAt ?? DateTime(2000);
-          return aDate.compareTo(bDate);
-        });
-
-        return {
-          'movies': series,
-          'hasMore': snapshot.docs.length >= limit,
-          'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
-        };
-      } catch (e2) {
-        debugPrint('getSeries fallback also failed: $e2');
-        return {
-          'movies': <Movie>[],
-          'hasMore': false,
-          'lastDoc': null,
-        };
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
       }
+
+      final snapshot = await query.get();
+      final series = snapshot.docs
+          .map((doc) => Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              ))
+          .toList();
+
+      return {
+        'movies': series,
+        'hasMore': snapshot.docs.length >= limit,
+        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+      };
+    } catch (e) {
+      debugPrint('getSeries: secondary orderBy(createdAt) also failed: $e — falling back to no-orderBy');
+    }
+
+    // === TERTIARY: no orderBy — last-resort for legacy docs missing both
+    //     timestamps. See getMovies() for full explanation.
+    try {
+      Query query = _moviesRef
+          .where('type', isEqualTo: 'series')
+          .limit(limit);
+
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
+      }
+
+      final snapshot = await query.get();
+      final series = snapshot.docs
+          .map((doc) => Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              ))
+          .toList();
+
+      // Sort client-side by updatedAt (falls back to createdAt if updatedAt missing)
+      series.sort((a, b) {
+        final aDate = b.updatedAt ?? b.createdAt ?? DateTime(2000);
+        final bDate = a.updatedAt ?? a.createdAt ?? DateTime(2000);
+        return aDate.compareTo(bDate);
+      });
+
+      return {
+        'movies': series,
+        'hasMore': snapshot.docs.length >= limit,
+        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+      };
+    } catch (e2) {
+      debugPrint('getSeries: no-orderBy fallback also failed: $e2');
+      return {
+        'movies': <Movie>[],
+        'hasMore': false,
+        'lastDoc': null,
+      };
     }
   }
 
