@@ -35,6 +35,24 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   List<DocumentSnapshot> _pageLastDocs = []; // lastDoc for each loaded page
   Map<int, List<Movie>> _pageCache = {}; // cached posts per page
 
+  // === SERIES TAB — DEDICATED PAGINATION STATE ===
+  // Before this fix, the Series tab filtered CLIENT-SIDE from the All tab's
+  // _pageCache (which only holds 30 mixed posts per page). With 1068 movies
+  // and only 3 series in the DB, page 1 of getAllPosts() almost always had
+  // 0 series — so the Series tab showed "No posts found" even though the
+  // tab label correctly said "Series (3)" (from Firestore aggregate count).
+  // Search worked because searchAllPosts() queries the whole DB.
+  //
+  // Fix: Series tab now uses getSeries() directly with its own pagination
+  // state, decoupled from the All tab. The All tab and Movies tab are
+  // unchanged (Movies tab filters from All tab's _pageCache, which works
+  // fine because the vast majority of posts are movies).
+  int _seriesCurrentPage = 1;
+  bool _seriesHasMore = true;
+  bool _seriesIsLoadingPage = false;
+  List<DocumentSnapshot> _seriesPageLastDocs = [];
+  Map<int, List<Movie>> _seriesPageCache = {};
+
   List<Movie> _allPosts = []; // accumulated posts for search/filter
   List<Movie> _filteredPosts = [];
   List<TagAndGenres> _genres = [];
@@ -107,15 +125,27 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   Future<void> _loadInitialData() async {
     setState(() => _isLoading = true);
     try {
-      // Reset pagination state
+      // Reset pagination state — All tab
       _currentPage = 1;
       _hasMore = true;
       _pageLastDocs = [];
       _pageCache = {};
       _allPosts = [];
 
+      // Reset pagination state — Series tab (separate from All tab)
+      _seriesCurrentPage = 1;
+      _seriesHasMore = true;
+      _seriesPageLastDocs = [];
+      _seriesPageCache = {};
+
+      // Fetch All-tab page 1, Series-tab page 1, and supporting data, all
+      // in parallel. The extra getSeries() call adds ~1 Firestore round-trip
+      // but no extra latency because it runs concurrently with the other
+      // futures. Cost: ~30 reads (page size) for the Series tab — tiny
+      // compared to the bug it fixes (Series tab was always empty).
       final results = await Future.wait([
         _contentService.getAllPosts(limit: _pageSize),
+        _contentService.getSeries(limit: _pageSize),
         _contentService.getGenres(),
         _contentService.getTags(),
         _contentService.getCollections(),
@@ -134,6 +164,12 @@ class _AdminPanelPageState extends State<AdminPanelPage>
         final hasMore = postsData['hasMore'] as bool;
         final lastDoc = postsData['lastDoc'] as DocumentSnapshot?;
 
+        // Series tab page 1
+        final seriesData = results[1] as Map<String, dynamic>;
+        final seriesPosts = seriesData['movies'] as List<Movie>;
+        final seriesHasMore = seriesData['hasMore'] as bool;
+        final seriesLastDoc = seriesData['lastDoc'] as DocumentSnapshot?;
+
         setState(() {
           _pageCache[1] = posts;
           _allPosts = List.from(posts);
@@ -142,11 +178,19 @@ class _AdminPanelPageState extends State<AdminPanelPage>
           if (lastDoc != null) {
             _pageLastDocs = [lastDoc];
           }
-          _genres = results[1] as List<TagAndGenres>;
-          _tags = results[2] as List<TagAndGenres>;
-          _collections = results[3] as List<TagAndGenres>;
-          _bannerImageUrls = results[4] is List
-              ? List<String>.from((results[4] as List).whereType<String>())
+
+          // Populate Series tab cache
+          _seriesPageCache[1] = seriesPosts;
+          _seriesHasMore = seriesHasMore;
+          if (seriesLastDoc != null) {
+            _seriesPageLastDocs = [seriesLastDoc];
+          }
+
+          _genres = results[2] as List<TagAndGenres>;
+          _tags = results[3] as List<TagAndGenres>;
+          _collections = results[4] as List<TagAndGenres>;
+          _bannerImageUrls = results[5] is List
+              ? List<String>.from((results[5] as List).whereType<String>())
               : [];
           _totalCountAll = totalCounts['all'] ?? 0;
           _totalCountMovies = totalCounts['movies'] ?? 0;
@@ -249,6 +293,86 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   int get _knownPages {
     final maxCached = _pageCache.keys.fold(0, (a, b) => a > b ? a : b);
     return _hasMore ? maxCached + 1 : maxCached;
+  }
+
+  // ==========================================================================
+  // SERIES TAB — DEDICATED PAGINATION
+  // ==========================================================================
+  // These methods mirror _loadPage / _nextPage / _prevPage / _knownPages but
+  // operate on the Series tab's separate pagination state, calling
+  // getSeries() directly instead of filtering from getAllPosts().
+
+  /// Load a specific page of SERIES posts (Series tab only).
+  Future<void> _loadSeriesPage(int page) async {
+    if (page < 1) return;
+    if (_seriesIsLoadingPage) return;
+
+    // If page is cached, just switch to it
+    if (_seriesPageCache.containsKey(page)) {
+      setState(() {
+        _seriesCurrentPage = page;
+      });
+      return;
+    }
+
+    // Can only load next page if we have the previous page's last doc
+    if (page > 1 && _seriesPageLastDocs.length < page - 1) return;
+
+    // Can't go beyond available pages
+    if (page > 1 && !_seriesHasMore && _seriesPageCache[page - 1] != null) {
+      return;
+    }
+
+    setState(() => _seriesIsLoadingPage = true);
+
+    try {
+      DocumentSnapshot? startAfter;
+      if (page > 1 && _seriesPageLastDocs.length >= page - 1) {
+        startAfter = _seriesPageLastDocs[page - 2];
+      }
+
+      final result = await _contentService.getSeries(
+        limit: _pageSize,
+        startAfter: startAfter,
+      );
+
+      if (mounted) {
+        final series = result['movies'] as List<Movie>;
+        final hasMore = result['hasMore'] as bool;
+        final lastDoc = result['lastDoc'] as DocumentSnapshot?;
+
+        setState(() {
+          _seriesPageCache[page] = series;
+          _seriesHasMore = hasMore;
+          if (lastDoc != null) {
+            while (_seriesPageLastDocs.length < page) {
+              _seriesPageLastDocs.add(lastDoc);
+            }
+          }
+          _seriesCurrentPage = page;
+          _seriesIsLoadingPage = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _seriesIsLoadingPage = false);
+    }
+  }
+
+  void _nextSeriesPage() {
+    if (_seriesHasMore || _seriesPageCache.containsKey(_seriesCurrentPage + 1)) {
+      _loadSeriesPage(_seriesCurrentPage + 1);
+    }
+  }
+
+  void _prevSeriesPage() {
+    if (_seriesCurrentPage > 1) {
+      _loadSeriesPage(_seriesCurrentPage - 1);
+    }
+  }
+
+  int get _knownSeriesPages {
+    final maxCached = _seriesPageCache.keys.fold(0, (a, b) => a > b ? a : b);
+    return _seriesHasMore ? maxCached + 1 : maxCached;
   }
 
   void _filterPosts(String query) {
@@ -408,8 +532,11 @@ class _AdminPanelPageState extends State<AdminPanelPage>
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    // Get current page posts
+    // Get current page posts — All tab
     final currentPagePosts = _pageCache[_currentPage] ?? [];
+    // Get current page posts — Series tab (dedicated cache, NOT filtered
+    // from currentPagePosts which would miss series on movie-heavy pages).
+    final currentSeriesPagePosts = _seriesPageCache[_seriesCurrentPage] ?? [];
     final movies = _filteredPosts.where((p) => p.type != 'series').toList();
     final series = _filteredPosts.where((p) => p.type == 'series').toList();
 
@@ -420,9 +547,12 @@ class _AdminPanelPageState extends State<AdminPanelPage>
     final currentMovies = _searchQuery.isNotEmpty || _filterGenre != null || _filterYear != null
         ? movies
         : currentPagePosts.where((p) => p.type != 'series').toList();
+    // Series tab: when not searching, use the DEDICATED series cache (fixes
+    // the "No posts found" bug). When searching, fall back to filtering
+    // _filteredPosts (which comes from searchAllPosts across the whole DB).
     final currentSeries = _searchQuery.isNotEmpty || _filterGenre != null || _filterYear != null
         ? series
-        : currentPagePosts.where((p) => p.type == 'series').toList();
+        : currentSeriesPagePosts;
 
     return Scaffold(
       appBar: AppBar(
@@ -475,9 +605,9 @@ class _AdminPanelPageState extends State<AdminPanelPage>
           : TabBarView(
               controller: _tabController,
               children: [
-                _buildPostsTab(currentAllPosts, isDark),
-                _buildPostsTab(currentMovies, isDark),
-                _buildPostsTab(currentSeries, isDark),
+                _buildPostsTab(currentAllPosts, isDark, tabIndex: 0),
+                _buildPostsTab(currentMovies, isDark, tabIndex: 1),
+                _buildPostsTab(currentSeries, isDark, tabIndex: 2),
                 _buildGenresTagsTab(isDark),
                 _buildBannerTab(isDark),
                 const AdminNotificationPage(),
@@ -550,7 +680,12 @@ class _AdminPanelPageState extends State<AdminPanelPage>
     );
   }
 
-  Widget _buildPostsTab(List<Movie> posts, bool isDark) {
+  Widget _buildPostsTab(List<Movie> posts, bool isDark, {required int tabIndex}) {
+    // Series tab (tabIndex == 2) uses its OWN pagination state, decoupled
+    // from the All tab. All/Movies tabs share the All tab's pagination.
+    final bool isSeriesTab = tabIndex == 2;
+    final bool isLoadingThisPage =
+        isSeriesTab ? _seriesIsLoadingPage : _isLoadingPage;
     return Column(
       children: [
         // Bulk delete bar
@@ -633,7 +768,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                             return _buildPostListItem(post, isDark);
                           },
                         ))
-                  : _isLoadingPage
+                  : isLoadingThisPage
                       ? const Center(
                           child: SizedBox(
                             width: 24,
@@ -651,16 +786,29 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                               },
                             ),
         ),
-        // Pagination controls — only show when NOT searching
+        // Pagination controls — only show when NOT searching.
+        // Series tab uses its own pagination controls (dedicated cache).
         if (!_isSearching && _searchQuery.isEmpty && _filterGenre == null && _filterYear == null)
-          _buildPaginationControls(isDark),
+          isSeriesTab
+              ? _buildPaginationControls(isDark, forSeriesTab: true)
+              : _buildPaginationControls(isDark, forSeriesTab: false),
       ],
     );
   }
 
-  Widget _buildPaginationControls(bool isDark) {
-    final knownPages = _knownPages;
-    final currentPage = _currentPage;
+  Widget _buildPaginationControls(bool isDark, {required bool forSeriesTab}) {
+    // Pick the right pagination state based on which tab we're rendering.
+    final int knownPages = forSeriesTab ? _knownSeriesPages : _knownPages;
+    final int currentPage = forSeriesTab ? _seriesCurrentPage : _currentPage;
+    final bool hasMore = forSeriesTab ? _seriesHasMore : _hasMore;
+    final Map<int, List<Movie>> pageCache =
+        forSeriesTab ? _seriesPageCache : _pageCache;
+    final void Function() prevPage =
+        forSeriesTab ? _prevSeriesPage : _prevPage;
+    final void Function() nextPage =
+        forSeriesTab ? _nextSeriesPage : _nextPage;
+    final Future<void> Function(int) loadPage =
+        forSeriesTab ? _loadSeriesPage : _loadPage;
 
     // Calculate which page numbers to show
     List<int> pageNumbers = [];
@@ -698,7 +846,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
           children: [
             // Previous button
             IconButton(
-              onPressed: currentPage > 1 ? _prevPage : null,
+              onPressed: currentPage > 1 ? prevPage : null,
               icon: const Icon(Icons.chevron_left),
               iconSize: 22,
               padding: const EdgeInsets.all(4),
@@ -733,7 +881,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                       : Colors.transparent,
                   borderRadius: BorderRadius.circular(8),
                   child: InkWell(
-                    onTap: () => _loadPage(pageNum),
+                    onTap: () => loadPage(pageNum),
                     borderRadius: BorderRadius.circular(8),
                     child: Container(
                       width: 36,
@@ -757,15 +905,15 @@ class _AdminPanelPageState extends State<AdminPanelPage>
             const SizedBox(width: 4),
             // Next button
             IconButton(
-              onPressed: _hasMore || _pageCache.containsKey(currentPage + 1)
-                  ? _nextPage
+              onPressed: hasMore || pageCache.containsKey(currentPage + 1)
+                  ? nextPage
                   : null,
               icon: const Icon(Icons.chevron_right),
               iconSize: 22,
               padding: const EdgeInsets.all(4),
               constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
               style: IconButton.styleFrom(
-                foregroundColor: _hasMore || _pageCache.containsKey(currentPage + 1)
+                foregroundColor: hasMore || pageCache.containsKey(currentPage + 1)
                     ? const Color(0xFFE50914)
                     : (isDark ? Colors.white24 : Colors.grey.shade400),
               ),
