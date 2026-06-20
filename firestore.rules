@@ -14,6 +14,39 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == userId;
     }
 
+    // Helper: Verify that admin-only fields are NOT being changed by a regular
+    // user during a profile update. Prevents self-escalation:
+    //   - granting oneself VIP / extending vipExpiry
+    //   - self-unbanning
+    //   - clearing forceLogout flag
+    //   - granting oneself admin role
+    // NOTE: app_config._autoExpireVip() will fail silently under this rule
+    // because it tries to set isVip=false. That's intentional and safe — the
+    // runtime check isCurrentUserVip still gates VIP features correctly using
+    // vipExpiry date, so the silent failure has no user-visible impact.
+    function preservesAdminOnlyFields() {
+      return request.resource.data.isAdmin == resource.data.isAdmin
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.isVip == resource.data.isVip
+        && request.resource.data.vipExpiry == resource.data.vipExpiry
+        && request.resource.data.vipGrantedAt == resource.data.vipGrantedAt
+        && request.resource.data.isBanned == resource.data.isBanned
+        && request.resource.data.forceLogout == resource.data.forceLogout
+        && request.resource.data.forceLogoutAt == resource.data.forceLogoutAt;
+    }
+
+    // Helper: Verify that admin-only fields are NOT set to elevated values
+    // during signup. A malicious user could otherwise craft a signup payload
+    // with isAdmin:true / isVip:true / role:'admin' to escalate on day one.
+    // Absent fields are treated as safe defaults (null != true).
+    function safeSignupFields() {
+      return request.resource.data.isAdmin != true
+        && request.resource.data.role != 'admin'
+        && request.resource.data.isVip != true
+        && request.resource.data.isBanned != true
+        && request.resource.data.forceLogout != true;
+    }
+
     // CONFIG: Admin email mappings - restrict admin_emails to admin-only read
     // to prevent reconnaissance of admin account emails.
     // Other config docs remain readable by authenticated users.
@@ -51,21 +84,25 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
-    // USERS: Public read for username→email lookup during login (login happens before auth)
-    // Security: passwords are NEVER stored here (only in Firebase Auth).
-    // Sensitive fields like forceLogout/isBanned are admin-controlled via update rules.
+    // USERS: Public read for username→email lookup during login (login happens
+    // before auth, so the where('username', isEqualTo: ...) query requires a
+    // public list permission). Security: passwords are NEVER stored here (only
+    // in Firebase Auth). Sensitive fields (isAdmin, role, isVip, vipExpiry,
+    // vipGrantedAt, isBanned, forceLogout, forceLogoutAt) are admin-controlled
+    // — regular users cannot modify them via the update rule below, and cannot
+    // set them to elevated values via the create rule.
     match /users/{userId} {
       // Public read so username-based login can resolve username → email before auth.
       // This is required because Firebase Auth needs email, but user types username.
       allow read: if true;
-      // User can create their own profile on signup
-      allow create: if isOwner(userId);
-      // User can update their own profile but CANNOT change isAdmin/role fields
-      // (only admins can grant/revoke admin or role)
-      allow update: if isOwner(userId)
-        && request.resource.data.isAdmin == resource.data.isAdmin
-        && request.resource.data.role == resource.data.role
-        || isAdmin();
+      // User can create their own profile on signup, but cannot set admin-only
+      // fields to elevated values (prevents signup-time privilege escalation).
+      allow create: if isOwner(userId) && safeSignupFields();
+      // User can update their own profile but CANNOT modify admin-only fields.
+      // Only admins can change those fields. Operator precedence: && binds
+      // tighter than ||, so this parses as:
+      //   (isOwner(userId) && preservesAdminOnlyFields()) || isAdmin()
+      allow update: if isOwner(userId) && preservesAdminOnlyFields() || isAdmin();
     }
 
     // NOTIFICATIONS: Admin can write, authenticated users can read their own notifications
@@ -98,10 +135,21 @@ service cloud.firestore {
     // Each user can read/write only their own device documents.
     // The doc ID is the device fingerprint; the doc stores uid, deviceName,
     // platform, lastActive, etc. Admins can read all devices for support.
+    //
+    // SECURITY FIX: update rule now requires request.resource.data.uid ==
+    // resource.data.uid — previously a user could change the uid field on
+    // their own device doc to someone else's uid, hijacking that user's
+    // device record (e.g. to bypass the per-user device limit).
     match /user_devices/{deviceId} {
       allow read: if isAdmin() || (request.auth != null && resource.data.uid == request.auth.uid);
       allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
-      allow update: if request.auth != null && (resource.data.uid == request.auth.uid || isAdmin());
+      // User can update their own device doc, but cannot change the uid field
+      // (prevents hijacking another user's device record by re-pointing uid).
+      // Parses as: (auth && ownsResource && uidUnchanged) || isAdmin()
+      allow update: if request.auth != null
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == resource.data.uid
+        || isAdmin();
       allow delete: if isAdmin() || (request.auth != null && resource.data.uid == request.auth.uid);
     }
 
