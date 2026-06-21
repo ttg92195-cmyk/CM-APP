@@ -1394,3 +1394,156 @@ Stage Summary:
     movies containing that letter anywhere.
   * Multi-character searches (length > 2) → unchanged (substring
     fallback doesn't fire, only Strategies 1+2+broader apply).
+
+---
+Task ID: 26
+Agent: main
+Task: Number 1 — Batch Import posts view + delete. Bro reported that
+when a Batch Import uploaded movies with wrong IDs (e.g. a tmdbId
+that wasn't actually a TMDB id), the resulting "wrong" movies were
+very hard to find and delete from the Admin Panel — would have to
+scroll through thousands of posts to locate them. Build a dedicated
+grid view of just the movies in a specific batch, with search and
+per-card delete buttons. Admin-only feature.
+
+Work Log:
+- Verified Main in sync with origin/main (Task 25 search fix at HEAD).
+- Read batch_import_service.dart to understand:
+  * BatchImportItem class — no doc ID field (addMovie return was ignored).
+  * BatchImportAuditRecord class — has sampleCreated/sampleUpdated but
+    NOT full ID list.
+  * _recordAudit() — writes audit doc to batch_imports collection.
+  * runImport() loop — calls addMovie() which returns Future<String>
+    (doc ID), but the ID was discarded.
+- Read batch_import_history_page.dart to find detail page insertion
+  point — _DetailBody StatelessWidget at line 570.
+- Verified FirestoreContentService.getMoviesByIds() exists and is
+  batched 30 IDs/query via Future.wait — perfect for this use case.
+- Verified FirestoreContentService.deleteMovie() exists and handles
+  genre/tag counter decrements via WriteBatch.
+
+ROOT CAUSE / GAP
+The audit doc captured only "sampleCreated" (20 titles) — not the
+actual movie doc IDs. So when Bro imported wrong IDs, the history
+page could show "X, Y, Z were created" but couldn't link back to
+the actual Firestore docs to delete them. The only fallback was
+manually searching the Admin Panel by title — unreliable for
+duplicate titles or when the title field was wrong too.
+
+FIX — three-part implementation:
+
+1) batch_import_service.dart (model + service):
+   - Added `String? movieDocId` field to BatchImportItem. Set during
+     the import loop when addMovie() returns the doc ID.
+   - Added `List<String> createdMovieIds` + `List<String> updatedMovieIds`
+     fields to BatchImportAuditRecord (capped at 500 each — well under
+     Firestore's 1 MiB doc-size limit).
+   - In _recordAudit(), collect these IDs from items where
+     importResult == 'success_create'/'success_update' && movieDocId !=
+     null, take(500), and add to audit payload as 'createdMovieIds' /
+     'updatedMovieIds'.
+   - BatchImportAuditRecord.fromDoc() parses the new fields. For old
+     audit docs (pre-Task 26), the fields are absent → empty list →
+     the UI gracefully hides the "Batch Posts" section.
+
+2) batch_posts_screen.dart (new file, 485 lines):
+   - Full-screen grid (3 per row, childAspectRatio 0.53 — same as
+     bookmark screen) of MovieCards.
+   - Loads movies via getMoviesByIds() — typically 1-7 Firestore
+     queries for a 50-200 movie batch.
+   - Search bar with 300ms debounce — client-side case-insensitive
+     title filter.
+   - Per-card delete: red trash icon overlay top-right → AlertDialog
+     confirm → deleteMovie() → remove from grid → SnackBar feedback.
+   - Refresh button to reload from Firestore.
+   - Count badge "filtered/total" in AppBar.
+   - Empty/error/no-match states all handled.
+   - Tapping a card (not the trash) opens MovieDetailScreen or
+     SeriesDetailScreen — same as bookmark screen.
+
+3) batch_import_history_page.dart (UI):
+   - Added new "Batch Posts" section to _DetailBody, shown only when
+     createdMovieIds OR updatedMovieIds is non-empty. Section has two
+     OutlinedButtons side-by-side: "Created (N)" (green) and
+     "Updated (N)" (orange). Each navigates to BatchPostsScreen with
+     the appropriate movie IDs and titleLabel.
+   - Added _batchPostsButton() helper that builds the OutlinedButton
+     and handles navigation.
+   - Added _batchSubtitle() helper that builds "filename · YYYY-MM-DD
+     HH:MM" subtitle for the AppBar of BatchPostsScreen.
+   - Section is positioned ABOVE "Sample Created" so it's prominent.
+   - When both lists are empty (old batches), section is hidden —
+     admin only sees sample titles as before. No regression.
+
+BACKWARD COMPAT
+Old batch_imports docs (pre-Task 26) won't have createdMovieIds /
+updatedMovieIds fields. The fromDoc() factory handles this — empty
+lists are returned, and the UI section is hidden via
+`if (record.createdMovieIds.isNotEmpty || record.updatedMovieIds.isNotEmpty)`.
+So old batches continue to show only sample titles (existing
+behavior). New batches get the new feature automatically.
+
+COST IMPACT
+- New batches: +500 strings × ~30 chars = ~15 KB per audit doc.
+  Firestore docs allow up to 1 MiB. Negligible.
+- BatchPostsScreen load: 1-7 Firestore reads (getMoviesByIds is
+  batched 30/query, parallel via Future.wait). For a 100-movie
+  batch, 4 queries in parallel ≈ 1 round-trip latency. Acceptable.
+- Per-delete: 1 read (the doc fetch in deleteMovie) + 1 batch
+  commit (genre/tag counter decrements) + 1 delete. Same as
+  Admin Panel delete — no extra cost.
+
+UNTOUCHED
+- FirestoreContentService.addMovie() — already returns Future<String>,
+  no change needed. Just now we capture the return value.
+- FirestoreContentService.deleteMovie() — already exists with counter
+  sync, no change needed.
+- FirestoreContentService.getMoviesByIds() — already exists with
+  batched 'in' query + Future.wait, no change needed.
+- MovieCard component — used as-is. Delete button is an overlay
+  positioned on top of the card in BatchPostsScreen, not inside
+  MovieCard (keeps MovieCard reusable for other screens).
+- Sample Created/Updated sections — preserved for old batches and
+  for quick eyeballing without opening the grid view.
+- Translation keys — not added. Admin-only screens (batch_import_*
+  pages, admin_panel_page) conventionally use hardcoded English
+  strings, not the translate() system. Followed that convention.
+
+SANITY CHECKS
+- Verified batch_import_service.dart structure: 13 classes, file ends
+  cleanly at BatchImportException.
+- Verified batch_posts_screen.dart structure: BatchPostsScreen
+  (StatefulWidget) + _BatchPostsScreenState, file ends cleanly.
+- Verified batch_import_history_page.dart structure: 7 classes, all
+  class braces matched, file ends at _fmt() helper inside _DetailBody.
+- Verified imports: dart:async (Timer), flutter/foundation.dart
+  (debugPrint), flutter/material.dart, Movie model, FirestoreContent
+  Service, MovieCard, Movie/Series Detail screens — all needed.
+- Verified delete flow: _deleteMovie → showDialog<bool> → if confirmed
+  → _contentService.deleteMovie(movie.id) → setState remove from
+  _allMovies + _filteredMovies → SnackBar.
+- Verified navigation flow: tap card → MovieDetailScreen/SeriesDetail
+  Screen → on return, _loadMovies() refreshes the grid (in case the
+  user edited/deleted from inside detail screen).
+- Flutter not installed locally — Bro/CI does the build. Manual
+  review only.
+
+Stage Summary:
+- Number 1 fix committed, pushing to origin/main.
+- Bro to rebuild and verify:
+  * Do a fresh Batch Import with a small JSON file (5-10 movies).
+  * Go to Admin Panel → Batch Import → Import History (clock icon).
+  * Tap the new import row → detail page should show a new "Batch
+    Posts" section above "Sample Created" with green "Created (N)"
+    and orange "Updated (N)" buttons.
+  * Tap "Created (N)" → BatchPostsScreen opens, shows grid of
+    just-created movies.
+  * Tap trash icon on a card → confirm dialog → delete → grid
+    updates + SnackBar shows "Deleted 'X'".
+  * Use search box to filter by title.
+  * Tap a card (not trash) → detail screen opens.
+  * Old batches (pre-Task 26) should NOT show the Batch Posts
+    section — only sample titles as before. No regression.
+- After Number 1 is verified, Bro will answer the clarifying
+  questions I asked about Number 4 (TMDB Generator single-movie
+  sync), then we proceed to Number 2.

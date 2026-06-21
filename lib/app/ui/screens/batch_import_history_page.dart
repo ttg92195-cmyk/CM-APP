@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cm_movies/app/core/services/batch_import_service.dart';
+import 'package:cm_movies/app/ui/screens/batch_posts_screen.dart';
 
 /// Full-screen page that lists past Batch Import runs from the
 /// `batch_imports` Firestore collection.
@@ -722,6 +723,82 @@ class _DetailBody extends StatelessWidget {
           const SizedBox(height: 12),
         ],
 
+        // Task 25 (Number 1): Batch Posts section — quick access to a
+        // grid view of just the movies created/updated by this batch,
+        // with per-card delete buttons. Only shown when the batch has
+        // captured movie IDs (new batches since Task 25). Old batches
+        // imported before this field was added will have empty lists
+        // and this section will be skipped — the admin will see only
+        // the sample titles sections below.
+        if (record.createdMovieIds.isNotEmpty ||
+            record.updatedMovieIds.isNotEmpty) ...[
+          _sectionCard(
+            isDark: isDark,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.movie_filter_outlined,
+                        size: 18, color: const Color(0xFFE50914)),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Batch Posts',
+                      style: theme.textTheme.titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Open a grid view of just the movies in this batch. '
+                  'Use this when you imported wrong IDs and need to find '
+                  'and delete the resulting bad posts without scrolling '
+                  'through the whole Admin Panel.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.4,
+                    color: isDark ? Colors.white60 : Colors.black54,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    if (record.createdMovieIds.isNotEmpty)
+                      Expanded(
+                        child: _batchPostsButton(
+                          context: context,
+                          label: 'Created (${record.createdMovieIds.length})',
+                          icon: Icons.add_circle_outline,
+                          color: Colors.green,
+                          movieIds: record.createdMovieIds,
+                          titleLabel: 'Created Posts',
+                          subtitle: _batchSubtitle(record),
+                        ),
+                      ),
+                    if (record.createdMovieIds.isNotEmpty &&
+                        record.updatedMovieIds.isNotEmpty)
+                      const SizedBox(width: 10),
+                    if (record.updatedMovieIds.isNotEmpty)
+                      Expanded(
+                        child: _batchPostsButton(
+                          context: context,
+                          label: 'Updated (${record.updatedMovieIds.length})',
+                          icon: Icons.update,
+                          color: Colors.orange,
+                          movieIds: record.updatedMovieIds,
+                          titleLabel: 'Updated Posts',
+                          subtitle: _batchSubtitle(record),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+
         // Sample created
         if (record.sampleCreated.isNotEmpty) ...[
           _sectionCard(
@@ -766,6 +843,67 @@ class _DetailBody extends StatelessWidget {
       ),
       child: child,
     );
+  }
+
+  /// Build a "View Created/Updated Posts" button that navigates to
+  /// [BatchPostsScreen] when tapped. Task 25 (Number 1).
+  Widget _batchPostsButton({
+    required BuildContext context,
+    required String label,
+    required IconData icon,
+    required Color color,
+    required List<String> movieIds,
+    required String titleLabel,
+    String? subtitle,
+  }) {
+    return OutlinedButton.icon(
+      onPressed: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => BatchPostsScreen(
+              movieIds: movieIds,
+              titleLabel: titleLabel,
+              subtitle: subtitle,
+            ),
+          ),
+        );
+      },
+      style: OutlinedButton.styleFrom(
+        foregroundColor: color,
+        side: BorderSide(color: color.withOpacity(0.5)),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+      ),
+      icon: Icon(icon, size: 18),
+      label: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  /// Build a short subtitle for the [BatchPostsScreen] AppBar showing
+  /// the batch's source file name + start date — gives the admin
+  /// context about which batch they're viewing.
+  String _batchSubtitle(BatchImportAuditRecord record) {
+    final parts = <String>[];
+    final name = record.sourceFileName;
+    if (name != null && name.isNotEmpty) {
+      parts.add(name);
+    }
+    if (record.startedAt != null) {
+      final d = record.startedAt!;
+      String two(int v) => v.toString().padLeft(2, '0');
+      parts.add('${d.year}-${two(d.month)}-${two(d.day)} '
+          '${two(d.hour)}:${two(d.minute)}');
+    }
+    return parts.join(' · ');
   }
 
   Widget _kv(String k, String v) {

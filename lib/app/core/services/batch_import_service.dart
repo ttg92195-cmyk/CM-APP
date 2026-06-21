@@ -105,6 +105,16 @@ class BatchImportItem {
   /// Error message when importResult == 'failure'.
   String? importError;
 
+  /// Firestore document ID of the movie created or updated by this item.
+  /// Filled in during the import phase when addMovie() returns the doc ID.
+  /// Used by Task 25 (Number 1) to populate `createdMovieIds` /
+  /// `updatedMovieIds` on the audit record, so the Batch History detail
+  /// page can show a "View Created Posts" button that opens a grid view
+  /// of just the movies in this batch (with delete buttons).
+  /// Null for items that haven't been imported yet, were skipped, or
+  /// failed (addMovie threw before returning).
+  String? movieDocId;
+
   BatchImportItem({
     required this.sourceIndex,
     required this.data,
@@ -340,6 +350,22 @@ class BatchImportAuditRecord extends BatchImportAuditSummary {
   /// Up to 20 titles that were successfully updated.
   final List<String> sampleUpdated;
 
+  /// Firestore document IDs of all movies CREATED by this batch (Task 25,
+  /// Number 1). Capped at 500 entries to stay well under Firestore's 1 MiB
+  /// doc limit. Used by the Batch History detail page's "View Created
+  /// Posts" button to open a dedicated grid view of just these movies —
+  /// with per-card delete buttons.
+  ///
+  /// For batches imported BEFORE this field was added (old audit docs),
+  /// this list will be empty — the UI falls back to showing sample titles
+  /// only.
+  final List<String> createdMovieIds;
+
+  /// Firestore document IDs of all movies UPDATED by this batch. Same
+  /// rationale as [createdMovieIds] — exposed so the UI can optionally
+  /// offer a "View Updated Posts" view too.
+  final List<String> updatedMovieIds;
+
   const BatchImportAuditRecord({
     required super.id,
     required super.startedAt,
@@ -358,6 +384,8 @@ class BatchImportAuditRecord extends BatchImportAuditSummary {
     required this.failedItems,
     required this.sampleCreated,
     required this.sampleUpdated,
+    required this.createdMovieIds,
+    required this.updatedMovieIds,
   });
 
   factory BatchImportAuditRecord.fromDoc(DocumentSnapshot doc) {
@@ -375,7 +403,7 @@ class BatchImportAuditRecord extends BatchImportAuditSummary {
     }
 
     List<String> toStringList(dynamic v) {
-      if (v is List) return v.map((e) => e?.toString() ?? '').toList();
+      if (v is List) return v.map((e) => e?.toString() ?? '').where((s) => s.isNotEmpty).toList();
       return const [];
     }
 
@@ -397,6 +425,10 @@ class BatchImportAuditRecord extends BatchImportAuditSummary {
       failedItems: failedItems,
       sampleCreated: toStringList(data['sampleCreated']),
       sampleUpdated: toStringList(data['sampleUpdated']),
+      // Task 25 (Number 1): movie IDs may be absent on old batches — empty
+      // list is fine, UI handles it gracefully.
+      createdMovieIds: toStringList(data['createdMovieIds']),
+      updatedMovieIds: toStringList(data['updatedMovieIds']),
     );
   }
 }
@@ -961,13 +993,16 @@ class BatchImportService {
 
       try {
         // addMovie() does its own duplicate re-check and counter sync.
-        // It returns the doc ID. We don't need it, but the call is required
-        // to trigger all the safety logic in FirestoreContentService.
+        // It returns the doc ID. Task 25 (Number 1) captures this ID so
+        // the Batch History detail page can show a "View Created Posts"
+        // grid with delete buttons — without having to re-search Firestore
+        // by title (which is unreliable for duplicate titles).
         //
         // skipAdminCheck:true — admin was verified once at the start of
         // runImport() (see top of this method). Skipping the per-item admin
         // read saves N Firestore reads for an N-item import. See audit C2.
-        await _contentService.addMovie(item.data, skipAdminCheck: true);
+        final docId = await _contentService.addMovie(item.data, skipAdminCheck: true);
+        item.movieDocId = docId;
 
         if (wasUpdate) {
           updated++;
@@ -1124,7 +1159,9 @@ class BatchImportService {
   ///     "skipped":          int,
   ///     "failedItems":      [{sourceIndex,title,tmdbId,type,error}, ...],
   ///     "sampleCreated":    [String],   // up to 20 titles
-  ///     "sampleUpdated":    [String]    // up to 20 titles
+  ///     "sampleUpdated":    [String],   // up to 20 titles
+  ///     "createdMovieIds":  [String],   // up to 500 doc IDs (Task 25, Number 1)
+  ///     "updatedMovieIds":  [String]    // up to 500 doc IDs (Task 25, Number 1)
   ///   }
   Future<void> _recordAudit({
     required BatchImportAuditContext context,
@@ -1162,6 +1199,27 @@ class BatchImportService {
         .map((i) => i.displayTitle)
         .toList();
 
+    // Task 25 (Number 1): capture the Firestore doc IDs of all movies
+    // created/updated by this batch. The Batch History detail page uses
+    // this list to offer a "View Created Posts" button that opens a grid
+    // view of just these movies with per-card delete buttons.
+    //
+    // We cap at 500 IDs (well under Firestore's 1 MiB doc-size limit —
+    // 500 IDs × ~30 chars = ~15 KB). For batches larger than 500, the
+    // UI shows the first 500 — acceptable degradation since the admin
+    // typically only wants to delete the most recent batch's worth of
+    // accidental imports, not a 5000-item import.
+    final createdMovieIds = result.items
+        .where((i) => i.importResult == 'success_create' && i.movieDocId != null)
+        .take(500)
+        .map((i) => i.movieDocId!)
+        .toList();
+    final updatedMovieIds = result.items
+        .where((i) => i.importResult == 'success_update' && i.movieDocId != null)
+        .take(500)
+        .map((i) => i.movieDocId!)
+        .toList();
+
     final payload = <String, dynamic>{
       ...context.toPartialFirestoreMap(),
       'startedAt': startedAt.toUtc(),
@@ -1176,6 +1234,8 @@ class BatchImportService {
       'failedItems': failedItems,
       'sampleCreated': sampleCreated,
       'sampleUpdated': sampleUpdated,
+      'createdMovieIds': createdMovieIds,
+      'updatedMovieIds': updatedMovieIds,
     };
 
     await _firestore.collection(auditCollectionName).add(payload);
