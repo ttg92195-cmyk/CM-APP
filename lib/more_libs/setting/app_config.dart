@@ -583,6 +583,15 @@ class AppConfig extends ChangeNotifier {
 
   // M8: Delete user account (GDPR compliance)
   // Deletes Firestore user data and Firebase Auth account
+  //
+  // H8 FIX (N+1 deletes): Previously this method issued one Firestore
+  // round-trip PER doc in each of bookmarks/watchlist/history
+  // subcollections. A user with 100 bookmarks + 50 watchlist + 200
+  // history entries = 350 sequential round-trips, taking 30+ seconds
+  // on a typical mobile connection. Now all deletes are batched into
+  // WriteBatch commits (500 ops/batch Firestore limit, chunked if
+  // needed), reducing round-trips to ~3-4 total regardless of user
+  // data volume.
   Future<bool> deleteAccount() async {
     final user = _auth.currentUser;
     if (user == null) return false;
@@ -590,27 +599,38 @@ class AppConfig extends ChangeNotifier {
     try {
       // 1. Delete Firestore user document and sub-collections
       final userId = user.uid;
+      final userDocRef = _firestore.collection('users').doc(userId);
 
-      // Delete bookmarks sub-collection
-      final bookmarks = await _firestore.collection('users').doc(userId).collection('bookmarks').get();
-      for (final doc in bookmarks.docs) {
-        await doc.reference.delete();
+      // Read all three subcollections in parallel (saves 2 round-trips
+      // vs sequential reads).
+      final results = await Future.wait([
+        userDocRef.collection('bookmarks').get(),
+        userDocRef.collection('watchlist').get(),
+        userDocRef.collection('history').get(),
+      ]);
+
+      // Collect every doc ref to delete across all 3 subcollections +
+      // the user doc itself. Chunk into WriteBatches of 500 (Firestore
+      // hard limit per batch).
+      const batchSize = 500;
+      final allRefs = <DocumentReference>[];
+      for (final snapshot in results) {
+        for (final doc in snapshot.docs) {
+          allRefs.add(doc.reference);
+        }
       }
+      allRefs.add(userDocRef); // delete the user doc itself last
 
-      // Delete watchlist sub-collection
-      final watchlist = await _firestore.collection('users').doc(userId).collection('watchlist').get();
-      for (final doc in watchlist.docs) {
-        await doc.reference.delete();
+      for (var i = 0; i < allRefs.length; i += batchSize) {
+        final end = (i + batchSize > allRefs.length)
+            ? allRefs.length
+            : i + batchSize;
+        final batch = _firestore.batch();
+        for (final ref in allRefs.sublist(i, end)) {
+          batch.delete(ref);
+        }
+        await batch.commit();
       }
-
-      // Delete history sub-collection
-      final history = await _firestore.collection('users').doc(userId).collection('history').get();
-      for (final doc in history.docs) {
-        await doc.reference.delete();
-      }
-
-      // Delete user document
-      await _firestore.collection('users').doc(userId).delete();
 
       // 2. Delete Firebase Auth account
       await user.delete();

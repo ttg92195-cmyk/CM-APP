@@ -202,9 +202,11 @@ class BookmarkService {
   /// but cloud bookmarks remain and will reappear on next sync.
   /// Callers should warn the user when this returns `false`.
   ///
-  /// (H8 will refactor this to use WriteBatch instead of N+1 deletes.
-  /// For now the per-doc delete loop is preserved to keep H7 diff
-  /// focused on the silent-failure surface.)
+  /// H8 FIX (N+1 deletes): Previously this issued one Firestore
+  /// round-trip PER bookmark doc. A user with 200 bookmarks = 200
+  /// sequential round-trips, taking 30+ seconds. Now all deletes are
+  /// batched into WriteBatch commits (500 ops/batch Firestore limit,
+  /// chunked if needed), reducing round-trips to 1 for typical users.
   Future<bool> clearBookmarks() async {
     if (_isLoggedIn && _userId != null) {
       try {
@@ -213,8 +215,21 @@ class BookmarkService {
             .doc(_userId)
             .collection('bookmarks')
             .get();
-        for (final doc in snapshot.docs) {
-          await doc.reference.delete();
+
+        // Batch all deletes into one WriteBatch commit (chunked at 500
+        // ops/batch, the Firestore hard limit). For typical users this
+        // is a single round-trip; for power users with 500+ bookmarks
+        // it's 2+ round-trips instead of 500+.
+        const batchSize = 500;
+        for (var i = 0; i < snapshot.docs.length; i += batchSize) {
+          final end = (i + batchSize > snapshot.docs.length)
+              ? snapshot.docs.length
+              : i + batchSize;
+          final batch = _firestore.batch();
+          for (final doc in snapshot.docs.sublist(i, end)) {
+            batch.delete(doc.reference);
+          }
+          await batch.commit();
         }
         return true;
       } catch (e) {
@@ -241,6 +256,17 @@ class BookmarkService {
   /// was cleared. Returns `false` if any step failed — local cache is
   /// PRESERVED so the merge can be retried on next login. Callers
   /// (login_page.dart) should warn the user when this returns `false`.
+  ///
+  /// H8 FIX (N+1 reads + N+1 writes): Previously this issued one read
+  /// PER local bookmark to check if it exists, then one write PER new
+  /// bookmark. 50 local bookmarks = up to 100 round-trips. Now we do:
+  ///   1. ONE query for all existing bookmark IDs in the user's
+  ///      subcollection (single round-trip).
+  ///   2. Compute the diff (local bookmarks whose IDs aren't in the
+  ///      existing set).
+  ///   3. ONE WriteBatch commit for all the new bookmarks (chunked
+  ///      at 500 ops/batch if needed).
+  /// Net: 50 local bookmarks = 2 round-trips instead of 100.
   Future<bool> mergeLocalBookmarksToCloud() async {
     if (!_isLoggedIn || _userId == null) return true;
 
@@ -248,20 +274,40 @@ class BookmarkService {
       final localBookmarks = await _getLocalBookmarks();
       if (localBookmarks.isEmpty) return true;
 
-      for (final movie in localBookmarks) {
-        final docRef = _firestore
-            .collection('users')
-            .doc(_userId)
-            .collection('bookmarks')
-            .doc(movie.id);
+      final bookmarksColRef = _firestore
+          .collection('users')
+          .doc(_userId)
+          .collection('bookmarks');
 
-        final doc = await docRef.get();
-        if (!doc.exists) {
-          await docRef.set({
+      // 1. Single query to fetch all existing bookmark IDs.
+      final existingSnapshot = await bookmarksColRef.get();
+      final existingIds = existingSnapshot.docs.map((d) => d.id).toSet();
+
+      // 2. Diff — only merge bookmarks that aren't already in the cloud.
+      final toMerge = localBookmarks
+          .where((m) => !existingIds.contains(m.id))
+          .toList();
+      if (toMerge.isEmpty) {
+        // All local bookmarks already in cloud — just clear local cache.
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove(_bookmarkKey);
+        return true;
+      }
+
+      // 3. Batch-write the new bookmarks (chunked at 500 ops/batch).
+      const batchSize = 500;
+      for (var i = 0; i < toMerge.length; i += batchSize) {
+        final end = (i + batchSize > toMerge.length)
+            ? toMerge.length
+            : i + batchSize;
+        final batch = _firestore.batch();
+        for (final movie in toMerge.sublist(i, end)) {
+          batch.set(bookmarksColRef.doc(movie.id), {
             ...movie.toMap(),
             'addedAt': FieldValue.serverTimestamp(),
           });
         }
+        await batch.commit();
       }
 
       // Clear local bookmarks only after the full merge succeeds.
