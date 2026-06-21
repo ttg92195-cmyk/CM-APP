@@ -152,7 +152,18 @@ class _LoginPageState extends State<LoginPage>
 
         // Merge local bookmarks to cloud after login
         final bookmarkService = BookmarkService();
-        await bookmarkService.mergeLocalBookmarksToCloud();
+        final mergeOk = await bookmarkService.mergeLocalBookmarksToCloud();
+        // H7: if the merge failed (network blip, Firestore error, etc.),
+        // local bookmarks are PRESERVED so they can be retried on the
+        // next login. Warn the user so they know to check their list.
+        if (mounted && !mergeOk) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(appConfig.translate('sync_failed')),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

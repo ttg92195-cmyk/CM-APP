@@ -36,13 +36,19 @@ class _WatchlistScreenState extends State<WatchlistScreen> {
   }
 
   Future<void> _removeFromWatchlist(Movie movie) async {
-    await _watchlistService.removeFromWatchlist(movie.id);
+    final primaryOk = await _watchlistService.removeFromWatchlist(movie.id);
     _loadWatchlist();
     if (mounted) {
+      final appConfig = Provider.of<AppConfig>(context, listen: false);
+      // H7: surface silent Firestore failures — if primaryOk is false,
+      // the cloud delete failed and only the local cache was updated.
+      // Cloud watchlist entry will reappear on next sync.
+      final message = !primaryOk
+          ? appConfig.translate('saved_locally')
+          : appConfig.translate('watchlist_removed');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(Provider.of<AppConfig>(context, listen: false)
-              .translate('watchlist_removed')),
+          content: Text(message),
           duration: const Duration(seconds: 2),
         ),
       );

@@ -159,19 +159,22 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
       type: _movieDetail!.type,
       isTrending: _movieDetail!.isTrending,
     );
-    await _bookmarkService.toggleBookmark(movie);
+    final primaryOk = await _bookmarkService.toggleBookmark(movie);
     final bookmarked = await _bookmarkService.isBookmarked(_movieDetail!.id);
     if (mounted) {
       setState(() => _isBookmarked = bookmarked);
+      final appConfig = Provider.of<AppConfig>(context, listen: false);
+      // H7: surface silent Firestore failures to the user. If primaryOk
+      // is false, the write fell back to local storage — warn the user
+      // that the change isn't synced to the cloud yet.
+      final message = !primaryOk
+          ? appConfig.translate('saved_locally')
+          : bookmarked
+              ? appConfig.translate('bookmark_added')
+              : appConfig.translate('bookmark_removed');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            bookmarked
-                ? Provider.of<AppConfig>(context, listen: false)
-                    .translate('bookmark_added')
-                : Provider.of<AppConfig>(context, listen: false)
-                    .translate('bookmark_removed'),
-          ),
+          content: Text(message),
           duration: const Duration(seconds: 2),
         ),
       );
@@ -190,19 +193,20 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
       type: _movieDetail!.type,
       isTrending: _movieDetail!.isTrending,
     );
-    await _watchlistService.toggleWatchlist(movie);
+    final primaryOk = await _watchlistService.toggleWatchlist(movie);
     final inWatchlist = await _watchlistService.isInWatchlist(_movieDetail!.id);
     if (mounted) {
       setState(() => _isInWatchlist = inWatchlist);
+      final appConfig = Provider.of<AppConfig>(context, listen: false);
+      // H7: same surface-failure pattern as _toggleBookmark above.
+      final message = !primaryOk
+          ? appConfig.translate('saved_locally')
+          : inWatchlist
+              ? appConfig.translate('watchlist_added')
+              : appConfig.translate('watchlist_removed');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            inWatchlist
-                ? Provider.of<AppConfig>(context, listen: false)
-                    .translate('watchlist_added')
-                : Provider.of<AppConfig>(context, listen: false)
-                    .translate('watchlist_removed'),
-          ),
+          content: Text(message),
           duration: const Duration(seconds: 2),
         ),
       );

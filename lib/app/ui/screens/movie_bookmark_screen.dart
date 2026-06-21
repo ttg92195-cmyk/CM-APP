@@ -70,17 +70,21 @@ class _MovieBookmarkScreenState extends State<MovieBookmarkScreen> {
 
   Future<void> _removeBookmark(int index) async {
     final movie = _bookmarks[index];
-    await _bookmarkService.removeBookmark(movie.id);
+    final primaryOk = await _bookmarkService.removeBookmark(movie.id);
     if (mounted) {
       setState(() {
         _bookmarks.removeAt(index);
       });
+      final appConfig = Provider.of<AppConfig>(context, listen: false);
+      // H7: surface silent Firestore failures — if primaryOk is false,
+      // the cloud delete failed and only the local cache was updated.
+      // Cloud bookmark will reappear on next sync.
+      final message = !primaryOk
+          ? appConfig.translate('saved_locally')
+          : appConfig.translate('bookmark_removed');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            Provider.of<AppConfig>(context, listen: false)
-                .translate('bookmark_removed'),
-          ),
+          content: Text(message),
           duration: const Duration(seconds: 2),
         ),
       );
@@ -118,8 +122,18 @@ class _MovieBookmarkScreenState extends State<MovieBookmarkScreen> {
                   ),
                 );
                 if (confirmed == true) {
-                  await _bookmarkService.clearBookmarks();
+                  final primaryOk = await _bookmarkService.clearBookmarks();
                   _loadBookmarks();
+                  // H7: warn if cloud clear failed — local cache was still
+                  // cleared but cloud bookmarks remain.
+                  if (mounted && !primaryOk) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(appConfig.translate('sync_failed')),
+                        duration: const Duration(seconds: 3),
+                      ),
+                    );
+                  }
                 }
               },
             ),
