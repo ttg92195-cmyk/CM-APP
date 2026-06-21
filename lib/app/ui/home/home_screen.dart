@@ -21,7 +21,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final FirestoreContentService _contentService = FirestoreContentService();
   final RecentService _recentService = RecentService();
   // Banner PageController — created lazily once banner image count is known,
@@ -59,9 +59,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
   static const int _homeLimit = 10; // Show 10 posts per section on Home
 
+  // Whether the banner auto-scroll timer SHOULD be running. The actual
+  // timer may be cancelled (e.g. during pull-to-refresh skeleton, or when
+  // the app is backgrounded) but this flag remembers whether to restart
+  // it once the interruption is over.
+  bool _bannerAutoScrollEnabled = false;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadData();
     // NOTE: Auto-scroll timer is NOT started here. It is started only after
     // banner data actually arrives in _loadData() — see the call to
@@ -75,9 +82,45 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
-    _autoScrollTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    _pauseAutoScroll();
     _bannerController?.dispose();
+    _bannerController = null;
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Pause the banner auto-scroll timer when the app goes to background,
+    // and resume it (only if banner data is loaded) when the app returns
+    // to the foreground. Without this, the timer keeps firing in the
+    // background and ticks accumulate; on resume, the PageView tries to
+    // animate to multiple pages in quick succession, producing the
+    // "rapid banner scroll" glitch Bro reported when returning to the
+    // app after backgrounding it.
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      _pauseAutoScroll();
+    } else if (state == AppLifecycleState.resumed) {
+      // Only restart if banner data is present and we are not currently
+      // loading (skeleton would replace the banner in the widget tree).
+      if (_bannerAutoScrollEnabled &&
+          _bannerImageUrls.isNotEmpty &&
+          !_isLoading &&
+          mounted) {
+        // Defer to next frame so the PageController has a chance to
+        // re-attach to the PageView after the app resumes.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted &&
+              _bannerAutoScrollEnabled &&
+              _bannerImageUrls.isNotEmpty &&
+              !_isLoading) {
+            _startAutoScroll();
+          }
+        });
+      }
+    }
   }
 
   /// Auto-scroll banner every 4 seconds.
@@ -91,8 +134,14 @@ class _HomeScreenState extends State<HomeScreen> {
   /// (= length * 1000, e.g. 4000) all the way down to page 1 in a single
   /// 500ms animation. Visually this looked like a rapid auto-scroll burst
   /// on app launch. Storing the absolute page fixes it.
+  ///
+  /// This method is idempotent — it cancels any existing timer before
+  /// starting a new one. It also sets _bannerAutoScrollEnabled = true so
+  /// that didChangeAppLifecycleState knows whether to restart the timer
+  /// when the app returns to the foreground.
   void _startAutoScroll() {
     _autoScrollTimer?.cancel();
+    _bannerAutoScrollEnabled = true;
     // Initialize absolute page tracker to the controller's actual current
     // page (the lazy initialPage). This prevents the first timer tick from
     // jumping backwards.
@@ -127,9 +176,18 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Used during loading/refresh transitions so the timer doesn't keep
   /// firing animateToPage() against a controller that may be unmounted
   /// (because the skeleton replaces the banner in the widget tree).
-  void _pauseAutoScroll() {
+  ///
+  /// keepEnabledFlag: if true (default), preserves _bannerAutoScrollEnabled
+  /// so didChangeAppLifecycleState can restart the timer on app resume.
+  /// If false, clears the flag — used when we're tearing down the banner
+  /// entirely (e.g. on dispose, or when the banner is hidden because no
+  /// banner images are configured).
+  void _pauseAutoScroll({bool keepEnabledFlag = true}) {
     _autoScrollTimer?.cancel();
     _autoScrollTimer = null;
+    if (!keepEnabledFlag) {
+      _bannerAutoScrollEnabled = false;
+    }
   }
 
   /// Tear down the banner PageController so a fresh one is created on the
@@ -139,7 +197,9 @@ class _HomeScreenState extends State<HomeScreen> {
   /// controller from being animated by a lingering timer and keeps
   /// _currentAbsolutePage in sync with the new initialPage on rebuild.
   void _resetBannerController() {
-    _pauseAutoScroll();
+    // Keep the enabled flag here — we'll restart the timer once banner
+    // data arrives in _loadData's postFrame callback.
+    _pauseAutoScroll(keepEnabledFlag: true);
     _bannerController?.dispose();
     _bannerController = null;
     // Reset to a safe default; _buildBannerSlider will set it to the
@@ -181,8 +241,21 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       if (mounted) {
-        // Restart the auto-scroll timer if banner count changed.
-        final bannerChanged = bannerUrls.length != _bannerImageUrls.length;
+        // Detect whether the banner image set actually changed. We compare
+        // BOTH the length AND the contents, because the count alone can
+        // miss the case where an image was replaced with a different URL
+        // at the same position.
+        final bannerChanged = !_listEquals(bannerUrls, _bannerImageUrls);
+
+        // ALWAYS pause the timer before setState — even if bannerChanged
+        // is false, the existing timer is now pointing at potentially stale
+        // _currentAbsolutePage state (e.g. if the PageController was
+        // recreated elsewhere). _startAutoScroll will re-sync it on restart.
+        // We keep the enabled flag so that didChangeAppLifecycleState
+        // can still resume correctly if the app gets backgrounded during
+        // this refresh.
+        _pauseAutoScroll(keepEnabledFlag: true);
+
         setState(() {
           _bannerImageUrls = bannerUrls;
           _trendingMovies = trendingMovies;
@@ -190,14 +263,37 @@ class _HomeScreenState extends State<HomeScreen> {
           _allMovies = allMovies;
           _allSeries = allSeries;
         });
+
+        // If the banner set changed, dispose the old PageController so a
+        // fresh one (with a correct initialPage for the new image count)
+        // is created on the next build. Without this, the existing
+        // controller's initialPage (sized for the OLD image count) could
+        // be misaligned with the new mod-loop, causing rapid backward
+        // scroll glitches.
         if (bannerChanged) {
-          _autoScrollTimer?.cancel();
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted && _bannerImageUrls.isNotEmpty) {
-              _startAutoScroll();
-            }
-          });
+          _bannerController?.dispose();
+          _bannerController = null;
+          _currentAbsolutePage = 0;
+          _currentBannerIndex = 0;
         }
+
+        // Restart the auto-scroll timer on the next frame, AFTER the
+        // setState above has been committed to the widget tree and the
+        // lazy _bannerController has had a chance to recreate itself
+        // with the correct initialPage for the (possibly new) image
+        // count. Skipping this frame would cause _startAutoScroll to
+        // read a stale/null controller.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _bannerImageUrls.isNotEmpty) {
+            _startAutoScroll();
+          } else if (mounted && _bannerImageUrls.isEmpty) {
+            // No banner configured — make sure the enabled flag is cleared
+            // so didChangeAppLifecycleState doesn't try to restart a
+            // timer that has nothing to scroll.
+            _bannerAutoScrollEnabled = false;
+          }
+        });
+
         // Reload tag-based sections in the background.
         _loadTagBasedData();
       }
@@ -277,11 +373,17 @@ class _HomeScreenState extends State<HomeScreen> {
         // Defensive: also cancel any stale timer that may have survived
         // from a previous load cycle — _startAutoScroll already does this,
         // but doing it here makes the intent explicit and protects against
-        // future regressions.
-        _pauseAutoScroll();
+        // future regressions. We keep the enabled flag so lifecycle
+        // resume-after-pause knows to restart the timer.
+        _pauseAutoScroll(keepEnabledFlag: true);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted && _bannerImageUrls.isNotEmpty && !_isLoading) {
             _startAutoScroll();
+          } else if (mounted && _bannerImageUrls.isEmpty) {
+            // No banner configured — clear the enabled flag so that
+            // didChangeAppLifecycleState doesn't try to restart a timer
+            // that has nothing to scroll.
+            _bannerAutoScrollEnabled = false;
           }
         });
 
@@ -296,6 +398,19 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
     }
+  }
+
+  /// Shallow list equality helper for comparing two banner URL lists.
+  /// Returns true if both lists have the same length and contain the
+  /// same strings in the same order. Used by _refreshSilently to decide
+  /// whether to dispose + recreate the PageController.
+  bool _listEquals(List<String> a, List<String> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   Future<void> _loadTagBasedData() async {
