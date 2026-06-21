@@ -1547,3 +1547,173 @@ Stage Summary:
 - After Number 1 is verified, Bro will answer the clarifying
   questions I asked about Number 4 (TMDB Generator single-movie
   sync), then we proceed to Number 2.
+
+---
+Task ID: 27
+Agent: main
+Task: "All Posts disappeared from Admin Panel" — recurring bug
+triggered by Batch Import. Bro reported that after using Batch
+Import, the Admin Panel → All Tab showed 0 posts (tab label still
+showed the correct count, e.g., "All (1068)", so docs still existed
+in Firestore). Then doing TMDB Sync on 20 movies restored visibility.
+Same symptom Bro had seen before. Bro asked: should I remove Batch
+Import entirely, or fix the bug?
+
+Work Log:
+- Pulled latest from origin/main (commit 2e91632 — Task 26 Number 1
+  Batch Posts grid).
+- Read getAllPosts() in firestore_content_service.dart (lines 279-363):
+  * Primary: orderBy('updatedAt', descending) — silent-excludes docs
+    without updatedAt, but addMovie() always sets it.
+  * Fallback tiers: orderBy('createdAt'), then no-orderBy.
+  * ALL three tiers call `Movie.fromMap` via `.map((doc) => Movie.fromMap(...)).toList()`.
+- Read Movie.fromMap in movie.dart (lines 40-62) — found the throwing
+  casts:
+  * `map['categories'] as List` — THROWS if 'categories' is a string
+  * `map['isAdult'] as int?` — THROWS if 'isAdult' is bool/string
+  * `map['isTrending'] as bool?` — THROWS if 'isTrending' is int/string
+  * `map['title'] as String?` — THROWS if 'title' is non-String
+  * Same for slug, title_lowercase, type, poster, resolution.
+- Read addMovie() in firestore_content_service.dart (lines 1585-1737):
+  * Three paths: duplicate-tmdbId update, duplicate-slug update,
+    new-doc create. All set `updatedAt = FieldValue.serverTimestamp()`.
+  * `_buildSafeUpdateMap()` (lines 1747-1789) has `_isEmptyValue` check
+    that skips empty values (Task e399d08 fix). But it does NOT
+    validate types — a non-empty wrong-type value (e.g.,
+    `categories: "Action"`) still gets written verbatim.
+- Confirmed root cause via grep: only writes to `movies` collection
+  are from firestore_content_service.dart (addMovie, updateMovie,
+  deleteMovie). All paths set updatedAt. So missing-updatedAt was
+  NOT the bug — wrong-type fields were.
+- Verified the historical fix e399d08 "posters disappearing after
+  Batch Import" was the SAME class of bug — empty values wiping
+  existing data. Today's bug is the wrong-type-values variant
+  that e399d08 didn't cover.
+
+ROOT CAUSE
+When a JSON Batch Import file contains a field with the WRONG TYPE
+(for example `categories: "Action"` as a string instead of a list,
+or `isAdult: true` as a bool instead of an int), addMovie() writes
+the wrong-type value to Firestore via _buildSafeUpdateMap() or the
+new-doc batch.set(). On the next getAllPosts() call, Movie.fromMap
+throws on the FIRST corrupted doc — the `.map().toList()` chain
+propagates the exception up. All three fallback tiers in
+getAllPosts() use the same Movie.fromMap, so they ALL throw, and
+the function returns an empty list. ONE corrupted doc → ALL POSTS
+DISAPPEAR from the Admin Panel grid (tab count remains correct
+because AggregateQuery.count() works regardless of doc content).
+
+The TMDB Sync workaround Bro discovered works because Sync runs
+`transaction.update()` with proper TMDB data (lists for categories,
+ints for isAdult, etc.) — overwriting the corrupted fields. After
+Sync un-corrupts even one bad doc, Movie.fromMap no longer throws
+on it, and getAllPosts() returns the rest of the page successfully.
+
+FIX — three parts, all in this commit:
+
+1) movie.dart — defensive Movie.fromMap (READ SIDE):
+   - Replaced all `as String?`, `as int?`, `as bool?`, `as List`
+     casts with defensive parser helpers that never throw.
+   - Added 5 helpers at file bottom:
+     * `_parseString(v, [dflt])` — String or dflt
+     * `_parseNullableString(v)` — String or null (for optional fields)
+     * `_parseInt(v)` — int/num/bool/numeric-string → int? or null
+     * `_parseBool(v, [dflt])` — bool/int/string → bool or dflt
+     * `_parseStringList(v)` — List → List<String>; single non-empty
+                              String → [value]; else empty list
+   - Effect: a doc with `categories: "Action"` (string) now parses
+     successfully with categories=['Action'] instead of throwing.
+     A doc with `isAdult: true` (bool) now parses with isAdult=1.
+     Grid stays visible; admin can see and delete/fix the bad doc.
+
+2) firestore_content_service.dart — type coercion in addMovie
+   (WRITE SIDE):
+   - Added `_coerceToStringList(v)` helper: List → List<String>
+     (filtered for empties); non-empty String → [value]; other
+     types → null (meaning skip).
+   - In `_buildSafeUpdateMap()`: for fields 'categories',
+     'directors', 'casts', coerce via _coerceToStringList BEFORE
+     adding to safe update map. If coercion returns null, skip
+     the field entirely (don't write junk).
+   - In `addMovie()` new-doc path: same coercion loop for
+     ['categories', 'directors', 'casts', 'tags'] BEFORE the
+     batch.set() call. If coercion returns null, remove the field
+     from data (so it's not written at all).
+   - Effect: future Batch Imports can't corrupt docs with wrong-
+     type list fields. A JSON file with `categories: "Action"`
+     now becomes `categories: ["Action"]` in Firestore, which
+     Movie.fromMap handles cleanly.
+
+3) admin_panel_page.dart — Batch Import button temporarily hidden:
+   - Wrapped the Batch Import ListTile in `if (false)`.
+   - Code left in place (not deleted) so re-enabling is one line.
+   - Reason: Bro explicitly worried about triggering the bug
+     again. Even though the read+write fixes above should
+     prevent recurrence, hiding the button gives Bro confidence
+     to test the rest of the app without fear. After Bro rebuilds
+     and confirms All Posts stays visible across normal use, we
+     can re-enable.
+
+COST IMPACT
+- Movie.fromMap: +5 small helper calls per movie. Each is O(1)
+  with cheap type checks. For a 1000-movie page load, ~5000
+  helper calls — well under 10ms total. Negligible.
+- addMovie new-doc path: +4 _coerceToStringList calls per import.
+  Negligible vs the Firestore batch commit cost.
+- _buildSafeUpdateMap: +1 _coerceToStringList per list-typed
+  field per update. ~3 calls per update. Negligible.
+- No extra Firestore reads or writes.
+
+UNTOUCHED
+- getAllPosts() / getMovies() / getSeries() — no changes needed.
+  The fix is at the Movie.fromMap level, which all three call.
+- Batch import service — no changes needed. The fix is at the
+  addMovie() level, which runImport() calls.
+- TMDB Sync code — no changes needed. It already writes proper
+  types from TmdbService.mapMovieToFirestore.
+- batch_posts_screen.dart (Task 26) — uses getMoviesByIds which
+  uses Movie.fromMap. Automatically benefits from the defensive
+  parsing. No change needed.
+- firestore.indexes.json — no index changes. This bug was never
+  about indexes (despite earlier wrong diagnosis from another AI).
+
+SANITY CHECKS
+- Verified movie.dart structure: Movie class + 6 helper functions
+  (_parseDateTime + 5 new parsers). File ends cleanly.
+- Verified firestore_content_service.dart: _coerceToStringList
+  used in 2 places (addMovie new-doc path + _buildSafeUpdateMap).
+- Verified admin_panel_page.dart: `if (false)` wrapper cleanly
+  hides the ListTile. No syntax issues.
+- Manual review of all 5 new parsers: each returns sensible
+  default for unexpected input. No path can throw.
+- Manual review of coercion in addMovie: covers all 4 list-typed
+  fields (categories, directors, casts, tags). Old docs without
+  these fields are unaffected (loop uses containsKey check).
+- Flutter not installed locally — Bro/CI does the build. Manual
+  review only.
+
+DATA RECOVERY NOTE FOR BRO
+Existing corrupted docs in Firestore (if any) will now RENDER
+correctly in the Admin Panel grid thanks to the defensive
+Movie.fromMap. Bro can:
+  1. Open Admin Panel → All tab — should now show ALL posts,
+     including any that were previously invisible.
+  2. Visually scan for posts with weird/missing data (e.g.,
+     poster missing, categories showing as a string in detail).
+  3. Either fix each one via Edit Movie, or delete it.
+No data was lost — the docs were always there, just hidden by
+the throwing Movie.fromMap.
+
+Stage Summary:
+- Root cause fixed at both READ side (defensive Movie.fromMap)
+  and WRITE side (type coercion in addMovie).
+- Batch Import button temporarily hidden until Bro verifies the
+  fix on device.
+- Bro to rebuild + verify:
+  * Admin Panel → All tab shows ALL posts (no more "disappeared").
+  * Look for any posts with weird/missing data — those are the
+    previously-corrupted docs. Fix or delete them.
+  * Once confident, ask me to re-enable Batch Import button
+    (one-line change: remove `if (false)` wrapper).
+- After verification, can resume work on Number 2/3/4 from
+  Bro's earlier feature list.

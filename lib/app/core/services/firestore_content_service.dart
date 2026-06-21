@@ -1714,6 +1714,23 @@ class FirestoreContentService {
     data['createdAt'] = FieldValue.serverTimestamp();
     data['updatedAt'] = FieldValue.serverTimestamp();
 
+    // Task 27 ("All Posts disappeared" bug): coerce list-typed fields
+    // BEFORE writing. Same protection as in _buildSafeUpdateMap() — a
+    // JSON file with `categories: "Action"` (string instead of list)
+    // used to be written verbatim, then crash Movie.fromMap later. Now
+    // we coerce to List<String> or remove the field entirely so the
+    // new doc has clean data from the start.
+    for (final listField in ['categories', 'directors', 'casts', 'tags']) {
+      if (data.containsKey(listField)) {
+        final coerced = _coerceToStringList(data[listField]);
+        if (coerced == null) {
+          data.remove(listField);
+        } else {
+          data[listField] = coerced;
+        }
+      }
+    }
+
     // Audit C1: fold genre/tag counter increments into a single WriteBatch
     // that ALSO contains the new movie doc add. This saves N writes (one per
     // genre/tag) plus a round-trip for the movie insert itself.
@@ -1768,6 +1785,20 @@ class FirestoreContentService {
         //   - anything else   → update
         if (_isEmptyValue(value)) continue;
 
+        // Task 27 ("All Posts disappeared" bug): coerce list-typed fields
+        // to List<String>. If a JSON Batch Import file has
+        // `categories: "Action"` (string instead of list), the old code
+        // wrote the string to Firestore, which later crashed
+        // `Movie.fromMap` and made the Admin Panel All Posts tab appear
+        // empty. This coercion is the WRITE-SIDE fix — bad-type values
+        // are either coerced to a proper list or skipped entirely.
+        if (field == 'categories' || field == 'directors' || field == 'casts') {
+          final coerced = _coerceToStringList(value);
+          if (coerced == null) continue; // skip — can't coerce safely
+          result[field] = coerced;
+          continue;
+        }
+
         result[field] = value;
       }
     }
@@ -1783,6 +1814,40 @@ class FirestoreContentService {
     if (value is List && value.isEmpty) return true;
     if (value is Map && value.isEmpty) return true;
     return false;
+  }
+
+  /// Coerce [value] to a List<String>, or return null if it can't be
+  /// coerced safely. Used by [addMovie] to PREVENT writing wrong-type
+  /// values to Firestore (e.g., `categories: "Action"` as a string).
+  ///
+  /// Task 27 ("All Posts disappeared" bug): when a JSON Batch Import
+  /// file contained `categories` as a string instead of a list, the
+  /// old code wrote the string to Firestore, which later crashed
+  /// `Movie.fromMap` and made the entire Admin Panel All Posts tab
+  /// appear empty. This coercion is the WRITE-SIDE fix; the defensive
+  /// `Movie.fromMap` is the READ-SIDE fix.
+  ///
+  /// Rules:
+  ///   - null                       → null (skip)
+  ///   - List (any element types)   → List<String> (each element via toString)
+  ///   - String (non-empty)         → [value] (single-element list)
+  ///   - String (empty)             → null (skip — equivalent to _isEmptyValue)
+  ///   - any other type             → null (skip — don't write junk)
+  List<String>? _coerceToStringList(dynamic value) {
+    if (value == null) return null;
+    if (value is List) {
+      final result = value
+          .map((e) => e?.toString() ?? '')
+          .where((s) => s.isNotEmpty)
+          .toList();
+      return result.isEmpty ? null : result;
+    }
+    if (value is String) {
+      final trimmed = value.trim();
+      return trimmed.isEmpty ? null : [trimmed];
+    }
+    // int, bool, Map, etc. — don't write anything
+    return null;
   }
 
   /// Update a movie (admin only)
