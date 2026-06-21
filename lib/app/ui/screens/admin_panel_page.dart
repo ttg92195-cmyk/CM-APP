@@ -28,7 +28,14 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   late TabController _tabController;
 
   // Pagination state
-  static const int _pageSize = 30;
+  //
+  // PAGINATION: 20 per page so the admin sees a manageable chunk per
+  // page and can flip pages quickly. Previously this was 30 (default
+  // raised from 20 in commit 33b5dd5, June 11) — Bro reported the
+  // Movies/Series tabs were loading too many posts at once, and the
+  // same applies here for the Admin Panel's grid view. Reverted to 20
+  // per page for consistency with the rest of the app.
+  static const int _pageSize = 20;
   int _currentPage = 1;
   bool _hasMore = true;
   bool _isLoadingPage = false;

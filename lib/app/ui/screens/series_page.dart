@@ -74,7 +74,8 @@ class _SeriesPageState extends State<SeriesPage> {
     setState(() => _isLoading = true);
     try {
       final stopwatch = Stopwatch()..start();
-      final result = await _contentService.getSeries(limit: 50);
+      // PAGINATION: 20 per page (see movies_page.dart for the rationale).
+      final result = await _contentService.getSeries(limit: 20);
       // Ensure skeleton shows for at least 600ms so it doesn't flash too fast
       final elapsed = stopwatch.elapsedMilliseconds;
       if (elapsed < 600) {
@@ -108,7 +109,7 @@ class _SeriesPageState extends State<SeriesPage> {
     setState(() => _isLoadingMore = true);
     try {
       final result = await _contentService.getSeries(
-        limit: 50,
+        limit: 20,
         startAfter: _lastDoc,
       );
       if (mounted) {

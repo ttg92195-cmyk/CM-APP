@@ -152,7 +152,7 @@ class _SearchScreenState extends State<SearchScreen> {
         year: _selectedYear,
         rating: _selectedRating,
         sortBy: _sortBy,
-        limit: 50,
+        limit: 20, // PAGINATION: 20/page (see movies_page.dart)
       );
       if (mounted) {
         final movies = result['movies'] as List<Movie>;
@@ -213,7 +213,7 @@ class _SearchScreenState extends State<SearchScreen> {
         year: _selectedYear,
         rating: _selectedRating,
         sortBy: _sortBy,
-        limit: 50,
+        limit: 20, // PAGINATION: 20/page (see movies_page.dart)
         startAfter: _lastDoc,
       );
       if (mounted) {

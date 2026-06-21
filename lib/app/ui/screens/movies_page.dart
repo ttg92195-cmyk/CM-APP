@@ -75,7 +75,13 @@ class _MoviesPageState extends State<MoviesPage> {
     setState(() => _isLoading = true);
     try {
       final stopwatch = Stopwatch()..start();
-      final result = await _contentService.getMovies(limit: 50);
+      // PAGINATION: 20 per page so users see the first page quickly and
+      // load more on scroll. Previously this was 50 (commit 33b5dd5,
+      // June 11 "remove 20-item limit") which made the Movies Tab load
+      // 50 posts at once — felt like "no pagination" because users had
+      // to scroll through 16+ rows before more loaded. Reverted to 20
+      // per Bro's UX preference: classic 20-at-a-time pagination.
+      final result = await _contentService.getMovies(limit: 20);
       // Ensure skeleton shows for at least 600ms so it doesn't flash too fast
       final elapsed = stopwatch.elapsedMilliseconds;
       if (elapsed < 600) {
@@ -109,7 +115,7 @@ class _MoviesPageState extends State<MoviesPage> {
     setState(() => _isLoadingMore = true);
     try {
       final result = await _contentService.getMovies(
-        limit: 50,
+        limit: 20,
         startAfter: _lastDoc,
       );
       if (mounted) {
