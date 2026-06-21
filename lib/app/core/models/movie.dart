@@ -65,7 +65,7 @@ class Movie {
     // The original `as String?`, `as int?`, `as bool?`, `as List`
     // casts were the throwing culprits — they're all replaced below.
     // =========================================================================
-    final title = _parseString(map['title]);
+    final title = _parseString(map['title']);
     return Movie(
       id: docId ?? map['id']?.toString() ?? '',
       title: title,
