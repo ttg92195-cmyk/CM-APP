@@ -22,8 +22,33 @@ class AppConfig extends ChangeNotifier {
 
   bool get sessionTimedOut => _sessionTimedOut;
 
-  // Call this on any user interaction to keep session alive
+  /// Call this on any user interaction to keep session alive.
+  ///
+  /// SECURITY FIX (H9): Previously the 30-min inactivity timeout only
+  /// fired on app resume (didChangeAppLifecycleState in main.dart) — if
+  /// the user kept the app foregrounded for hours without backgrounding
+  /// it, no timeout ever fired. Now every user activity also enforces
+  /// the limit. The check is cheap (one DateTime comparison) and runs
+  /// only when logged in, so it adds negligible overhead to pointer
+  /// events.
   void recordActivity() {
+    // Enforce session timeout on every activity, not just on app resume.
+    // We do this BEFORE updating _lastActivityTime so that a session
+    // that has already expired is logged out even if the user touches
+    // the screen again after the timeout. checkSessionTimeout() is a
+    // no-op when not logged in or when _lastActivityTime is null.
+    if (_currentUser != null && _lastActivityTime != null) {
+      final elapsed = DateTime.now().difference(_lastActivityTime!);
+      if (elapsed >= sessionTimeout) {
+        _sessionTimedOut = true;
+        // Fire logout asynchronously — don't block the pointer event.
+        // Also clear _lastActivityTime so subsequent calls don't re-trigger.
+        _lastActivityTime = null;
+        Future.microtask(() => logoutUser());
+        notifyListeners();
+        return;
+      }
+    }
     _lastActivityTime = DateTime.now();
     if (_sessionTimedOut) {
       _sessionTimedOut = false;
@@ -31,12 +56,17 @@ class AppConfig extends ChangeNotifier {
     }
   }
 
-  // Check if session has timed out
+  // Check if session has timed out.
+  // Kept for backward-compat callers (main.dart's didChangeAppLifecycleState
+  // still calls this on app resume as a backstop for the case where the app
+  // was backgrounded for 30+ min — recordActivity() inside
+  // didChangeAppLifecycleState wouldn't have ticked during background).
   bool checkSessionTimeout() {
     if (_currentUser == null || _lastActivityTime == null) return false;
     final elapsed = DateTime.now().difference(_lastActivityTime!);
     if (elapsed >= sessionTimeout) {
       _sessionTimedOut = true;
+      _lastActivityTime = null;
       // Auto-logout
       logoutUser();
       return true;
