@@ -1,8 +1,10 @@
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Represents a logged-in device
 class DeviceInfo {
@@ -58,14 +60,82 @@ class DeviceManagementService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final DeviceInfoPlugin _deviceInfoPlugin = DeviceInfoPlugin();
 
+  /// SharedPreferences key under which we persist a fallback device ID for
+  /// iOS devices whose `identifierForVendor` returns null. Without this,
+  /// all such devices would share the literal string 'unknown_ios' and
+  /// collapse into a single device-limit slot, bypassing the limit entirely.
+  static const String _iosFallbackDeviceIdKey = 'ios_fallback_device_id';
+
+  /// Generate a fresh fallback device ID (UUIDv4-like) when none is stored.
+  /// We avoid adding a `uuid` package dep — this 32-hex-char format is
+  /// sufficient for uniqueness on a single device.
+  String _generateFallbackDeviceId() {
+    final rng = Random();
+    final hexChars = '0123456789abcdef';
+    // 32 hex chars + 4 hyphens in UUID positions: 8-4-4-4-12
+    final buf = StringBuffer();
+    for (var i = 0; i < 32; i++) {
+      // Variant: RFC 4122 (10xx) at position 12 (i==12 -> 0x8..0xb)
+      // Version: 4 at position 16 (i==16 -> 0x4)
+      if (i == 12) {
+        buf.write(hexChars[(rng.nextInt(4)) + 8]); // 8..b
+      } else if (i == 16) {
+        buf.write('4');
+      } else {
+        buf.write(hexChars[rng.nextInt(16)]);
+      }
+      if (i == 7 || i == 11 || i == 15 || i == 19) buf.write('-');
+    }
+    return 'ios-${buf.toString()}';
+  }
+
+  /// Get the persisted iOS fallback device ID, generating + persisting a
+  /// new one on first call. Used only when identifierForVendor is null.
+  Future<String> _getIosFallbackDeviceId() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final existing = prefs.getString(_iosFallbackDeviceIdKey);
+      if (existing != null && existing.isNotEmpty) return existing;
+      final fresh = _generateFallbackDeviceId();
+      await prefs.setString(_iosFallbackDeviceIdKey, fresh);
+      return fresh;
+    } catch (e) {
+      // If SharedPreferences fails, fall back to an in-memory random ID.
+      // This is suboptimal (changes on every app start) but better than
+      // sharing 'unknown_ios' across devices.
+      debugPrint('_getIosFallbackDeviceId failed: $e — using ephemeral ID');
+      return _generateFallbackDeviceId();
+    }
+  }
+
   /// Get unique device ID and name for the current device
+  ///
+  /// SECURITY FIX (H5): Previously this used `androidInfo.id` which is
+  /// `android.os.Build.ID` — a firmware build identifier that is
+  /// IDENTICAL across every device running the same firmware build.
+  /// All Pixel 6s on the same Android 14 OTA shared the same device ID,
+  /// collapsing into one device-limit slot and effectively bypassing
+  /// the device-limit feature. Now we use `androidInfo.androidId` which
+  /// is `Settings.Secure.ANDROID_ID` — a 64-bit hex string unique per
+  /// device-user pair, stable across app reinstalls, changes only on
+  /// factory reset.
+  ///
+  /// For iOS, `identifierForVendor` is the correct per-vendor ID but can
+  /// return null on some devices/configs. When null, we generate a fresh
+  /// UUID and persist it to SharedPreferences so subsequent calls return
+  /// the same value. Previously the literal string 'unknown_ios' was used,
+  /// causing all such devices to share one device-limit slot.
   Future<DeviceInfo> getCurrentDeviceInfo() async {
     String deviceId;
     String deviceName;
 
     if (Platform.isAndroid) {
       final androidInfo = await _deviceInfoPlugin.androidInfo;
-      deviceId = androidInfo.id; // Unique Android ID
+      // Use Settings.Secure.ANDROID_ID instead of Build.ID. androidId is
+      // a 64-bit hex string unique per device-user pair (changes only on
+      // factory reset). Prefixed with 'android-' so it cannot collide
+      // with iOS fallback IDs (which start with 'ios-').
+      deviceId = 'android-${androidInfo.androidId}';
       deviceName = '${androidInfo.manufacturer} ${androidInfo.model}';
       // Capitalize first letter
       if (deviceName.isNotEmpty) {
@@ -73,10 +143,18 @@ class DeviceManagementService {
       }
     } else if (Platform.isIOS) {
       final iosInfo = await _deviceInfoPlugin.iosInfo;
-      deviceId = iosInfo.identifierForVendor ?? 'unknown_ios';
+      final ifv = iosInfo.identifierForVendor;
+      if (ifv != null && ifv.isNotEmpty) {
+        deviceId = 'ios-$ifv';
+      } else {
+        // identifierForVendor is null — generate + persist a stable fallback.
+        deviceId = await _getIosFallbackDeviceId();
+      }
       deviceName = iosInfo.utsname.machine;
     } else {
-      deviceId = 'unknown_device';
+      // Unsupported platform — generate an ephemeral ID. Device limit will
+      // effectively be bypassed on these platforms, but they're rare.
+      deviceId = 'unknown-${_generateFallbackDeviceId()}';
       deviceName = 'Unknown Device';
     }
 
