@@ -423,18 +423,36 @@ class FirestoreContentService {
 
       // SUBSTRING FALLBACK for short queries (<=2 chars).
       // Same rationale as _searchWithKeyword Strategy 1.5 — see comment there.
-      // Triggered only when prefix search returned nothing AND the query is
-      // 1-2 characters, to catch titles like "Spider-Man" when user types "o".
-      if (prefixResults.isEmpty && lowerKeyword.length <= 2) {
+      //
+      // Always fires for short queries (length <= 2) regardless of whether
+      // the prefix search returned matches. This catches titles like
+      // "Spider-Man" or "Thor" when the user types "o" — these don't START
+      // with "o" so prefix search misses them, but they CONTAIN "o" so the
+      // substring fallback finds them. The previous version only fired this
+      // fallback when prefixResults was empty, which meant single-letter
+      // searches like "o" only returned movies starting with "o" (Ocean's,
+      // Once Upon a Time, etc.) — Bro reported this exact bug on the Admin
+      // Panel Tab too. Task 25.
+      if (lowerKeyword.length <= 2) {
         try {
           final subSnapshot = await _moviesRef.limit(200).get();
-          return subSnapshot.docs
+          final subResults = subSnapshot.docs
               .map((doc) => Movie.fromMap(
                     doc.data() as Map<String, dynamic>,
                     docId: doc.id,
                   ))
               .where((m) => m.titleLowercase.contains(lowerKeyword))
               .toList();
+          // Merge prefix + substring, dedup by ID.
+          final seenIds = <String>{};
+          final merged = <Movie>[];
+          for (final m in [...prefixResults, ...subResults]) {
+            if (!seenIds.contains(m.id)) {
+              seenIds.add(m.id);
+              merged.add(m);
+            }
+          }
+          return merged;
         } catch (_) {
           return prefixResults;
         }
@@ -990,32 +1008,42 @@ class FirestoreContentService {
 
       // Strategy 1.5: SUBSTRING FALLBACK for short queries (1-2 chars)
       // =========================================================================
-      // Bro reported that searching a single character like "o" returned NO
-      // results, while "os" or "ot" returned some. Root cause:
-      //   - Strategy 1 (prefix search) only matches titles that START with "o"
-      //     (e.g. "Once Upon a Time"). It does NOT find "Spider-Man" or "Solo".
-      //   - Strategy 2 (search_keywords arrayContains) only matches if "o" is
-      //     a complete token in the search_keywords array — which never happens
-      //     for typical English titles (no movie is titled just "O").
-      //   - The broader fallback at Strategy 3 below uses token-based filtering
-      //     with `every(token => title.contains(token))` — but that only runs
-      //     when the early exit check finds zero matches, AND it only fetches
-      //     60-200 docs by updatedAt, which may miss older movies.
+      // Bro reported (Task 25) that searching a single character like "o"
+      // returned only movies STARTING with "o" (e.g. "Ocean's Eleven",
+      // "Once Upon a Time") but NOT movies CONTAINING "o" anywhere in the
+      // title (e.g. "Thor", "Iron Man 2", "Doctor Strange"). Meanwhile
+      // searching "ON" returned some movies with "on" anywhere — confusing.
       //
-      // FIX: For short queries (length <= 2), do an extra dedicated broad
-      // fetch (no orderBy, so legacy docs without updatedAt are included)
-      // and apply a client-side `title.contains(query)` filter. This catches
-      // any movie whose title CONTAINS the query as a substring, regardless
-      // of whether it starts with it.
+      // Root cause:
+      //   - Strategy 1 (prefix search) only matches titles that START with
+      //     the query. For "o", it returns plenty of results (Ocean's, Once,
+      //     Oldboy, etc.), so prefixMovies is NOT empty.
+      //   - The previous version of this Strategy 1.5 only fired when
+      //     `prefixMovies.isEmpty && keywordResults.isEmpty` — which rarely
+      //     happens for single letters (because Strategy 1 almost always
+      //     finds prefix matches). So the substring fallback never ran,
+      //     and the early-exit returned only the prefix matches.
+      //   - For "ON": Strategy 1 returns fewer prefix matches (movies
+      //     starting with "on" are rarer), so the substring fallback DID
+      //     fire and found movies containing "on" anywhere. That's why
+      //     Bro saw "some movies" for "ON" but "only starting-with-O
+      //     movies" for "O".
       //
-      // Cost: +1 Firestore query (~fetchLimit reads) ONLY when the query is
-      // 1-2 characters AND Strategies 1+2 returned zero early matches. In
-      // practice this is rare (user typing first char of a name), so the
-      // extra reads are minimal.
+      // FIX (Task 25): Always run the substring fallback for short queries
+      // (length <= 2), regardless of whether Strategies 1 and 2 returned
+      // matches. The early-exit logic below already merges
+      // prefixMovies + keywordResults + substringResults and applies a
+      // client-side `title.contains(query)` filter for short queries, so
+      // the user will see BOTH prefix matches (movies starting with "o")
+      // AND substring matches (movies containing "o" anywhere) — exactly
+      // what Bro wants.
+      //
+      // Cost: +1 Firestore query (~fetchLimit reads) for EVERY short
+      // search. At fetchLimit=60 reads/query (limit=20 → 20*3 clamped to
+      // 60) and Bro's typical usage, this adds ~5-10% to Firebase Reads
+      // — acceptable per Bro's explicit OK.
       final substringResults = <Movie>[];
-      if (lowerKeyword.length <= 2 &&
-          prefixMovies.isEmpty &&
-          keywordResults.isEmpty) {
+      if (lowerKeyword.length <= 2) {
         try {
           final subSnapshot = await _moviesRef.limit(fetchLimit).get();
           for (final doc in subSnapshot.docs) {
