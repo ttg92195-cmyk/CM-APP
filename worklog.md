@@ -1547,3 +1547,53 @@ Stage Summary:
 - After Number 1 is verified, Bro will answer the clarifying
   questions I asked about Number 4 (TMDB Generator single-movie
   sync), then we proceed to Number 2.
+
+---
+Task ID: 27
+Agent: main (continuation)
+Task: Fix "All Posts disappeared from Admin Panel after Batch Import" bug + recover from build break caused by typo in the fix.
+
+Work Log:
+- Confirmed root cause of "All Posts disappeared": the previous Task 27
+  commit (82a016c) added defensive parsing helpers to
+  `lib/app/core/models/movie.dart` to stop `Movie.fromMap` from
+  throwing on a single corrupted doc (the real reason the entire All
+  Posts grid went empty — one bad doc in the .map().toList() chain
+  threw, all three fallback tiers in getAllPosts() threw the same
+  way, function returned empty list). That commit was correct in
+  intent but contained a typo on line 68: `map['title]` was missing
+  the closing quote, breaking Dart compile.
+- Bro reported CI build failure:
+    lib/app/core/models/movie.dart:68:36: Error: String starting with
+    ' must end with '.
+    final title = _parseString(map['title]);
+  (plus cascading ']' / ')' / ';' mismatch errors on the same line).
+- Another AI (GitHub Copilot Chat) correctly diagnosed the typo but
+  its patch was a no-op (showed identical before/after). I read the
+  actual file and confirmed the real byte content of line 68 was
+  `_parseString(map['title]);` — missing closing `'`.
+- Fix: edited `/home/z/my-project/CM-APP/lib/app/core/models/movie.dart`
+  line 68 only: `map['title]` → `map['title']`. No other lines
+  touched.
+- Audited every other `map[...]` reference in the file (lines 70-87)
+  — all properly quoted. No other instances of this typo.
+- dart/flutter not installed locally (Bro's CI does the build), so
+  could not run `dart analyze` — fix is surgical and the diff is
+  one character, so visual review is sufficient.
+- Committed in CM-APP submodule as 22cf2a6:
+    "fix(build,Task27): closing quote missing in map['title'] — broke compile"
+- Pushed to origin/main successfully (82a016c..22cf2a6).
+
+Stage Summary:
+- Task 27 defensive parsing (already on GitHub as 82a016c) stays in
+  place — that's the actual "All Posts disappeared" fix.
+- Build break from the typo is now fixed (22cf2a6, pushed).
+- Bro to re-trigger CI build. Expected: build passes; Admin Panel
+  All Posts tab no longer goes empty even when a Batch Import JSON
+  contains wrong-type fields (e.g., `categories: "Action"` as string
+  instead of list, `isAdult: true` as bool instead of int). Bad docs
+  render with empty/default fields instead of crashing the whole
+  grid — admin can SEE them and delete/fix them.
+- Number 1 (Batch Import posts view + delete) is already on GitHub
+  as commit 2e91632 (Task 26) — verify in parallel with this fix
+  once build is green.
