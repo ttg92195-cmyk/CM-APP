@@ -245,95 +245,154 @@ class DeviceManagementService {
     );
   }
 
-  /// Check if a user can log in on the current device
-  /// Returns DeviceLimitResult with allowed/denied status and device info
-  /// Admin users always bypass device limit checks
-  Future<DeviceLimitResult> checkDeviceLimit(String uid) async {
-    try {
-      final userDoc = await _firestore.collection('users').doc(uid).get();
-      if (!userDoc.exists) {
-        return DeviceLimitResult(
-          allowed: true,
-          maxDevices: 2,
-          currentDevices: 0,
-          devices: [],
-        );
-      }
+  /// Compute the per-user max device count from Firestore user data.
+  ///
+  /// - Admin users get 999 (effectively unlimited).
+  /// - VIP users get 4, but only if VIP has not expired.
+  /// - Non-VIP (or expired VIP) users get 2.
+  ///
+  /// Extracted as a helper so both registerDevice and (future) admin
+  /// tooling can share the same logic without drift.
+  int _computeMaxDevicesFromData(Map<String, dynamic> data) {
+    if (data['isAdmin'] == true) return 999;
 
-      final data = userDoc.data()!;
-      final isAdmin = data['isAdmin'] == true;
-      
-      // Admin always bypasses device limit
-      if (isAdmin) {
-        return DeviceLimitResult(
-          allowed: true,
-          maxDevices: 999,
-          currentDevices: 0,
-          devices: [],
-        );
-      }
-      
-      final isVip = data['isVip'] == true;
-      
-      // Check VIP expiry — if expired, treat as non-VIP for device limit
-      bool effectiveVip = isVip;
-      if (isVip) {
-        final vipExpiry = data['vipExpiry'] as String?;
-        if (vipExpiry != null && vipExpiry.isNotEmpty) {
-          final expiryDate = DateTime.tryParse(vipExpiry);
-          if (expiryDate != null && expiryDate.isBefore(DateTime.now())) {
-            effectiveVip = false;
-          }
-        }
-      }
-      
-      final maxDevices = effectiveVip ? 4 : 2;
+    final isVip = data['isVip'] == true;
+    if (!isVip) return 2;
+
+    final vipExpiry = data['vipExpiry'] as String?;
+    if (vipExpiry == null || vipExpiry.isEmpty) return 4;
+
+    final expiryDate = DateTime.tryParse(vipExpiry);
+    if (expiryDate == null || expiryDate.isBefore(DateTime.now())) {
+      return 2; // VIP expired — treat as Free
+    }
+    return 4;
+  }
+
+  /// Register current device on login, ATOMICALLY checking the device
+  /// limit inside a Firestore transaction.
+  ///
+  /// SECURITY FIX (H6): Previously this used a non-atomic
+  /// read-modify-write pattern, with a SEPARATE pre-check via
+  /// checkDeviceLimit. Two concurrent logins (e.g. user logging in on
+  /// two devices at the same moment) could both pass the pre-check,
+  /// both read the same device list, both append, and the second write
+  /// would either overwrite the first (losing a device entry) or both
+  /// succeed past the limit (breaking the device-limit feature).
+  ///
+  /// Now we use a Firestore transaction so the read + limit-check +
+  /// write happen atomically. If another concurrent transaction
+  /// modified the user doc between our read and write, Firestore
+  /// retries the whole transaction — so the limit check is always
+  /// evaluated against the freshest data.
+  ///
+  /// Returns a [DeviceLimitResult] describing the outcome:
+  ///   - allowed=true:  device was registered (or already registered,
+  ///                    login time refreshed). Caller proceeds.
+  ///   - allowed=false: device limit was reached. Caller must sign out
+  ///                    the user and show the device-limit dialog using
+  ///                    the returned device list.
+  ///
+  /// On hard failure (Firestore unreachable, permission denied), the
+  /// method returns allowed=true (fail-open) to not block login — the
+  /// device-limit feature is a soft enforcement, not a security control.
+  Future<DeviceLimitResult> registerDevice(String uid) async {
+    try {
       final currentDevice = await getCurrentDeviceInfo();
 
-      // Parse existing logged_in_devices
-      final devicesList = (data['logged_in_devices'] as List?)
-              ?.map((e) => DeviceInfo.fromMap(e as Map<String, dynamic>))
-              .toList() ??
-          [];
+      return await _firestore.runTransaction<DeviceLimitResult>((tx) async {
+        final userDocRef = _firestore.collection('users').doc(uid);
+        final userDoc = await tx.get(userDocRef);
 
-      // Check if current device is already registered
-      final isCurrentDeviceRegistered =
-          devicesList.any((d) => d.deviceId == currentDevice.deviceId);
+        if (!userDoc.exists) {
+          // User doc not created yet (race with signup flow). Fail open
+          // so login proceeds; the device-limit slot will be tracked on
+          // the next login after the doc exists.
+          return DeviceLimitResult(
+            allowed: true,
+            maxDevices: 2,
+            currentDevices: 0,
+            devices: [],
+          );
+        }
 
-      if (isCurrentDeviceRegistered) {
-        // Update login time for this device
-        await _updateDeviceLoginTime(uid, currentDevice.deviceId);
+        final data = userDoc.data()!;
+        final isAdmin = data['isAdmin'] == true;
+        final maxDevices = _computeMaxDevicesFromData(data);
+
+        // Parse existing devices.
+        final devicesList = List<Map<String, dynamic>>.from(
+          (data['logged_in_devices'] as List?)
+                  ?.map((e) => e as Map<String, dynamic>)
+                  .toList() ??
+              [],
+        );
+
+        // If this device is already registered, refresh its login time.
+        final existingIndex = devicesList
+            .indexWhere((d) => d['deviceId'] == currentDevice.deviceId);
+        if (existingIndex >= 0) {
+          devicesList[existingIndex] = currentDevice.toMap();
+          tx.update(userDocRef, {'logged_in_devices': devicesList});
+          final parsed = devicesList
+              .map((e) => DeviceInfo.fromMap(e))
+              .toList();
+          return DeviceLimitResult(
+            allowed: true,
+            maxDevices: maxDevices,
+            currentDevices: devicesList.length,
+            devices: parsed,
+          );
+        }
+
+        // Admin bypasses limit.
+        if (isAdmin) {
+          devicesList.add(currentDevice.toMap());
+          tx.update(userDocRef, {'logged_in_devices': devicesList});
+          final parsed = devicesList
+              .map((e) => DeviceInfo.fromMap(e))
+              .toList();
+          return DeviceLimitResult(
+            allowed: true,
+            maxDevices: maxDevices,
+            currentDevices: devicesList.length,
+            devices: parsed,
+          );
+        }
+
+        // Limit check — atomic, evaluated against freshest data.
+        if (devicesList.length >= maxDevices) {
+          final parsed = devicesList
+              .map((e) => DeviceInfo.fromMap(e))
+              .toList();
+          return DeviceLimitResult(
+            allowed: false,
+            maxDevices: maxDevices,
+            currentDevices: devicesList.length,
+            devices: parsed,
+            message: 'Device limit reached! You can have up to $maxDevices '
+                'devices connected. Please remove an old device first.',
+          );
+        }
+
+        // Add new device.
+        devicesList.add(currentDevice.toMap());
+        tx.update(userDocRef, {'logged_in_devices': devicesList});
+        final parsed = devicesList
+            .map((e) => DeviceInfo.fromMap(e))
+            .toList();
         return DeviceLimitResult(
           allowed: true,
           maxDevices: maxDevices,
           currentDevices: devicesList.length,
-          devices: devicesList,
+          devices: parsed,
         );
-      }
-
-      // Check if limit is reached
-      if (devicesList.length >= maxDevices) {
-        return DeviceLimitResult(
-          allowed: false,
-          maxDevices: maxDevices,
-          currentDevices: devicesList.length,
-          devices: devicesList,
-          message: 'Device limit reached! You can have up to $maxDevices '
-              '${isVip ? '(VIP)' : '(Free)'} devices connected. '
-              'Please remove an old device first.',
-        );
-      }
-
-      // Limit not reached, allow login
-      return DeviceLimitResult(
-        allowed: true,
-        maxDevices: maxDevices,
-        currentDevices: devicesList.length,
-        devices: devicesList,
-      );
+      });
     } catch (e) {
-      debugPrint('checkDeviceLimit failed: $e');
-      // On error, allow login (fail open)
+      debugPrint('registerDevice failed: $e');
+      // Fail open — device-limit is a soft enforcement, not a security
+      // control. Better to let the user log in than block them on a
+      // transient Firestore issue.
       return DeviceLimitResult(
         allowed: true,
         maxDevices: 2,
@@ -344,60 +403,43 @@ class DeviceManagementService {
     }
   }
 
-  /// Register current device on login
-  Future<void> registerDevice(String uid) async {
-    try {
-      final currentDevice = await getCurrentDeviceInfo();
-      final userDoc = await _firestore.collection('users').doc(uid).get();
-      if (!userDoc.exists) return;
-
-      final data = userDoc.data()!;
-      final devicesList = List<Map<String, dynamic>>.from(
-          (data['logged_in_devices'] as List?)
-                  ?.map((e) => e as Map<String, dynamic>)
-                  .toList() ??
-              []);
-
-      // Check if device already registered
-      final existingIndex = devicesList
-          .indexWhere((d) => d['deviceId'] == currentDevice.deviceId);
-
-      if (existingIndex >= 0) {
-        // Update login time
-        devicesList[existingIndex] = currentDevice.toMap();
-      } else {
-        // Add new device
-        devicesList.add(currentDevice.toMap());
-      }
-
-      await _firestore.collection('users').doc(uid).update({
-        'logged_in_devices': devicesList,
-      });
-    } catch (e) {
-      debugPrint('registerDevice failed: $e');
-    }
-  }
-
-  /// Remove a device from the user's logged_in_devices
+  /// Remove a device from the user's logged_in_devices, atomically.
+  ///
+  /// SECURITY FIX (H6): Previously this used a non-atomic
+  /// read-modify-write. If two concurrent removeDevice calls (e.g.
+  /// user removing one device from profile page while admin removing
+  /// another from admin panel) overlapped, the second write could
+  /// revert the first — the removed device would reappear on next read.
+  ///
+  /// Now we use a Firestore transaction so concurrent removes are
+  /// serialized and both take effect. Removing a device that's already
+  /// absent is treated as success (idempotent).
   Future<bool> removeDevice(String uid, String deviceId) async {
     try {
-      final userDoc = await _firestore.collection('users').doc(uid).get();
-      if (!userDoc.exists) return false;
+      return await _firestore.runTransaction<bool>((tx) async {
+        final userDocRef = _firestore.collection('users').doc(uid);
+        final userDoc = await tx.get(userDocRef);
+        if (!userDoc.exists) return false;
 
-      final data = userDoc.data()!;
-      final devicesList = List<Map<String, dynamic>>.from(
+        final data = userDoc.data()!;
+        final devicesList = List<Map<String, dynamic>>.from(
           (data['logged_in_devices'] as List?)
                   ?.map((e) => e as Map<String, dynamic>)
                   .toList() ??
-              []);
+              [],
+        );
 
-      devicesList.removeWhere((d) => d['deviceId'] == deviceId);
+        final wasPresent =
+            devicesList.any((d) => d['deviceId'] == deviceId);
+        if (!wasPresent) {
+          // Already removed by a concurrent operation — idempotent success.
+          return true;
+        }
 
-      await _firestore.collection('users').doc(uid).update({
-        'logged_in_devices': devicesList,
+        devicesList.removeWhere((d) => d['deviceId'] == deviceId);
+        tx.update(userDocRef, {'logged_in_devices': devicesList});
+        return true;
       });
-
-      return true;
     } catch (e) {
       debugPrint('removeDevice failed: $e');
       return false;
@@ -420,30 +462,4 @@ class DeviceManagementService {
       return [];
     }
   }
-
-  /// Update login time for an existing device
-  Future<void> _updateDeviceLoginTime(String uid, String deviceId) async {
-    try {
-      final userDoc = await _firestore.collection('users').doc(uid).get();
-      if (!userDoc.exists) return;
-
-      final data = userDoc.data()!;
-      final devicesList = List<Map<String, dynamic>>.from(
-          (data['logged_in_devices'] as List?)
-                  ?.map((e) => e as Map<String, dynamic>)
-                  .toList() ??
-              []);
-
-      final index = devicesList.indexWhere((d) => d['deviceId'] == deviceId);
-      if (index >= 0) {
-        devicesList[index]['loginTime'] = Timestamp.now();
-        await _firestore.collection('users').doc(uid).update({
-          'logged_in_devices': devicesList,
-        });
-      }
-    } catch (e) {
-      debugPrint('_updateDeviceLoginTime failed: $e');
-    }
-  }
-
 }

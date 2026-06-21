@@ -111,11 +111,14 @@ class _LoginPageState extends State<LoginPage>
     if (mounted) {
       setState(() => _isLoggingIn = false);
       if (success) {
-        // Device limit check
+        // Register the current device ATOMICALLY (also enforces device
+        // limit inside a Firestore transaction — H6 race-condition fix).
+        // The returned DeviceLimitResult tells us whether the device was
+        // registered (allowed=true) or the limit was reached (allowed=false).
         final user = FirebaseAuth.instance.currentUser;
         if (user != null) {
           final deviceService = DeviceManagementService();
-          final deviceResult = await deviceService.checkDeviceLimit(user.uid);
+          final deviceResult = await deviceService.registerDevice(user.uid);
 
           if (!deviceResult.allowed) {
             // Sign out the user since device limit is reached.
@@ -141,9 +144,6 @@ class _LoginPageState extends State<LoginPage>
             }
             return;
           }
-
-          // Register the current device
-          await deviceService.registerDevice(user.uid);
         }
 
         // L2: Reset failed attempts on successful login
