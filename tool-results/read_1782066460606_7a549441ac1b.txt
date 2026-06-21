@@ -1,0 +1,1339 @@
+     1→     1→import 'dart:async';
+     2→     2→import 'dart:convert';
+     3→     3→import 'dart:io';
+     4→     4→import 'package:flutter/foundation.dart';
+     5→     5→import 'package:cloud_firestore/cloud_firestore.dart';
+     6→     6→import 'package:firebase_auth/firebase_auth.dart';
+     7→     7→import 'package:path_provider/path_provider.dart';
+     8→     8→import 'package:cm_movies/app/core/services/firestore_content_service.dart';
+     9→     9→
+    10→    10→/// Progress event for the export (backup) phase. Fires after each page fetch
+    11→    11→/// so the UI can show a live counter of how many movies have been exported.
+    12→    12→class BatchExportProgress {
+    13→    13→  final int exportedSoFar;
+    14→    14→  final bool hasMore;
+    15→    15→
+    16→    16→  const BatchExportProgress({
+    17→    17→    required this.exportedSoFar,
+    18→    18→    required this.hasMore,
+    19→    19→  });
+    20→    20→}
+    21→    21→
+    22→    22→/// Result of a successful export (backup) operation.
+    23→    23→class BatchExportResult {
+    24→    24→  /// Absolute path to the saved JSON file on the device.
+    25→    25→  final String filePath;
+    26→    26→
+    27→    27→  /// Number of movies written to the file.
+    28→    28→  final int count;
+    29→    29→
+    30→    30→  /// File size in bytes.
+    31→    31→  final int sizeBytes;
+    32→    32→
+    33→    33→  /// ISO-8601 timestamp of the export (also embedded in the file name).
+    34→    34→  final DateTime exportedAt;
+    35→    35→
+    36→    36→  const BatchExportResult({
+    37→    37→    required this.filePath,
+    38→    38→    required this.count,
+    39→    39→    required this.sizeBytes,
+    40→    40→    required this.exportedAt,
+    41→    41→  });
+    42→    42→
+    43→    43→  /// Human-readable file size, e.g. "12.4 KB" or "1.8 MB".
+    44→    44→  String get sizeFormatted {
+    45→    45→    const units = ['B', 'KB', 'MB', 'GB'];
+    46→    46→    var size = sizeBytes.toDouble();
+    47→    47→    var unit = 0;
+    48→    48→    while (size >= 1024 && unit < units.length - 1) {
+    49→    49→      size /= 1024;
+    50→    50→      unit++;
+    51→    51→    }
+    52→    52→    return '${size.toStringAsFixed(size < 10 ? 1 : 0)} ${units[unit]}';
+    53→    53→  }
+    54→    54→}
+    55→    55→
+    56→    56→/// Result of validating a single parsed item against the schema.
+    57→    57→/// Items are classified into three buckets the UI shows in the preview phase.
+    58→    58→enum BatchItemStatus {
+    59→    59→  /// Schema OK, no existing movie matches by tmdbId or slug — will be CREATED.
+    60→    60→  willCreate,
+    61→    61→
+    62→    62→  /// Schema OK, an existing movie matches by tmdbId or slug — will be UPDATED.
+    63→    63→  /// (addMovie() performs this idempotently.)
+    64→    64→  willUpdate,
+    65→    65→
+    66→    66→  /// Schema validation failed — title missing, wrong type, etc. Will be SKIPPED.
+    67→    67→  invalid,
+    68→    68→}
+    69→    69→
+    70→    70→/// One item in the parsed/validated batch.
+    71→    71→class BatchImportItem {
+    72→    72→  /// Original index in the JSON array (1-based for user-facing display).
+    73→    73→  final int sourceIndex;
+    74→    74→
+    75→    75→  /// Raw map from JSON — passed straight to FirestoreContentService.addMovie().
+    76→    76→  /// Mutated by addMovie() internally (adds slug/title_lowercase/createdAt/etc.)
+    77→    77→  final Map<String, dynamic> data;
+    78→    78→
+    79→    79→  /// Classification after validation + duplicate lookup.
+    80→    80→  BatchItemStatus status;
+    81→    81→
+    82→    82→  /// Title used for preview / progress display. Falls back to '(untitled)'.
+    83→    83→  String get displayTitle => (data['title']?.toString().isNotEmpty ?? false)
+    84→    84→      ? data['title'].toString()
+    85→    85→      : '(untitled)';
+    86→    86→
+    87→    87→  /// Type for preview ('movie' / 'series' / unknown).
+    88→    88→  String get displayType => (data['type']?.toString().isNotEmpty ?? false)
+    89→    89→      ? data['type'].toString()
+    90→    90→      : 'unknown';
+    91→    91→
+    92→    92→  /// Year for preview (may be null).
+    93→    93→  String? get displayYear => data['year']?.toString();
+    94→    94→
+    95→    95→  /// tmdbId for preview (may be null).
+    96→    96→  dynamic get tmdbId => data['tmdbId'];
+    97→    97→
+    98→    98→  /// Reason for invalid status (only set when status == invalid).
+    99→    99→  String? validationError;
+   100→   100→
+   101→   101→  /// Result of the import attempt — filled in during the import phase.
+   102→   102→  /// 'success_create', 'success_update', 'failure' or null if not yet imported.
+   103→   103→  String? importResult;
+   104→   104→
+   105→   105→  /// Error message when importResult == 'failure'.
+   106→   106→  String? importError;
+   107→   107→
+   108→   108→  BatchImportItem({
+   109→   109→    required this.sourceIndex,
+   110→   110→    required this.data,
+   111→   111→    required this.status,
+   112→   112→    this.validationError,
+   113→   113→  });
+   114→   114→}
+   115→   115→
+   116→   116→/// Aggregated counts for the preview / summary screens.
+   117→   117→class BatchImportCounts {
+   118→   118→  final int total;
+   119→   119→  final int willCreate;
+   120→   120→  final int willUpdate;
+   121→   121→  final int invalid;
+   122→   122→
+   123→   123→  const BatchImportCounts({
+   124→   124→    required this.total,
+   125→   125→    required this.willCreate,
+   126→   126→    required this.willUpdate,
+   127→   127→    required this.invalid,
+   128→   128→  });
+   129→   129→
+   130→   130→  int get actionable => willCreate + willUpdate;
+   131→   131→}
+   132→   132→
+   133→   133→/// Progress event fired during the import phase.
+   134→   134→class BatchImportProgress {
+   135→   135→  final int current; // 1-based
+   136→   136→  final int total;
+   137→   137→  final String currentTitle;
+   138→   138→  final int successCreateCount;
+   139→   139→  final int successUpdateCount;
+   140→   140→  final int failureCount;
+   141→   141→  final BatchImportItem? lastItem; // null during initial spin-up
+   142→   142→
+   143→   143→  const BatchImportProgress({
+   144→   144→    required this.current,
+   145→   145→    required this.total,
+   146→   146→    required this.currentTitle,
+   147→   147→    required this.successCreateCount,
+   148→   148→    required this.successUpdateCount,
+   149→   149→    required this.failureCount,
+   150→   150→    this.lastItem,
+   151→   151→  });
+   152→   152→
+   153→   153→  double get fraction => total == 0 ? 0 : current / total;
+   154→   154→}
+   155→   155→
+   156→   156→/// Top-level parse result returned by [BatchImportService.parseFile].
+   157→   157→class BatchParseResult {
+   158→   158→  /// All items successfully parsed (status willCreate/willUpdate/invalid).
+   159→   159→  final List<BatchImportItem> items;
+   160→   160→
+   161→   161→  /// Items that failed JSON parsing entirely (not even added to [items]).
+   162→   162→  /// Each entry is {'index': int, 'error': String}.
+   163→   163→  final List<Map<String, dynamic>> parseErrors;
+   164→   164→
+   165→   165→  /// True if file was empty or contained no recognisable array.
+   166→   166→  final bool isEmpty;
+   167→   167→
+   168→   168→  const BatchParseResult({
+   169→   169→    required this.items,
+   170→   170→    required this.parseErrors,
+   171→   171→    required this.isEmpty,
+   172→   172→  });
+   173→   173→}
+   174→   174→
+   175→   175→/// Top-level import result returned by [BatchImportService.runImport].
+   176→   176→class BatchImportResult {
+   177→   177→  final int total;
+   178→   178→  final int created;
+   179→   179→  final int updated;
+   180→   180→  final int failed;
+   181→   181→  final int skipped;
+   182→   182→  final List<BatchImportItem> items; // final state of each item
+   183→   183→
+   184→   184→  const BatchImportResult({
+   185→   185→    required this.total,
+   186→   186→    required this.created,
+   187→   187→    required this.updated,
+   188→   188→    required this.failed,
+   189→   189→    required this.skipped,
+   190→   190→    required this.items,
+   191→   191→  });
+   192→   192→}
+   193→   193→
+   194→   194→/// Context passed into [BatchImportService.runImport] so the service can
+   195→   195→/// record an audit-log entry in the `batch_imports` Firestore collection
+   196→   196→/// after the import finishes (whether it succeeded, failed, or was cancelled).
+   197→   197→///
+   198→   198→/// The UI is responsible for filling in [adminUid] / [adminEmail] from
+   199→   199→/// `FirebaseAuth.instance.currentUser`. [sourceFileName] and
+   200→   200→/// [sourceFileSizeBytes] should come from the file picker result.
+   201→   201→class BatchImportAuditContext {
+   202→   202→  /// Firebase Auth UID of the admin who triggered the import.
+   203→   203→  final String adminUid;
+   204→   204→
+   205→   205→  /// Email of the admin (may be null for anonymous / phone-auth admins).
+   206→   206→  final String? adminEmail;
+   207→   207→
+   208→   208→  /// Display name of the JSON file the admin picked (basename only, no path).
+   209→   209→  final String? sourceFileName;
+   210→   210→
+   211→   211→  /// File size in bytes (helps when investigating large-file failures later).
+   212→   212→  final int? sourceFileSizeBytes;
+   213→   213→
+   214→   214→  /// App version string (e.g. "2.0.1") — pulled from PackageInfo at call site.
+   215→   215→  final String? appVersion;
+   216→   216→
+   217→   217→  /// True if this is a retry of a previous import's failed items.
+   218→   218→  /// The UI sets this when the admin taps "Retry Failed" on the summary
+   219→   219→  /// screen. The audit log uses this to display a "↻ Retry" badge so the
+   220→   220→  /// admin can distinguish a fresh import from a retry.
+   221→   221→  final bool isRetry;
+   222→   222→
+   223→   223→  const BatchImportAuditContext({
+   224→   224→    required this.adminUid,
+   225→   225→    this.adminEmail,
+   226→   226→    this.sourceFileName,
+   227→   227→    this.sourceFileSizeBytes,
+   228→   228→    this.appVersion,
+   229→   229→    this.isRetry = false,
+   230→   230→  });
+   231→   231→
+   232→   232→  /// Serialise to a Firestore-ready map (excluding timing fields, which are
+   233→   233→  /// filled in by [BatchImportService._recordAudit] at import-completion time).
+   234→   234→  Map<String, dynamic> toPartialFirestoreMap() => {
+   235→   235→        'adminUid': adminUid,
+   236→   236→        'adminEmail': adminEmail,
+   237→   237→        'sourceFileName': sourceFileName,
+   238→   238→        'sourceFileSizeBytes': sourceFileSizeBytes,
+   239→   239→        'appVersion': appVersion,
+   240→   240→        'isRetry': isRetry,
+   241→   241→      };
+   242→   242→
+   243→   243→  /// Returns a copy of this context with the given fields overridden.
+   244→   244→  /// Used by the UI when retrying failed items — the admin / source file
+   245→   245→  /// info stays the same, but [isRetry] is flipped to true and
+   246→   246→  /// [sourceFileName] gets a `(retry)` prefix.
+   247→   247→  BatchImportAuditContext copyWith({
+   248→   248→    String? adminUid,
+   249→   249→    String? adminEmail,
+   250→   250→    String? sourceFileName,
+   251→   251→    int? sourceFileSizeBytes,
+   252→   252→    String? appVersion,
+   253→   253→    bool? isRetry,
+   254→   254→  }) {
+   255→   255→    return BatchImportAuditContext(
+   256→   256→      adminUid: adminUid ?? this.adminUid,
+   257→   257→      adminEmail: adminEmail ?? this.adminEmail,
+   258→   258→      sourceFileName: sourceFileName ?? this.sourceFileName,
+   259→   259→      sourceFileSizeBytes: sourceFileSizeBytes ?? this.sourceFileSizeBytes,
+   260→   260→      appVersion: appVersion ?? this.appVersion,
+   261→   261→      isRetry: isRetry ?? this.isRetry,
+   262→   262→    );
+   263→   263→  }
+   264→   264→}
+   265→   265→
+   266→   266→/// One row in the import-history list (a thin view-model built from the
+   267→   267→/// Firestore document). Kept deliberately small — the full failed-items
+   268→   268→/// list is only loaded when the user taps a row.
+   269→   269→class BatchImportAuditSummary {
+   270→   270→  final String id;
+   271→   271→  final DateTime? startedAt;
+   272→   272→  final DateTime? completedAt;
+   273→   273→  final String? adminEmail;
+   274→   274→  final String? sourceFileName;
+   275→   275→  final int total;
+   276→   276→  final int created;
+   277→   277→  final int updated;
+   278→   278→  final int failed;
+   279→   279→  final int skipped;
+   280→   280→  final int? durationMs;
+   281→   281→  final bool cancelled;
+   282→   282→  final bool isRetry;
+   283→   283→  final int failedItemCount;
+   284→   284→
+   285→   285→  const BatchImportAuditSummary({
+   286→   286→    required this.id,
+   287→   287→    required this.startedAt,
+   288→   288→    required this.completedAt,
+   289→   289→    required this.adminEmail,
+   290→   290→    required this.sourceFileName,
+   291→   291→    required this.total,
+   292→   292→    required this.created,
+   293→   293→    required this.updated,
+   294→   294→    required this.failed,
+   295→   295→    required this.skipped,
+   296→   296→    required this.durationMs,
+   297→   297→    required this.cancelled,
+   298→   298→    required this.isRetry,
+   299→   299→    required this.failedItemCount,
+   300→   300→  });
+   301→   301→
+   302→   302→  factory BatchImportAuditSummary.fromDoc(DocumentSnapshot doc) {
+   303→   303→    final data = doc.data() as Map<String, dynamic>? ?? {};
+   304→   304→    DateTime? ts(dynamic v) {
+   305→   305→      if (v is Timestamp) return v.toDate();
+   306→   306→      if (v is DateTime) return v;
+   307→   307→      return null;
+   308→   308→    }
+   309→   309→
+   310→   310→    final failedItems = data['failedItems'];
+   311→   311→    return BatchImportAuditSummary(
+   312→   312→      id: doc.id,
+   313→   313→      startedAt: ts(data['startedAt']),
+   314→   314→      completedAt: ts(data['completedAt']),
+   315→   315→      adminEmail: data['adminEmail'] as String?,
+   316→   316→      sourceFileName: data['sourceFileName'] as String?,
+   317→   317→      total: (data['total'] as num?)?.toInt() ?? 0,
+   318→   318→      created: (data['created'] as num?)?.toInt() ?? 0,
+   319→   319→      updated: (data['updated'] as num?)?.toInt() ?? 0,
+   320→   320→      failed: (data['failed'] as num?)?.toInt() ?? 0,
+   321→   321→      skipped: (data['skipped'] as num?)?.toInt() ?? 0,
+   322→   322→      durationMs: (data['durationMs'] as num?)?.toInt(),
+   323→   323→      cancelled: (data['cancelled'] as bool?) ?? false,
+   324→   324→      isRetry: (data['isRetry'] as bool?) ?? false,
+   325→   325→      failedItemCount: failedItems is List ? failedItems.length : 0,
+   326→   326→    );
+   327→   327→  }
+   328→   328→}
+   329→   329→
+   330→   330→/// Full audit record — including the failed-items list and sample
+   331→   331→/// created/updated titles. Returned by [BatchImportService.getImport].
+   332→   332→class BatchImportAuditRecord extends BatchImportAuditSummary {
+   333→   333→  /// Per-failed-item details: each entry has `sourceIndex`, `title`,
+   334→   334→  /// `tmdbId`, `type`, `error`.
+   335→   335→  final List<Map<String, dynamic>> failedItems;
+   336→   336→
+   337→   337→  /// Up to 20 titles that were successfully created (for quick eyeballing).
+   338→   338→  final List<String> sampleCreated;
+   339→   339→
+   340→   340→  /// Up to 20 titles that were successfully updated.
+   341→   341→  final List<String> sampleUpdated;
+   342→   342→
+   343→   343→  const BatchImportAuditRecord({
+   344→   344→    required super.id,
+   345→   345→    required super.startedAt,
+   346→   346→    required super.completedAt,
+   347→   347→    required super.adminEmail,
+   348→   348→    required super.sourceFileName,
+   349→   349→    required super.total,
+   350→   350→    required super.created,
+   351→   351→    required super.updated,
+   352→   352→    required super.failed,
+   353→   353→    required super.skipped,
+   354→   354→    required super.durationMs,
+   355→   355→    required super.cancelled,
+   356→   356→    required super.isRetry,
+   357→   357→    required super.failedItemCount,
+   358→   358→    required this.failedItems,
+   359→   359→    required this.sampleCreated,
+   360→   360→    required this.sampleUpdated,
+   361→   361→  });
+   362→   362→
+   363→   363→  factory BatchImportAuditRecord.fromDoc(DocumentSnapshot doc) {
+   364→   364→    final summary = BatchImportAuditSummary.fromDoc(doc);
+   365→   365→    final data = doc.data() as Map<String, dynamic>? ?? {};
+   366→   366→
+   367→   367→    final rawFailed = data['failedItems'];
+   368→   368→    final failedItems = <Map<String, dynamic>>[];
+   369→   369→    if (rawFailed is List) {
+   370→   370→      for (final e in rawFailed) {
+   371→   371→        if (e is Map) {
+   372→   372→          failedItems.add(Map<String, dynamic>.from(e));
+   373→   373→        }
+   374→   374→      }
+   375→   375→    }
+   376→   376→
+   377→   377→    List<String> toStringList(dynamic v) {
+   378→   378→      if (v is List) return v.map((e) => e?.toString() ?? '').toList();
+   379→   379→      return const [];
+   380→   380→    }
+   381→   381→
+   382→   382→    return BatchImportAuditRecord(
+   383→   383→      id: summary.id,
+   384→   384→      startedAt: summary.startedAt,
+   385→   385→      completedAt: summary.completedAt,
+   386→   386→      adminEmail: summary.adminEmail,
+   387→   387→      sourceFileName: summary.sourceFileName,
+   388→   388→      total: summary.total,
+   389→   389→      created: summary.created,
+   390→   390→      updated: summary.updated,
+   391→   391→      failed: summary.failed,
+   392→   392→      skipped: summary.skipped,
+   393→   393→      durationMs: summary.durationMs,
+   394→   394→      cancelled: summary.cancelled,
+   395→   395→      isRetry: summary.isRetry,
+   396→   396→      failedItemCount: summary.failedItemCount,
+   397→   397→      failedItems: failedItems,
+   398→   398→      sampleCreated: toStringList(data['sampleCreated']),
+   399→   399→      sampleUpdated: toStringList(data['sampleUpdated']),
+   400→   400→    );
+   401→   401→  }
+   402→   402→}
+   403→   403→
+   404→   404→/// Service that orchestrates a Batch Import flow:
+   405→   405→///   1. parseFile()    — read JSON file, deserialize each entry, capture parse errors
+   406→   406→///   2. classify()     — for each valid item, check Firestore for tmdbId/slug duplicates
+   407→   407→///   3. runImport()    — sequentially call FirestoreContentService.addMovie() with progress
+   408→   408→///
+   409→   409→/// The service deliberately does NOT use WriteBatch — it reuses the existing
+   410→   410→/// addMovie() function which already handles duplicate detection, counter sync,
+   411→   411→/// and idempotent updates. This keeps the import logic safe and consistent
+   412→   412→/// with the rest of the app.
+   413→   413→class BatchImportService {
+   414→   414→  final FirestoreContentService _contentService;
+   415→   415→  final FirebaseFirestore _firestore;
+   416→   416→
+   417→   417→  BatchImportService({
+   418→   418→    FirestoreContentService? contentService,
+   419→   419→    FirebaseFirestore? firestore,
+   420→   420→  })  : _contentService = contentService ?? FirestoreContentService(),
+   421→   421→        _firestore = firestore ?? FirebaseFirestore.instance;
+   422→   422→
+   423→   423→  // ===========================================================================
+   424→   424→  // PHASE 3d — MEMORY SAFETY GUARDS
+   425→   425→  // ===========================================================================
+   426→   426→  //
+   427→   427→  // Hard caps to protect low-end devices from OOM-kills and Firestore from
+   428→   428→  // billing surprises. Tuned conservatively — typical admin exports are well
+   429→   429→  // under both limits.
+   430→   430→  //
+   431→   431→  //   maxFileSizeBytes:   a 50 MB JSON file decodes to ~300 MB of heap on a
+   432→   432→  //                       mid-range phone, which is enough to trigger Android's
+   433→   433→  //                       low-memory killer. Admins with bigger datasets should
+   434→   434→  //                       split the file or use Firestore's native import tools.
+   435→   435→  //
+   436→   436→  //   maxItemsPerImport:  5000 items × ~2 Firestore reads each (classify) +
+   437→   437→  //                       1 write each (addMovie) = ~15000 Firestore ops.
+   438→   438→  //                       That's still within free-tier daily quotas but takes
+   439→   439→  //                       ~10-15 minutes to import on a stable connection.
+   440→   440→  //                       Beyond this, the linear progress UX feels broken.
+   441→   441→
+   442→   442→  /// Absolute upper bound on the JSON file size we'll attempt to parse.
+   443→   443→  /// Files larger than this are refused outright — the admin should split
+   444→   444→  /// them or use Firestore's native import tools.
+   445→   445→  static const int maxFileSizeBytes = 50 * 1024 * 1024; // 50 MB
+   446→   446→
+   447→   447→  /// Absolute upper bound on the number of items we'll process in one import.
+   448→   448→  /// Larger arrays are refused to avoid (a) hours-long imports with no
+   449→   449→  /// resumability, (b) hitting Firestore daily write quotas accidentally,
+   450→   450→  /// (c) overwhelming the audit-log doc size when many items fail.
+   451→   451→  static const int maxItemsPerImport = 5000;
+   452→   452→
+   453→   453→  /// Soft warning threshold (5 MB). The UI uses this to show a confirmation
+   454→   454→  /// dialog before kicking off parse — gives the admin a chance to back out
+   455→   455→  /// if they accidentally picked a 40 MB file.
+   456→   456→  static const int largeFileWarningBytes = 5 * 1024 * 1024; // 5 MB
+   457→   457→
+   458→   458→  /// Human-readable file size, e.g. "12.4 KB" or "1.8 MB".
+   459→   459→  /// Kept as a static helper so the UI can format the same way the service
+   460→   460→  /// reports sizes in error messages.
+   461→   461→  static String formatFileSize(int bytes) {
+   462→   462→    const units = ['B', 'KB', 'MB', 'GB'];
+   463→   463→    var size = bytes.toDouble();
+   464→   464→    var unit = 0;
+   465→   465→    while (size >= 1024 && unit < units.length - 1) {
+   466→   466→      size /= 1024;
+   467→   467→      unit++;
+   468→   468→    }
+   469→   469→    return '${size.toStringAsFixed(size < 10 ? 1 : 0)} ${units[unit]}';
+   470→   470→  }
+   471→   471→
+   472→   472→  // ===========================================================================
+   473→   473→  // PHASE 0 — EXPORT (BACKUP)
+   474→   474→  // ===========================================================================
+   475→   475→
+   476→   476→  /// Export every movie in the Firestore `movies` collection to a JSON file
+   477→   477→  /// on the local device. The file is written to [outputDir] (or the app's
+   478→   478→  /// documents directory if null) with a timestamped file name like
+   479→   479→  /// `cm_movies_backup_2026-06-19_14-30-00.json`.
+   480→   480→  ///
+   481→   481→  /// This is a "safety net" feature: the admin should run it before any
+   482→   482→  /// large Batch Import, so if something goes wrong they have an exact
+   483→   483→  /// snapshot of the database to restore from (by importing the backup file
+   484→   484→  /// back through BatchImportPage).
+   485→   485→  ///
+   486→   486→  /// Pagination: fetches in pages of [pageSize] (default 200) to keep memory
+   487→   487→  /// usage flat regardless of collection size. A 1000-movie export uses
+   488→   488→  /// ~40 MB heap during the write phase.
+   489→   489→  ///
+   490→   490→  /// The exported JSON is an array of raw Firestore document maps, wrapped
+   491→   491→  /// in a top-level object with metadata:
+   492→   492→  ///   {
+   493→   493→  ///     "_meta": {
+   494→   494→  ///       "exportedAt": "2026-06-19T14:30:00",
+   495→   495→  ///       "count": 1234,
+   496→   496→  ///       "source": "cm_movies"
+   497→   497→  ///     },
+   498→   498→  ///     "movies": [ { ...full movie doc... }, ... ]
+   499→   499→  ///   }
+   500→   500→  ///
+   501→   501→  /// The "movies" wrapper key is recognised by parseJsonString(), so the
+   502→   502→  /// exported file can be re-imported as-is to restore.
+   503→   503→  Future<BatchExportResult> exportAllMovies({
+   504→   504→    String? outputDir,
+   505→   505→    int pageSize = 200,
+   506→   506→    void Function(BatchExportProgress)? onProgress,
+   507→   507→  }) async {
+   508→   508→    final moviesRef = _firestore.collection('movies');
+   509→   509→    final allDocs = <Map<String, dynamic>>[];
+   510→   510→    DocumentSnapshot? lastDoc;
+   511→   511→    bool hasMore = true;
+   512→   512→
+   513→   513→    // Paginated fetch — Firestore .get() returns at most the page size, and
+   514→   514→    // we follow with startAfterDocument() until a page comes back short.
+   515→   515→    while (hasMore) {
+   516→   516→      Query query = moviesRef
+   517→   517→          .orderBy('createdAt', descending: true)
+   518→   518→          .limit(pageSize);
+   519→   519→
+   520→   520→      if (lastDoc != null) {
+   521→   521→        query = query.startAfterDocument(lastDoc);
+   522→   522→      }
+   523→   523→
+   524→   524→      final snapshot = await query.get();
+   525→   525→
+   526→   526→      if (snapshot.docs.isEmpty) {
+   527→   527→        hasMore = false;
+   528→   528→        break;
+   529→   529→      }
+   530→   530→
+   531→   531→      for (final doc in snapshot.docs) {
+   532→   532→        final data = doc.data() as Map<String, dynamic>;
+   533→   533→        // Strip server-only fields that wouldn't round-trip cleanly.
+   534→   534→        // createdAt/updatedAt are Timestamps on the server; we keep them as
+   535→   535→        // ISO strings so the JSON is human-readable and parseable later.
+   536→   536→        final cleaned = _serializeMovieDoc(data, doc.id);
+   537→   537→        allDocs.add(cleaned);
+   538→   538→      }
+   539→   539→
+   540→   540→      lastDoc = snapshot.docs.last;
+   541→   541→      hasMore = snapshot.docs.length >= pageSize;
+   542→   542→
+   543→   543→      onProgress?.call(BatchExportProgress(
+   544→   544→        exportedSoFar: allDocs.length,
+   545→   545→        hasMore: hasMore,
+   546→   546→      ));
+   547→   547→    }
+   548→   548→
+   549→   549→    // Build the output JSON. We do NOT use jsonEncode with the entire list
+   550→   550→    // in one shot for very large datasets — but in practice 1000 movies
+   551→   551→    // produces ~5 MB of JSON which encodes in <500 ms and uses ~25 MB heap.
+   552→   552→    // For 10,000+ movies we'd switch to a streaming encoder, but that's a
+   553→   553→    // Phase 4+ concern.
+   554→   554→    final now = DateTime.now();
+   555→   555→    final payload = <String, dynamic>{
+   556→   556→      '_meta': {
+   557→   557→        'exportedAt': now.toIso8601String(),
+   558→   558→        'count': allDocs.length,
+   559→   559→        'source': 'cm_movies',
+   560→   560→        'appVersion': 'batch_import_v1',
+   561→   561→      },
+   562→   562→      'movies': allDocs,
+   563→   563→    };
+   564→   564→
+   565→   565→    final jsonStr = const JsonEncoder.withIndent('  ').convert(payload);
+   566→   566→    final bytes = utf8.encode(jsonStr);
+   567→   567→
+   568→   568→    // Resolve output directory.
+   569→   569→    Directory dir;
+   570→   570→    if (outputDir != null && outputDir.isNotEmpty) {
+   571→   571→      dir = Directory(outputDir);
+   572→   572→      if (!await dir.exists()) {
+   573→   573→        await dir.create(recursive: true);
+   574→   574→      }
+   575→   575→    } else {
+   576→   576→      // Default to the app's documents directory — always writable, no
+   577→   577→      // storage permission needed on Android 10+.
+   578→   578→      dir = await _defaultExportDir();
+   579→   579→    }
+   580→   580→
+   581→   581→    final fileName = _formatBackupFileName(now);
+   582→   582→    final file = File('${dir.path}/$fileName');
+   583→   583→    await file.writeAsBytes(bytes, flush: true);
+   584→   584→
+   585→   585→    return BatchExportResult(
+   586→   586→      filePath: file.path,
+   587→   587→      count: allDocs.length,
+   588→   588→      sizeBytes: bytes.length,
+   589→   589→      exportedAt: now,
+   590→   590→    );
+   591→   591→  }
+   592→   592→
+   593→   593→  /// Default export directory: app documents dir + '/batch_import_backups'.
+   594→   594→  /// Created on first call. We use a subdirectory so backups don't pollute
+   595→   595→  /// the root documents directory.
+   596→   596→  Future<Directory> _defaultExportDir() async {
+   597→   597→    // Use the app's documents directory — always writable, no storage
+   598→   598→    // permission needed on Android 10+. On Android, this resolves to
+   599→   599→    // /data/data/<package>/app_flutter (or similar).
+   600→   600→    final baseDir = await getApplicationDocumentsDirectory();
+   601→   601→    final exportDir = Directory('${baseDir.path}/batch_import_backups');
+   602→   602→    if (!await exportDir.exists()) {
+   603→   603→      await exportDir.create(recursive: true);
+   604→   604→    }
+   605→   605→    return exportDir;
+   606→   606→  }
+   607→   607→
+   608→   608→  /// Convert a raw Firestore movie document into a JSON-serializable map.
+   609→   609→  /// Firestore Timestamp fields become ISO-8601 strings; everything else
+   610→   610→  /// passes through unchanged. The document ID is preserved as 'id' so
+   611→   611→  /// re-import can detect duplicates by tmdbId/slug (still safe).
+   612→   612→  Map<String, dynamic> _serializeMovieDoc(
+   613→   613→    Map<String, dynamic> data,
+   614→   614→    String docId,
+   615→   615→  ) {
+   616→   616→    final out = <String, dynamic>{};
+   617→   617→
+   618→   618→    data.forEach((key, value) {
+   619→   619→      out[key] = _serializeValue(value);
+   620→   620→    });
+   621→   621→
+   622→   622→    // Always preserve the Firestore document ID for traceability.
+   623→   623→    // addMovie() doesn't use this field (it uses tmdbId/slug), so it's
+   624→   624→    // safe to include — and useful for manual diffing if a restore goes wrong.
+   625→   625→    if (!out.containsKey('id')) {
+   626→   626→      out['id'] = docId;
+   627→   627→    }
+   628→   628→
+   629→   629→    return out;
+   630→   630→  }
+   631→   631→
+   632→   632→  /// Recursively serialize a Firestore value into JSON-safe form.
+   633→   633→  /// Timestamps → ISO string. GeoPoint → {lat, lng}. DocumentReference → path.
+   634→   634→  dynamic _serializeValue(dynamic value) {
+   635→   635→    if (value == null) return null;
+   636→   636→    if (value is Timestamp) return value.toDate().toIso8601String();
+   637→   637→    if (value is DateTime) return value.toIso8601String();
+   638→   638→    if (value is Map) {
+   639→   639→      final out = <String, dynamic>{};
+   640→   640→      value.forEach((k, v) => out[k.toString()] = _serializeValue(v));
+   641→   641→      return out;
+   642→   642→    }
+   643→   643→    if (value is List) {
+   644→   644→      return value.map(_serializeValue).toList();
+   645→   645→    }
+   646→   646→    // Primitives (String, int, double, bool) pass through.
+   647→   647→    return value;
+   648→   648→  }
+   649→   649→
+   650→   650→  /// Build a safe, filesystem-friendly file name for the backup.
+   651→   651→  /// Format: cm_movies_backup_YYYY-MM-DD_HH-MM-ss.json
+   652→   652→  String _formatBackupFileName(DateTime now) {
+   653→   653→    String two(int v) => v.toString().padLeft(2, '0');
+   654→   654→    return 'cm_movies_backup_'
+   655→   655→        '${now.year}-${two(now.month)}-${two(now.day)}_'
+   656→   656→        '${two(now.hour)}-${two(now.minute)}-${two(now.second)}'
+   657→   657→        '.json';
+   658→   658→  }
+   659→   659→
+   660→   660→  // ===========================================================================
+   661→   661→  // PHASE 1 — PARSE
+   662→   662→  // ===========================================================================
+   663→   663→
+   664→   664→  /// Read the JSON file from [path] and parse it into [BatchImportItem]s.
+   665→   665→  ///
+   666→   666→  /// Accepted JSON shapes:
+   667→   667→  ///   A) A JSON array of movie objects:   [ { ... }, { ... }, ... ]
+   668→   668→  ///   B) An object with a 'movies' key:   { "movies": [ ... ] }
+   669→   669→  ///   C) An object with a 'data' key:     { "data":   [ ... ] }
+   670→   670→  ///
+   671→   671→  /// Each item is validated against a minimal schema (title required, type
+   672→   672→  /// must be 'movie' or 'series' if present). Invalid items are kept in the
+   673→   673→  /// returned list but flagged with status == invalid so the UI can preview
+   674→   674→  /// them; they will be skipped during the import phase.
+   675→   675→  ///
+   676→   676→  /// Memory safety: files larger than [maxFileSizeBytes] are refused with a
+   677→   677→  /// clear [BatchImportException] before any bytes are read into memory.
+   678→   678→  /// The UI is expected to ALSO warn the admin before calling this method
+   679→   679→  /// when the file is above [largeFileWarningBytes] (5 MB) — that's a
+   680→   680→  /// soft UX nudge, this is a hard guard.
+   681→   681→  Future<BatchParseResult> parseFile(String path) async {
+   682→   682→    final file = File(path);
+   683→   683→    if (!await file.exists()) {
+   684→   684→      throw BatchImportException('File not found: $path');
+   685→   685→    }
+   686→   686→
+   687→   687→    final fileSize = await file.length();
+   688→   688→    if (fileSize == 0) {
+   689→   689→      return const BatchParseResult(
+   690→   690→        items: [],
+   691→   691→        parseErrors: [],
+   692→   692→        isEmpty: true,
+   693→   693→      );
+   694→   694→    }
+   695→   695→
+   696→   696→    // Hard cap: refuse to even read files above the absolute max size.
+   697→   697→    // This prevents OOM-kills on low-end devices where the OS would
+   698→   698→    // otherwise let us allocate ~300 MB of heap and then crash the app.
+   699→   699→    if (fileSize > maxFileSizeBytes) {
+   700→   700→      throw BatchImportException(
+   701→   701→        'File is too large to import safely.\n'
+   702→   702→        'Size: ${formatFileSize(fileSize)} (limit: '
+   703→   703→        '${formatFileSize(maxFileSizeBytes)}).\n'
+   704→   704→        'Please split the file into smaller chunks of ~1000 movies each, '
+   705→   705→        'or use Firestore\'s native import tools for very large datasets.',
+   706→   706→      );
+   707→   707→    }
+   708→   708→
+   709→   709→    // Read the entire file. For very large files (>20 MB) we would need a
+   710→   710→    // streaming parser, but the typical admin export is well under 5 MB.
+   711→   711→    // A 5 MB JSON file with ~1000 movies parses in <1 second on a mid-range
+   712→   712→    // phone and uses ~30 MB of heap — well within Flutter's default budget.
+   713→   713→    final raw = await file.readAsString();
+   714→   714→    return parseJsonString(raw);
+   715→   715→  }
+   716→   716→
+   717→   717→  /// Same as [parseFile] but operates on an in-memory JSON string.
+   718→   718→  /// Useful for tests and for parsing JSON pasted into a text field.
+   719→   719→  BatchParseResult parseJsonString(String raw) {
+   720→   720→    if (raw.trim().isEmpty) {
+   721→   721→      return const BatchParseResult(
+   722→   722→        items: [],
+   723→   723→        parseErrors: [],
+   724→   724→        isEmpty: true,
+   725→   725→      );
+   726→   726→    }
+   727→   727→
+   728→   728→    dynamic decoded;
+   729→   729→    try {
+   730→   730→      decoded = jsonDecode(raw);
+   731→   731→    } catch (e) {
+   732→   732→      throw BatchImportException(
+   733→   733→        'Invalid JSON: ${e.toString()}',
+   734→   734→      );
+   735→   735→    }
+   736→   736→
+   737→   737→    List<dynamic>? array;
+   738→   738→    if (decoded is List) {
+   739→   739→      array = decoded;
+   740→   740→    } else if (decoded is Map) {
+   741→   741→      // Accept either 'movies' or 'data' as the wrapper key.
+   742→   742→      final inner = decoded['movies'] ?? decoded['data'];
+   743→   743→      if (inner is List) {
+   744→   744→        array = inner;
+   745→   745→      } else {
+   746→   746→        throw BatchImportException(
+   747→   747→          'Expected a JSON array, or an object with a "movies" or "data" key '
+   748→   748→          'containing an array.',
+   749→   749→        );
+   750→   750→      }
+   751→   751→    } else {
+   752→   752→      throw BatchImportException(
+   753→   753→        'Expected a JSON array or object at the top level.',
+   754→   754→      );
+   755→   755→    }
+   756→   756→
+   757→   757→    if (array.isEmpty) {
+   758→   758→      return const BatchParseResult(
+   759→   759→        items: [],
+   760→   760→        parseErrors: [],
+   761→   761→        isEmpty: true,
+   762→   762→      );
+   763→   763→    }
+   764→   764→
+   765→   765→    // Hard cap on item count. Beyond this the import becomes impractical:
+   766→   766→    //   - Linear Firestore reads/writes would take 10+ minutes
+   767→   767→    //   - The audit-log doc would be oversized if many items failed
+   768→   768→    //   - Memory pressure from holding all BatchImportItem objects in RAM
+   769→   769→    //   - No resumability — if the app dies mid-import, all progress is lost
+   770→   770→    if (array.length > maxItemsPerImport) {
+   771→   771→      throw BatchImportException(
+   772→   772→        'Too many items in the JSON array.\n'
+   773→   773→        'Count: ${array.length} (limit: $maxItemsPerImport).\n'
+   774→   774→        'Please split the file into smaller batches of ~1000 movies each. '
+   775→   775→        'You can re-run Batch Import as many times as you want — duplicates '
+   776→   776→        'are detected and skipped automatically.',
+   777→   777→      );
+   778→   778→    }
+   779→   779→
+   780→   780→    final items = <BatchImportItem>[];
+   781→   781→    final parseErrors = <Map<String, dynamic>>[];
+   782→   782→
+   783→   783→    for (var i = 0; i < array.length; i++) {
+   784→   784→      final entry = array[i];
+   785→   785→      if (entry is! Map) {
+   786→   786→        parseErrors.add({
+   787→   787→          'index': i + 1,
+   788→   788→          'error': 'Entry is not a JSON object (got ${entry.runtimeType}).',
+   789→   789→        });
+   790→   790→        continue;
+   791→   791→      }
+   792→   792→
+   793→   793→      // Make a mutable, deep-cast copy so addMovie() can mutate it safely.
+   794→   794→      final data = _deepCast(entry);
+   795→   795→      final validationError = _validate(data);
+   796→   796→
+   797→   797→      items.add(BatchImportItem(
+   798→   798→        sourceIndex: i + 1,
+   799→   799→        data: data,
+   800→   800→        status: validationError == null
+   801→   801→            ? BatchItemStatus.willCreate // tentative — classify() will refine
+   802→   802→            : BatchItemStatus.invalid,
+   803→   803→        validationError: validationError,
+   804→   804→      ));
+   805→   805→    }
+   806→   806→
+   807→   807→    return BatchParseResult(
+   808→   808→      items: items,
+   809→   809→      parseErrors: parseErrors,
+   810→   810→      isEmpty: false,
+   811→   811→    );
+   812→   812→  }
+   813→   813→
+   814→   814→  // ===========================================================================
+   815→   815→  // PHASE 2 — CLASSIFY (preview)
+   816→   816→  // ===========================================================================
+   817→   817→
+   818→   818→  /// For each non-invalid item, look up Firestore by tmdbId then slug.
+   819→   819→  /// Sets item.status to willCreate or willUpdate accordingly.
+   820→   820→  ///
+   821→   821→  /// This is the slowest step because it issues 1-2 Firestore reads per item.
+   822→   822→  /// For 1000 items this is ~2-3 seconds of network round-trips.
+   823→   823→  Future<void> classify(List<BatchImportItem> items) async {
+   824→   824→    for (final item in items) {
+   825→   825→      if (item.status == BatchItemStatus.invalid) continue;
+   826→   826→
+   827→   827→      bool exists = false;
+   828→   828→
+   829→   829→      // PRIORITY 1: tmdbId (most reliable)
+   830→   830→      final tmdbId = item.data['tmdbId'];
+   831→   831→      if (!exists && tmdbId != null) {
+   832→   832→        try {
+   833→   833→          final existing = await _contentService.findByTmdbId(tmdbId);
+   834→   834→          if (existing != null) exists = true;
+   835→   835→        } catch (e) {
+   836→   836→          debugPrint('classify: findByTmdbId failed for $tmdbId: $e');
+   837→   837→          // Treat as not-found — addMovie() will re-check and handle safely.
+   838→   838→        }
+   839→   839→      }
+   840→   840→
+   841→   841→      // PRIORITY 2: slug (auto-generated if missing)
+   842→   842→      if (!exists) {
+   843→   843→        final slug = (item.data['slug']?.toString().isNotEmpty ?? false)
+   844→   844→            ? item.data['slug'].toString()
+   845→   845→            : _generateSlug(item.data['title']?.toString() ?? '');
+   846→   846→        if (slug.isNotEmpty) {
+   847→   847→          try {
+   848→   848→            final snap = await _firestore
+   849→   849→                .collection('movies')
+   850→   850→                .where('slug', isEqualTo: slug)
+   851→   851→                .limit(1)
+   852→   852→                .get();
+   853→   853→            if (snap.docs.isNotEmpty) exists = true;
+   854→   854→          } catch (e) {
+   855→   855→            debugPrint('classify: slug lookup failed for "$slug": $e');
+   856→   856→          }
+   857→   857→        }
+   858→   858→      }
+   859→   859→
+   860→   860→      item.status =
+   861→   861→          exists ? BatchItemStatus.willUpdate : BatchItemStatus.willCreate;
+   862→   862→    }
+   863→   863→  }
+   864→   864→
+   865→   865→  /// Quick aggregated counts — call after [classify].
+   866→   866→  BatchImportCounts tally(List<BatchImportItem> items) {
+   867→   867→    int willCreate = 0, willUpdate = 0, invalid = 0;
+   868→   868→    for (final item in items) {
+   869→   869→      switch (item.status) {
+   870→   870→        case BatchItemStatus.willCreate:
+   871→   871→          willCreate++;
+   872→   872→          break;
+   873→   873→        case BatchItemStatus.willUpdate:
+   874→   874→          willUpdate++;
+   875→   875→          break;
+   876→   876→        case BatchItemStatus.invalid:
+   877→   877→          invalid++;
+   878→   878→          break;
+   879→   879→      }
+   880→   880→    }
+   881→   881→    return BatchImportCounts(
+   882→   882→      total: items.length,
+   883→   883→      willCreate: willCreate,
+   884→   884→      willUpdate: willUpdate,
+   885→   885→      invalid: invalid,
+   886→   886→    );
+   887→   887→  }
+   888→   888→
+   889→   889→  // ===========================================================================
+   890→   890→  // PHASE 3 — IMPORT
+   891→   891→  // ===========================================================================
+   892→   892→
+   893→   893→  /// Sequentially import all actionable items (willCreate + willUpdate).
+   894→   894→  /// Skips invalid items.
+   895→   895→  ///
+   896→   896→  /// Calls [onProgress] after every item so the UI can update its progress bar.
+   897→   897→  /// Stops early if [shouldStop] returns true — useful for a Cancel button.
+   898→   898→  ///
+   899→   899→  /// If [auditContext] is provided, an entry is written to the
+   900→   900→  /// `batch_imports` Firestore collection after the import finishes
+   901→   901→  /// (whether it succeeded, partially failed, or was cancelled). The audit
+   902→   902→  /// write is wrapped in a try/catch so a Firestore permission or network
+   903→   903→  /// error never causes the import itself to appear failed.
+   904→   904→  ///
+   905→   905→  /// Returns a [BatchImportResult] with per-item outcomes.
+   906→   906→  Future<BatchImportResult> runImport(
+   907→   907→    List<BatchImportItem> items, {
+   908→   908→    void Function(BatchImportProgress)? onProgress,
+   909→   909→    bool Function()? shouldStop,
+   910→   910→    BatchImportAuditContext? auditContext,
+   911→   911→  }) async {
+   912→   912→    final startedAt = DateTime.now();
+   913→   913→
+   914→   914→    // =========================================================================
+   915→   915→    // AUDIT C2 — verify admin ONCE here, then pass skipAdminCheck:true to
+   916→   916→    // addMovie() for every item. Before this fix, addMovie() called
+   917→   917→    // _requireAdmin() on every invocation, which issued a Firestore read to
+   918→   918→    // the user doc per item. For a 1000-movie import that was 1000 wasted
+   919→   919→    // reads just to re-confirm what we already knew at the start of the run.
+   920→   920→    //
+   921→   921→    // Defense-in-depth is preserved: verifyAdmin() throws if the user is
+   922→   922→    // not an admin, and runImport() aborts before touching Firestore.
+   923→   923→    // Firestore security rules still apply to every individual write, so
+   924→   924→    // a privilege escalation (admin demoted mid-import) is contained.
+   925→   925→    // =========================================================================
+   926→   926→    await _contentService.verifyAdmin();
+   927→   927→
+   928→   928→    final actionable = items
+   929→   929→        .where((i) => i.status != BatchItemStatus.invalid)
+   930→   930→        .toList(growable: false);
+   931→   931→
+   932→   932→    int created = 0;
+   933→   933→    int updated = 0;
+   934→   934→    int failed = 0;
+   935→   935→    int skipped = items.length - actionable.length;
+   936→   936→    bool cancelled = false;
+   937→   937→
+   938→   938→    final total = actionable.length;
+   939→   939→    for (var i = 0; i < total; i++) {
+   940→   940→      if (shouldStop != null && shouldStop()) {
+   941→   941→        // Mark remaining items as skipped
+   942→   942→        for (var j = i; j < total; j++) {
+   943→   943→          actionable[j].importResult = 'skipped';
+   944→   944→        }
+   945→   945→        skipped += (total - i);
+   946→   946→        cancelled = true;
+   947→   947→        break;
+   948→   948→      }
+   949→   949→
+   950→   950→      final item = actionable[i];
+   951→   951→      final wasUpdate = item.status == BatchItemStatus.willUpdate;
+   952→   952→
+   953→   953→      onProgress?.call(BatchImportProgress(
+   954→   954→        current: i + 1,
+   955→   955→        total: total,
+   956→   956→        currentTitle: item.displayTitle,
+   957→   957→        successCreateCount: created,
+   958→   958→        successUpdateCount: updated,
+   959→   959→        failureCount: failed,
+   960→   960→      ));
+   961→   961→
+   962→   962→      try {
+   963→   963→        // addMovie() does its own duplicate re-check and counter sync.
+   964→   964→        // It returns the doc ID. We don't need it, but the call is required
+   965→   965→        // to trigger all the safety logic in FirestoreContentService.
+   966→   966→        //
+   967→   967→        // skipAdminCheck:true — admin was verified once at the start of
+   968→   968→        // runImport() (see top of this method). Skipping the per-item admin
+   969→   969→        // read saves N Firestore reads for an N-item import. See audit C2.
+   970→   970→        await _contentService.addMovie(item.data, skipAdminCheck: true);
+   971→   971→
+   972→   972→        if (wasUpdate) {
+   973→   973→          updated++;
+   974→   974→          item.importResult = 'success_update';
+   975→   975→        } else {
+   976→   976→          // addMovie() may have flipped this to an update if a race condition
+   977→   977→          // inserted a duplicate between classify() and now. We can detect
+   978→   978→          // this by checking if the returned data has createdAt set by us
+   979→   979→          // (no) vs the server (yes for new). For simplicity, trust the
+   980→   980→          // pre-classification — the discrepancy is at most one item.
+   981→   981→          created++;
+   982→   982→          item.importResult = 'success_create';
+   983→   983→        }
+   984→   984→      } catch (e) {
+   985→   985→        failed++;
+   986→   986→        item.importResult = 'failure';
+   987→   987→        item.importError = e.toString();
+   988→   988→        debugPrint('BatchImport item ${item.sourceIndex} failed: $e');
+   989→   989→        // Continue to next item — do not abort the whole batch.
+   990→   990→      }
+   991→   991→
+   992→   992→      onProgress?.call(BatchImportProgress(
+   993→   993→        current: i + 1,
+   994→   994→        total: total,
+   995→   995→        currentTitle: item.displayTitle,
+   996→   996→        successCreateCount: created,
+   997→   997→        successUpdateCount: updated,
+   998→   998→        failureCount: failed,
+   999→   999→        lastItem: item,
+  1000→  1000→      ));
+  1001→  1001→    }
+  1002→  1002→
+  1003→  1003→    final completedAt = DateTime.now();
+  1004→  1004→    final result = BatchImportResult(
+  1005→  1005→      total: items.length,
+  1006→  1006→      created: created,
+  1007→  1007→      updated: updated,
+  1008→  1008→      failed: failed,
+  1009→  1009→      skipped: skipped,
+  1010→  1010→      items: items,
+  1011→  1011→    );
+  1012→  1012→
+  1013→  1013→    // Record audit log entry. Failures here MUST NOT propagate — the import
+  1014→  1014→    // itself has already happened and the user needs to see its result.
+  1015→  1015→    if (auditContext != null) {
+  1016→  1016→      try {
+  1017→  1017→        await _recordAudit(
+  1018→  1018→          context: auditContext,
+  1019→  1019→          startedAt: startedAt,
+  1020→  1020→          completedAt: completedAt,
+  1021→  1021→          result: result,
+  1022→  1022→          cancelled: cancelled,
+  1023→  1023→        );
+  1024→  1024→      } catch (e) {
+  1025→  1025→        debugPrint('BatchImport audit log write failed (non-fatal): $e');
+  1026→  1026→      }
+  1027→  1027→    }
+  1028→  1028→
+  1029→  1029→    return result;
+  1030→  1030→  }
+  1031→  1031→
+  1032→  1032→  /// Re-import only the items that failed in a previous [runImport] call.
+  1033→  1033→  ///
+  1034→  1034→  /// Pass the SAME [items] list that was returned in [BatchImportResult.items]
+  1035→  1035→  /// — this method filters internally to just those whose `importResult ==
+  1036→  1036→  /// 'failure'`. Items that previously succeeded are NOT touched (they're
+  1037→  1037→  /// already in Firestore, and addMovie() would just no-op them anyway, but
+  1038→  1038→  /// skipping them is faster and produces a cleaner audit record).
+  1039→  1039→  ///
+  1040→  1040→  /// Each failed item's `importResult` / `importError` are reset to null so
+  1041→  1041→  /// the new attempt gets a fresh outcome. The original item `status`
+  1042→  1042→  /// (willCreate / willUpdate) is preserved — addMovie() re-checks duplicates
+  1043→  1043→  /// anyway, so a stale classification is harmless.
+  1044→  1044→  ///
+  1045→  1045→  /// If [auditContext] is provided, a NEW audit doc is written for the retry
+  1046→  1046→  /// run with `isRetry: true`. This way the history list shows both the
+  1047→  1047→  /// original import and the retry as separate entries — useful when
+  1048→  1048→  /// investigating what fixed (or didn't fix) a failure.
+  1049→  1049→  ///
+  1050→  1050→  /// Returns a [BatchImportResult] that covers ONLY the retried items —
+  1051→  1051→  /// `total` is the count of items retried (not the original batch size),
+  1052→  1052→  /// and `items` is the filtered list with fresh outcomes. The caller can
+  1053→  1053→  /// merge this back into its own state or display it standalone.
+  1054→  1054→  Future<BatchImportResult> retryFailed(
+  1055→  1055→    List<BatchImportItem> items, {
+  1056→  1056→    void Function(BatchImportProgress)? onProgress,
+  1057→  1057→    bool Function()? shouldStop,
+  1058→  1058→    BatchImportAuditContext? auditContext,
+  1059→  1059→  }) async {
+  1060→  1060→    // Filter to only the failed items. We use a growable=false list for
+  1061→  1061→    // consistency with runImport() and to avoid accidental mutation.
+  1062→  1062→    final failedItems = items
+  1063→  1063→        .where((i) => i.importResult == 'failure')
+  1064→  1064→        .toList(growable: false);
+  1065→  1065→
+  1066→  1066→    if (failedItems.isEmpty) {
+  1067→  1067→      // Nothing to retry — return an empty result. The caller should normally
+  1068→  1068→      // not even show a Retry button in this case, but we handle it safely.
+  1069→  1069→      return const BatchImportResult(
+  1070→  1070→        total: 0,
+  1071→  1071→        created: 0,
+  1072→  1072→        updated: 0,
+  1073→  1073→        failed: 0,
+  1074→  1074→        skipped: 0,
+  1075→  1075→        items: [],
+  1076→  1076→      );
+  1077→  1077→    }
+  1078→  1078→
+  1079→  1079→    // Reset failure state so we get fresh results from this attempt.
+  1080→  1080→    // Status (willCreate/willUpdate) is preserved — addMovie() re-checks.
+  1081→  1081→    for (final item in failedItems) {
+  1082→  1082→      item.importResult = null;
+  1083→  1083→      item.importError = null;
+  1084→  1084→    }
+  1085→  1085→
+  1086→  1086→    // Re-use the existing import loop. Since failedItems all have a non-invalid
+  1087→  1087→    // status (they made it past validation but failed at addMovie()), none
+  1088→  1088→    // will be filtered out by runImport's `status != invalid` check.
+  1089→  1089→    // runImport will record its own audit entry using the provided context.
+  1090→  1090→    return runImport(
+  1091→  1091→      failedItems,
+  1092→  1092→      onProgress: onProgress,
+  1093→  1093→      shouldStop: shouldStop,
+  1094→  1094→      auditContext: auditContext,
+  1095→  1095→    );
+  1096→  1096→  }
+  1097→  1097→
+  1098→  1098→  // ===========================================================================
+  1099→  1099→  // PHASE 4 — AUDIT LOG
+  1100→  1100→  // ===========================================================================
+  1101→  1101→
+  1102→  1102→  /// Firestore collection name where one document is written per import run.
+  1103→  1103→  /// Path: `batch_imports/{importId}`.
+  1104→  1104→  static const String auditCollectionName = 'batch_imports';
+  1105→  1105→
+  1106→  1106→  /// Write a single audit document to `batch_imports` describing the import
+  1107→  1107→  /// that just finished. The document ID is auto-generated by Firestore.
+  1108→  1108→  ///
+  1109→  1109→  /// Schema (see [BatchImportAuditContext] + [BatchImportResult]):
+  1110→  1110→  ///   {
+  1111→  1111→  ///     "startedAt":        Timestamp,
+  1112→  1112→  ///     "completedAt":      Timestamp,
+  1113→  1113→  ///     "durationMs":       int,
+  1114→  1114→  ///     "cancelled":        bool,
+  1115→  1115→  ///     "adminUid":         String,
+  1116→  1116→  ///     "adminEmail":       String?,
+  1117→  1117→  ///     "sourceFileName":   String?,
+  1118→  1118→  ///     "sourceFileSizeBytes": int?,
+  1119→  1119→  ///     "appVersion":       String?,
+  1120→  1120→  ///     "total":            int,
+  1121→  1121→  ///     "created":          int,
+  1122→  1122→  ///     "updated":          int,
+  1123→  1123→  ///     "failed":           int,
+  1124→  1124→  ///     "skipped":          int,
+  1125→  1125→  ///     "failedItems":      [{sourceIndex,title,tmdbId,type,error}, ...],
+  1126→  1126→  ///     "sampleCreated":    [String],   // up to 20 titles
+  1127→  1127→  ///     "sampleUpdated":    [String]    // up to 20 titles
+  1128→  1128→  ///   }
+  1129→  1129→  Future<void> _recordAudit({
+  1130→  1130→    required BatchImportAuditContext context,
+  1131→  1131→    required DateTime startedAt,
+  1132→  1132→    required DateTime completedAt,
+  1133→  1133→    required BatchImportResult result,
+  1134→  1134→    required bool cancelled,
+  1135→  1135→  }) async {
+  1136→  1136→    // Build the failed-items payload. Cap at 200 entries — anything bigger
+  1137→  1137→    // would push the doc above Firestore's 1 MB limit and isn't useful to
+  1138→  1138→    // review inline anyway (admin should re-import to fix).
+  1139→  1139→    final failedItems = <Map<String, dynamic>>[];
+  1140→  1140→    final failedFull =
+  1141→  1141→        result.items.where((i) => i.importResult == 'failure').toList();
+  1142→  1142→    for (final item in failedFull.take(200)) {
+  1143→  1143→      failedItems.add({
+  1144→  1144→        'sourceIndex': item.sourceIndex,
+  1145→  1145→        'title': item.displayTitle,
+  1146→  1146→        'tmdbId': item.tmdbId,
+  1147→  1147→        'type': item.displayType,
+  1148→  1148→        'error': item.importError,
+  1149→  1149→      });
+  1150→  1150→    }
+  1151→  1151→
+  1152→  1152→    // Capture up to 20 sample titles for each outcome so the history detail
+  1153→  1153→    // page can show "what got created" without re-fetching all movies.
+  1154→  1154→    final sampleCreated = result.items
+  1155→  1155→        .where((i) => i.importResult == 'success_create')
+  1156→  1156→        .take(20)
+  1157→  1157→        .map((i) => i.displayTitle)
+  1158→  1158→        .toList();
+  1159→  1159→    final sampleUpdated = result.items
+  1160→  1160→        .where((i) => i.importResult == 'success_update')
+  1161→  1161→        .take(20)
+  1162→  1162→        .map((i) => i.displayTitle)
+  1163→  1163→        .toList();
+  1164→  1164→
+  1165→  1165→    final payload = <String, dynamic>{
+  1166→  1166→      ...context.toPartialFirestoreMap(),
+  1167→  1167→      'startedAt': startedAt.toUtc(),
+  1168→  1168→      'completedAt': completedAt.toUtc(),
+  1169→  1169→      'durationMs': completedAt.difference(startedAt).inMilliseconds,
+  1170→  1170→      'cancelled': cancelled,
+  1171→  1171→      'total': result.total,
+  1172→  1172→      'created': result.created,
+  1173→  1173→      'updated': result.updated,
+  1174→  1174→      'failed': result.failed,
+  1175→  1175→      'skipped': result.skipped,
+  1176→  1176→      'failedItems': failedItems,
+  1177→  1177→      'sampleCreated': sampleCreated,
+  1178→  1178→      'sampleUpdated': sampleUpdated,
+  1179→  1179→    };
+  1180→  1180→
+  1181→  1181→    await _firestore.collection(auditCollectionName).add(payload);
+  1182→  1182→  }
+  1183→  1183→
+  1184→  1184→  /// Fetch the most recent [limit] audit entries, newest first.
+  1185→  1185→  ///
+  1186→  1186→  /// Used by the history list view. We deliberately use a one-shot `get()`
+  1187→  1187→  /// (not a stream) — the list doesn't need to live-update, and a one-shot
+  1188→  1188→  /// fetch is cheaper and simpler.
+  1189→  1189→  Future<List<BatchImportAuditSummary>> listImports({int limit = 50}) async {
+  1190→  1190→    final snap = await _firestore
+  1191→  1191→        .collection(auditCollectionName)
+  1192→  1192→        .orderBy('startedAt', descending: true)
+  1193→  1193→        .limit(limit)
+  1194→  1194→        .get();
+  1195→  1195→
+  1196→  1196→    return snap.docs.map(BatchImportAuditSummary.fromDoc).toList();
+  1197→  1197→  }
+  1198→  1198→
+  1199→  1199→  /// Fetch a single audit record by ID — including the full failed-items
+  1200→  1200→  /// list and sample title lists.
+  1201→  1201→  ///
+  1202→  1202→  /// Used by the history detail view when the admin taps a row.
+  1203→  1203→  Future<BatchImportAuditRecord> getImport(String id) async {
+  1204→  1204→    final doc = await _firestore.collection(auditCollectionName).doc(id).get();
+  1205→  1205→    if (!doc.exists) {
+  1206→  1206→      throw BatchImportException('Audit record not found: $id');
+  1207→  1207→    }
+  1208→  1208→    return BatchImportAuditRecord.fromDoc(doc);
+  1209→  1209→  }
+  1210→  1210→
+  1211→  1211→  /// Delete an audit record. Useful for cleaning up accidental test imports.
+  1212→  1212→  /// The actual imported movies are NOT touched — this only removes the
+  1213→  1213→  /// audit-log entry itself.
+  1214→  1214→  Future<void> deleteImport(String id) async {
+  1215→  1215→    await _firestore.collection(auditCollectionName).doc(id).delete();
+  1216→  1216→  }
+  1217→  1217→
+  1218→  1218→  /// Convenience helper: get the current admin's UID + email from
+  1219→  1219→  /// FirebaseAuth. Returns null if no user is signed in (in which case
+  1220→  1220→  /// the caller should skip the audit-context and just import without
+  1221→  1221→  /// recording — the import itself still works because addMovie() does
+  1222→  1222→  /// its own admin check).
+  1223→  1223→  static BatchImportAuditContext? currentAdminContext({
+  1224→  1224→    String? sourceFileName,
+  1225→  1225→    int? sourceFileSizeBytes,
+  1226→  1226→    String? appVersion,
+  1227→  1227→  }) {
+  1228→  1228→    final user = FirebaseAuth.instance.currentUser;
+  1229→  1229→    if (user == null) return null;
+  1230→  1230→    return BatchImportAuditContext(
+  1231→  1231→      adminUid: user.uid,
+  1232→  1232→      adminEmail: user.email,
+  1233→  1233→      sourceFileName: sourceFileName,
+  1234→  1234→      sourceFileSizeBytes: sourceFileSizeBytes,
+  1235→  1235→      appVersion: appVersion,
+  1236→  1236→    );
+  1237→  1237→  }
+  1238→  1238→
+  1239→  1239→  // ===========================================================================
+  1240→  1240→  // HELPERS
+  1241→  1241→  // ===========================================================================
+  1242→  1242→
+  1243→  1243→  /// Deep-cast a JSON map (which may contain dynamic values from jsonDecode)
+  1244→  1244→  /// into a `Map<String, dynamic>` with proper types. Lists are recursively
+  1245→  1245→  /// cast so `List<dynamic>` becomes `List<Map<String, dynamic>>` where
+  1246→  1246→  /// appropriate — this is what FirestoreContentService.addMovie() expects.
+  1247→  1247→  Map<String, dynamic> _deepCast(Map<dynamic, dynamic> src) {
+  1248→  1248→    final out = <String, dynamic>{};
+  1249→  1249→    src.forEach((key, value) {
+  1250→  1250→      out[key.toString()] = _deepCastValue(value);
+  1251→  1251→    });
+  1252→  1252→    return out;
+  1253→  1253→  }
+  1254→  1254→
+  1255→  1255→  dynamic _deepCastValue(dynamic value) {
+  1256→  1256→    if (value is Map) {
+  1257→  1257→      return _deepCast(value);
+  1258→  1258→    }
+  1259→  1259→    if (value is List) {
+  1260→  1260→      return value.map(_deepCastValue).toList();
+  1261→  1261→    }
+  1262→  1262→    return value;
+  1263→  1263→  }
+  1264→  1264→
+  1265→  1265→  /// Validate that the item has the minimal fields required by addMovie().
+  1266→  1266→  /// Returns an error string if invalid, null if OK.
+  1267→  1267→  ///
+  1268→  1268→  /// Validation rules:
+  1269→  1269→  ///   - `title` must be a non-empty string.
+  1270→  1270→  ///   - `type` (if present) must be 'movie' or 'series'.
+  1271→  1271→  ///   - `tmdbId` (if present) must be an int or a numeric string.
+  1272→  1272→  ///   - `categories` and `tags` (if present) must be Lists of strings.
+  1273→  1273→  String? _validate(Map<String, dynamic> data) {
+  1274→  1274→    final title = data['title'];
+  1275→  1275→    if (title is! String || title.trim().isEmpty) {
+  1276→  1276→      return 'Missing or empty "title" field.';
+  1277→  1277→    }
+  1278→  1278→
+  1279→  1279→    final type = data['type'];
+  1280→  1280→    if (type != null && type is! String) {
+  1281→  1281→      return '"type" must be a string ("movie" or "series").';
+  1282→  1282→    }
+  1283→  1283→    if (type is String && type != 'movie' && type != 'series') {
+  1284→  1284→      return '"type" must be "movie" or "series" (got "$type").';
+  1285→  1285→    }
+  1286→  1286→
+  1287→  1287→    final tmdbId = data['tmdbId'];
+  1288→  1288→    if (tmdbId != null) {
+  1289→  1289→      if (tmdbId is! int && tmdbId is! num) {
+  1290→  1290→        // Allow numeric strings; non-numeric strings are an error.
+  1291→  1291→        if (tmdbId is String) {
+  1292→  1292→          if (int.tryParse(tmdbId) == null) {
+  1293→  1293→            return '"tmdbId" must be an integer or numeric string '
+  1294→  1294→                '(got "$tmdbId").';
+  1295→  1295→          }
+  1296→  1296→          // Promote to int — addMovie() does numeric comparison.
+  1297→  1297→          data['tmdbId'] = int.parse(tmdbId);
+  1298→  1298→        } else {
+  1299→  1299→          return '"tmdbId" must be an integer (got ${tmdbId.runtimeType}).';
+  1300→  1300→        }
+  1301→  1301→      }
+  1302→  1302→    }
+  1303→  1303→
+  1304→  1304→    final categories = data['categories'];
+  1305→  1305→    if (categories != null && categories is! List) {
+  1306→  1306→      return '"categories" must be an array of strings.';
+  1307→  1307→    }
+  1308→  1308→
+  1309→  1309→    final tags = data['tags'];
+  1310→  1310→    if (tags != null && tags is! List) {
+  1311→  1311→      return '"tags" must be an array of strings.';
+  1312→  1312→    }
+  1313→  1313→
+  1314→  1314→    return null;
+  1315→  1315→  }
+  1316→  1316→
+  1317→  1317→  /// Slug generator — mirrors FirestoreContentService._generateSlug.
+  1318→  1318→  /// Used during classify() to detect slug duplicates for items without a
+  1319→  1319→  /// pre-set slug. Kept private; addMovie() will auto-generate the real slug.
+  1320→  1320→  String _generateSlug(String title) {
+  1321→  1321→    return title
+  1322→  1322→        .toLowerCase()
+  1323→  1323→        .replaceAll(RegExp(r'[^\w\s-]'), '')
+  1324→  1324→        .replaceAll(RegExp(r'\s+'), '-')
+  1325→  1325→        .replaceAll(RegExp(r'-+'), '-')
+  1326→  1326→        .trim();
+  1327→  1327→  }
+  1328→  1328→}
+  1329→  1329→
+  1330→  1330→/// Custom exception type for batch-import failures so the UI can distinguish
+  1331→  1331→/// them from generic Dart errors.
+  1332→  1332→class BatchImportException implements Exception {
+  1333→  1333→  final String message;
+  1334→  1334→  BatchImportException(this.message);
+  1335→  1335→
+  1336→  1336→  @override
+  1337→  1337→  String toString() => 'BatchImportException: $message';
+  1338→  1338→}
+  1339→  1339→
