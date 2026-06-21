@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.content.ContentResolver
 import android.webkit.MimeTypeMap
 import io.flutter.embedding.android.FlutterActivity
@@ -12,6 +13,7 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity: FlutterActivity() {
     private val CHANNEL = "com.cmmovies/saf_storage"
+    private val ANDROID_ID_CHANNEL = "cm_movies/android_id"
     private val REQUEST_CODE_OPEN_TREE = 1001
     private var pendingResult: MethodChannel.Result? = null
     private var selectedTreeUri: Uri? = null
@@ -53,6 +55,41 @@ class MainActivity: FlutterActivity() {
                     val treeUri = call.argument<String>("treeUri") ?: ""
                     val valid = isSafPermissionValid(treeUri)
                     result.success(valid)
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        // Separate channel for fetching Settings.Secure.ANDROID_ID.
+        // Used by DeviceManagementService.getCurrentDeviceInfo() to get
+        // a real per-device ID instead of Build.ID (firmware build label
+        // that is identical across devices on the same firmware).
+        // device_info_plus 10.x removed direct access to ANDROID_ID for
+        // privacy reasons, so we fetch it via this custom channel.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, ANDROID_ID_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getAndroidId" -> {
+                    try {
+                        // Settings.Secure.ANDROID_ID is a 64-bit hex string
+                        // (16 chars) unique per device-user pair. Stable
+                        // across app reinstalls, changes only on factory
+                        // reset. On Android 8.0+ scoped per signing key.
+                        val androidId = Settings.Secure.getString(
+                            contentResolver,
+                            Settings.Secure.ANDROID_ID
+                        )
+                        if (androidId != null && androidId.isNotEmpty()) {
+                            result.success(androidId)
+                        } else {
+                            // Rare: ANDROID_ID returned null/empty on this
+                            // device. Return empty string so the Dart side
+                            // falls back to a persisted UUID.
+                            result.success("")
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e("AndroidIdChannel", "getAndroidId error: ${e.message}")
+                        result.error("ANDROID_ID_ERROR", "Failed to fetch ANDROID_ID: ${e.message}", null)
+                    }
                 }
                 else -> result.notImplemented()
             }

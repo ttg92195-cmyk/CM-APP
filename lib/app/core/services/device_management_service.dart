@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:device_info_plus/device_info_plus.dart';
@@ -60,16 +61,30 @@ class DeviceManagementService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final DeviceInfoPlugin _deviceInfoPlugin = DeviceInfoPlugin();
 
+  /// MethodChannel used to fetch Settings.Secure.ANDROID_ID from the
+  /// Android native side. device_info_plus 10.x removed direct access
+  /// to ANDROID_ID for privacy reasons, so we fetch it via a custom
+  /// MethodChannel registered in MainActivity.kt.
+  static const MethodChannel _androidIdChannel =
+      MethodChannel('cm_movies/android_id');
+
   /// SharedPreferences key under which we persist a fallback device ID for
   /// iOS devices whose `identifierForVendor` returns null. Without this,
   /// all such devices would share the literal string 'unknown_ios' and
   /// collapse into a single device-limit slot, bypassing the limit entirely.
   static const String _iosFallbackDeviceIdKey = 'ios_fallback_device_id';
 
+  /// SharedPreferences key for Android fallback UUID, used when the
+  /// MethodChannel call to fetch ANDROID_ID fails or returns empty.
+  static const String _androidFallbackDeviceIdKey =
+      'android_fallback_device_id';
+
   /// Generate a fresh fallback device ID (UUIDv4-like) when none is stored.
   /// We avoid adding a `uuid` package dep — this 32-hex-char format is
-  /// sufficient for uniqueness on a single device.
-  String _generateFallbackDeviceId() {
+  /// sufficient for uniqueness on a single device. The [prefix] is
+  /// 'ios-' or 'android-' so we can distinguish platform origin in logs
+  /// and prevent cross-platform ID collisions.
+  String _generateFallbackDeviceId({required String prefix}) {
     final rng = Random();
     final hexChars = '0123456789abcdef';
     // 32 hex chars + 4 hyphens in UUID positions: 8-4-4-4-12
@@ -86,7 +101,7 @@ class DeviceManagementService {
       }
       if (i == 7 || i == 11 || i == 15 || i == 19) buf.write('-');
     }
-    return 'ios-${buf.toString()}';
+    return '$prefix${buf.toString()}';
   }
 
   /// Get the persisted iOS fallback device ID, generating + persisting a
@@ -96,7 +111,7 @@ class DeviceManagementService {
       final prefs = await SharedPreferences.getInstance();
       final existing = prefs.getString(_iosFallbackDeviceIdKey);
       if (existing != null && existing.isNotEmpty) return existing;
-      final fresh = _generateFallbackDeviceId();
+      final fresh = _generateFallbackDeviceId(prefix: 'ios-');
       await prefs.setString(_iosFallbackDeviceIdKey, fresh);
       return fresh;
     } catch (e) {
@@ -104,7 +119,55 @@ class DeviceManagementService {
       // This is suboptimal (changes on every app start) but better than
       // sharing 'unknown_ios' across devices.
       debugPrint('_getIosFallbackDeviceId failed: $e — using ephemeral ID');
-      return _generateFallbackDeviceId();
+      return _generateFallbackDeviceId(prefix: 'ios-');
+    }
+  }
+
+  /// Get the persisted Android fallback device ID (UUID), generating +
+  /// persisting a new one on first call. Used when the MethodChannel
+  /// call to fetch ANDROID_ID fails or returns empty.
+  Future<String> _getAndroidFallbackDeviceId() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final existing = prefs.getString(_androidFallbackDeviceIdKey);
+      if (existing != null && existing.isNotEmpty) return existing;
+      final fresh = _generateFallbackDeviceId(prefix: 'android-');
+      await prefs.setString(_androidFallbackDeviceIdKey, fresh);
+      return fresh;
+    } catch (e) {
+      debugPrint(
+          '_getAndroidFallbackDeviceId failed: $e — using ephemeral ID');
+      return _generateFallbackDeviceId(prefix: 'android-');
+    }
+  }
+
+  /// Fetch Settings.Secure.ANDROID_ID via a custom MethodChannel.
+  ///
+  /// ANDROID_ID is a 64-bit hex string (16 chars) unique per device-user
+  /// pair. It is stable across app reinstalls and only changes on factory
+  /// reset. On Android 8.0+ it is also scoped per signing key, so apps
+  /// signed with different keys see different ANDROID_ID values for the
+  /// same device-user pair — preventing cross-app tracking.
+  ///
+  /// Returns null if the call fails, the channel is unregistered, or the
+  /// returned value is empty. Caller is expected to fall back to a
+  /// persisted UUID in that case.
+  Future<String?> _fetchAndroidIdViaChannel() async {
+    try {
+      final result = await _androidIdChannel.invokeMethod<String>('getAndroidId');
+      if (result == null || result.isEmpty) return null;
+      return result;
+    } on PlatformException catch (e) {
+      debugPrint('_fetchAndroidIdViaChannel PlatformException: ${e.code} ${e.message}');
+      return null;
+    } on MissingPluginException catch (e) {
+      // Channel not registered — likely running on non-Android or
+      // MainActivity.kt hasn't been updated yet. Fall back gracefully.
+      debugPrint('_fetchAndroidIdViaChannel MissingPluginException: $e');
+      return null;
+    } catch (e) {
+      debugPrint('_fetchAndroidIdViaChannel failed: $e');
+      return null;
     }
   }
 
@@ -115,10 +178,19 @@ class DeviceManagementService {
   /// IDENTICAL across every device running the same firmware build.
   /// All Pixel 6s on the same Android 14 OTA shared the same device ID,
   /// collapsing into one device-limit slot and effectively bypassing
-  /// the device-limit feature. Now we use `androidInfo.androidId` which
-  /// is `Settings.Secure.ANDROID_ID` — a 64-bit hex string unique per
-  /// device-user pair, stable across app reinstalls, changes only on
-  /// factory reset.
+  /// the device-limit feature.
+  ///
+  /// Now we fetch `Settings.Secure.ANDROID_ID` directly via a custom
+  /// MethodChannel ('cm_movies/android_id') registered in MainActivity.kt.
+  /// device_info_plus 10.x removed direct access to ANDROID_ID for
+  /// privacy reasons, so a custom channel is the cleanest way to get
+  /// the real per-device ID.
+  ///
+  /// If the MethodChannel call fails (e.g. native side not updated,
+  /// running on non-Android, or platform error), we generate + persist
+  /// a UUID to SharedPreferences as a fallback. This is still better
+  /// than Build.ID because it's at least unique per app install on
+  /// identical-firmware devices.
   ///
   /// For iOS, `identifierForVendor` is the correct per-vendor ID but can
   /// return null on some devices/configs. When null, we generate a fresh
@@ -131,15 +203,23 @@ class DeviceManagementService {
 
     if (Platform.isAndroid) {
       final androidInfo = await _deviceInfoPlugin.androidInfo;
-      // Use Settings.Secure.ANDROID_ID instead of Build.ID. androidId is
-      // a 64-bit hex string unique per device-user pair (changes only on
-      // factory reset). Prefixed with 'android-' so it cannot collide
-      // with iOS fallback IDs (which start with 'ios-').
-      deviceId = 'android-${androidInfo.androidId}';
       deviceName = '${androidInfo.manufacturer} ${androidInfo.model}';
       // Capitalize first letter
       if (deviceName.isNotEmpty) {
         deviceName = deviceName[0].toUpperCase() + deviceName.substring(1);
+      }
+
+      // Try fetching ANDROID_ID via the custom MethodChannel first.
+      final androidId = await _fetchAndroidIdViaChannel();
+      if (androidId != null && androidId.isNotEmpty) {
+        // Real per-device ID. Prefixed with 'android-' so it cannot
+        // collide with iOS fallback IDs (which start with 'ios-').
+        deviceId = 'android-$androidId';
+      } else {
+        // MethodChannel unavailable or returned empty — fall back to a
+        // persisted UUID. This still uniquely identifies the device
+        // (per app install) and is far better than Build.ID.
+        deviceId = await _getAndroidFallbackDeviceId();
       }
     } else if (Platform.isIOS) {
       final iosInfo = await _deviceInfoPlugin.iosInfo;
@@ -154,7 +234,7 @@ class DeviceManagementService {
     } else {
       // Unsupported platform — generate an ephemeral ID. Device limit will
       // effectively be bypassed on these platforms, but they're rare.
-      deviceId = 'unknown-${_generateFallbackDeviceId()}';
+      deviceId = _generateFallbackDeviceId(prefix: 'unknown-');
       deviceName = 'Unknown Device';
     }
 
