@@ -667,45 +667,37 @@ class _AdminPanelPageState extends State<AdminPanelPage>
             ),
             const Divider(height: 1),
             // =========================================================================
-            // Task 27 — Batch Import button temporarily disabled.
+            // Task 28 — Batch Import button RE-ENABLED.
             //
-            // Bro reported that using Batch Import triggered the "All
-            // Posts disappeared from Admin Panel" bug AGAIN (same
-            // symptom as before). Root cause: a JSON file with a
-            // wrong-type field (e.g., `categories: "Action"` as a
-            // string instead of a list) gets written to Firestore
-            // verbatim, then crashes Movie.fromMap, which makes
-            // getAllPosts() return empty.
-            //
-            // Task 27 commit fixes BOTH sides:
+            // Was temporarily disabled in Task 27 because a wrong-type
+            // field in the JSON file (e.g., `categories: "Action"` as
+            // a string instead of a list) made the entire All Posts
+            // grid disappear. Task 27 fixed BOTH sides:
             //   - READ side: Movie.fromMap is now defensive — never
-            //     throws on bad data, so the grid stays visible.
+            //     throws on bad data, so the grid stays visible even
+            //     if one doc has a wrong-type field.
             //   - WRITE side: addMovie()/_buildSafeUpdateMap() now
-            //     coerce list-typed fields to List<String> or skip
+            //     coerces list-typed fields to List<String> or skips
             //     them, so future imports can't corrupt docs.
             //
-            // The button is disabled UNTIL Bro rebuilds + confirms
-            // the fix works on real device. To re-enable, just delete
-            // the `if (false)` wrapper below. Code is intentionally
-            // left in place (not deleted) so the feature is one line
-            // away from coming back.
+            // Bro confirmed on real device: build green, All Posts
+            // grid stays visible even with bad JSON. Button is back.
             // =========================================================================
-            if (false)
-              ListTile(
-                leading: const Icon(Icons.upload_file, color: Color(0xFFE50914)),
-                title: const Text('Batch Import (JSON) — temporarily disabled'),
-                subtitle: const Text(
-                  'Task 27 fix pending verification. Use TMDB Generator or Add Movie manually for now.',
-                  style: TextStyle(fontSize: 12),
-                ),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const BatchImportPage()),
-                  ).then((_) => _loadInitialData());
-                },
+            ListTile(
+              leading: const Icon(Icons.upload_file, color: Color(0xFFE50914)),
+              title: const Text('Batch Import (JSON)'),
+              subtitle: const Text(
+                'Import multiple movies/series from a JSON file.',
+                style: TextStyle(fontSize: 12),
               ),
+              onTap: () {
+                Navigator.pop(ctx);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const BatchImportPage()),
+                ).then((_) => _loadInitialData());
+              },
+            ),
           ],
         ),
       ),
