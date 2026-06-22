@@ -2046,3 +2046,79 @@ Stage Summary:
   * Movies/Series tabs: up to 600ms faster on cached loads.
   * MovieCard progress bars: render on same frame as card.
   * Firebase reads per Home load: ~80% reduction.
+---
+Task ID: 37 (Number 4 — My Posts: per-post Update icon)
+Agent: main
+Task: Bro confirmed Idea 2 from the Number 4 design discussion: in the My Posts tab of TMDB Generator, add a per-card Update icon (left side, mirror of the existing Trash icon on the right). Tapping it syncs THAT single post from TMDB (refreshes metadata only — overview/seasons/downloadLinks/watchLinks preserved). Per-post progress feedback. Do one thing at a time.
+
+Work Log:
+- Pulled latest origin/main (commit 561ff2a — Task 36 #4). Local main was 9 commits ahead (worklog + tool-results from prior sessions) and 11 commits behind (Tasks 27-36 code). Merged origin/main → resolved a worklog.md merge conflict by reordering the two halves (older Task 27 detailed entry BEFORE the continuation + later tasks). Merge committed as 805db17. Then a stray local commit 655640f landed on top.
+- Audited existing per-doc sync logic in `_doSyncMovies()` (lines ~696-777) and `_doSyncSeries()` (lines ~892-973). Both follow the same shape per doc:
+    1) `getMovieDetails(tmdbId)` / `getTVDetails(tmdbId)` from TMDB
+    2) Normalize `genre_ids` from `genres` if missing
+    3) `TmdbService.mapMovieToFirestore` / `mapTVToFirestore` → `firestoreData`
+    4) Build `safeUpdate` from a fixed key list (overview always excluded; seasons/downloadLinks/watchLinks excluded for series)
+    5) Pre-read doc to verify tmdbId still matches
+    6) `runTransaction` — re-read inside tx, re-verify tmdbId, write safeUpdate + `updatedAt` + `lastSyncDate`
+  This logic is correct and battle-tested; the single-post helper should reuse it verbatim.
+
+- Audited the Movie model (lib/app/core/models/movie.dart):
+    * Fields: id, title, titleLowercase, slug, year, poster, rating, resolution, duration, seasons, isAdult, categories, type, isTrending, createdAt, updatedAt.
+    * NOT exposed: tmdbId, backdrop, directors, casts, country, overview, status.
+    * Implication: the helper must read tmdbId + type fresh from Firestore by docId, not from the in-memory Movie object. This is also more correct (the doc may have been edited since the list was loaded).
+
+- Implementation in tmdb_generator_page.dart (3 changes):
+
+  1) State field — added `final Set<String> _myPostsSyncingIds = {};` to `_TmdbGeneratorPageState`. Tracks which post docIds currently have a sync in flight. Used by:
+     * `_buildUpdateIcon` — swaps the icon for a spinner when its id is in the set
+     * Trash icon — disabled (grayed out, no onTap) when its id is in the set, to avoid delete-vs-sync races on the same doc
+     * `_syncSinglePost` — refuses to start a second sync for an id that's already syncing (double-tap guard)
+
+  2) `_syncSinglePost(Movie movie)` + `_doSyncSinglePost(Movie movie)` — extracted from the batch sync per-doc loop. Differences from batch sync:
+     * Reads tmdbId + type fresh from Firestore (Movie model doesn't expose tmdbId)
+     * Defensive tmdbId parsing — handles int, numeric string, and null (covers the case where a Batch Import doc has tmdbId as a string instead of an int)
+     * If tmdbId is missing/invalid → friendly orange SnackBar explaining why (instead of silently skipping like batch sync does)
+     * Same allowed-key list as batch sync (movies: 12 keys, series: 13 keys including `status`)
+     * Same transactional safety (re-read + tmdbId re-verify inside tx)
+     * On success, refreshes ONLY the affected entry in `_myPosts` + `_myPostsFiltered` by re-reading the doc (avoids a full `_loadMyPosts` that would reset pagination + scroll position)
+     * `finally` block always removes the id from `_myPostsSyncingIds` — even on unmounted (clears without setState to avoid the "setState after dispose" assertion)
+
+  3) UI — added `_buildUpdateIcon(Movie movie, bool isSyncing)` helper widget:
+     * Container matches the Trash icon's size + shape (circular, 6px padding, 1.5px border)
+     * Border color: brand red (0xFFE50914) when idle, white24 when syncing
+     * Content: `Icons.sync` (16px white) when idle, 16x16 white CircularProgressIndicator when syncing
+     * `onTap`: null when syncing (GestureDetector ignores taps), `_syncSinglePost(movie)` otherwise
+     * ALWAYS shown — the Movie model doesn't expose tmdbId, so we can't hide the icon based on sync eligibility without paying a Firestore read per card. If the user taps it on a no-tmdbId post, the helper shows a friendly orange SnackBar.
+     * Wired into the Stack in the My Posts grid: Positioned top-left for the Update icon (was: only top-right Trash). Trash icon now also reads `isSyncing` to gray out + disable during sync.
+
+  4) Hint row text updated:
+     * Old: "Tap the trash icon on a card to delete that post."
+     * New: "Sync icon (left): update from TMDB.  Trash icon (right): delete post."
+     * Comment label updated from "Trash-icon hint" to "Hint row — explains the two action icons on each card."
+
+- Created scripts/task37_syntax_check.py (Dart-aware delimiter scanner, same logic as task33/task36 versions). Verified OK on tmdb_generator_page.dart. No unbalanced braces/parens/brackets, no unclosed string literals.
+
+Stage Summary:
+- 1 file changed: lib/app/ui/screens/tmdb_generator_page.dart
+- Net change: +200 lines (state field + 2 methods + 1 widget builder + UI wiring + hint text update)
+- Behavior:
+  * My Posts tab → each card now has TWO action icons: Sync (top-left, brand-red border) + Trash (top-right, red border, was already there)
+  * Tap Sync icon → confirmation dialog ("Update from TMDB?") → on confirm: icon swaps to spinner, trash icon grays out
+  * On success: doc is updated in Firestore (metadata only, overview/seasons/downloadLinks/watchLinks preserved), the in-memory list entry is refreshed (no full reload), green SnackBar "Updated '<title>' from TMDB"
+  * On failure: red SnackBar with error message
+  * On no-tmdbId: orange SnackBar explaining why ("This post was likely added via Batch Import without a tmdbId")
+  * Scroll position preserved (no full reload)
+- Firebase cost: 1 TMDB API call + 1 Firestore read (pre-check) + 1 transaction (1 read + 1 write) + 1 final read (refresh). Total: 3 Firestore reads + 1 write per single-post sync. Compare to batch sync: 1 big query + 20 × (1 TMDB call + 2 reads + 1 write + 1 read for refresh) = ~63 reads + 21 writes for 20 posts. Single-post is more expensive per-post but the user picks WHICH post to refresh — no wasted syncs on posts they don't care about.
+- Safety:
+  * Transaction with tmdbId re-verify — same as batch sync, prevents clobbering if the doc was reassigned to a different tmdbId mid-sync
+  * Trash icon disabled during sync — prevents delete-vs-sync race
+  * Double-tap guard — second tap on the same icon while syncing is a no-op
+  * `finally` clears `_myPostsSyncingIds` even on unmount — no leak
+- Bro to rebuild and verify:
+  1. Open TMDB Generator → My Posts tab
+  2. Each card should show TWO icons: red-bordered sync icon (top-left) + red-bordered trash icon (top-right)
+  3. Tap sync icon on a movie that was imported from TMDB → confirmation dialog → confirm → spinner appears → green success snackbar → poster/title/rating/etc. update if TMDB has newer data
+  4. Tap sync icon on a Batch-Import post WITHOUT tmdbId → orange snackbar explaining why (NOT a crash)
+  5. Tap sync icon, then immediately try to tap trash icon on the same card → trash icon should be grayed out + not respond
+  6. Tap sync icon, then double-tap sync icon again → second tap should be a no-op (no second confirmation dialog)
+- Next: Bro confirms build + behavior. If green, can resume with Number 4 Idea 1 (Sync tab search) as a separate one-at-a-time task.

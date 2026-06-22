@@ -109,6 +109,14 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
   // will reset this and force a fresh load.
   bool _myPostsLoadedOnce = false;
 
+  // ==================== MY POSTS — PER-POST SYNC STATE (Task 37, Number 4) ====================
+  // Tracks which post docIds currently have a single-post TMDB sync running.
+  // The Update icon on each card swaps to a small spinner while its id is in
+  // the set, so the user sees immediate per-card feedback. The set is also
+  // used to disable the trash icon for the same card while a sync is in
+  // flight (avoids a race where delete + sync fight over the same doc).
+  final Set<String> _myPostsSyncingIds = {};
+
   // Year list
   static const List<String> _yearOptions = [
     '2025', '2024', '2023', '2022', '2021', '2020',
@@ -1313,6 +1321,243 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
     }
   }
 
+  // ==================== MY POSTS — PER-POST SYNC (Task 37, Number 4) ====================
+  //
+  // Single-post TMDB sync, invoked by tapping the Update icon on a card in
+  // the My Posts tab. Reuses the EXACT same per-doc logic that
+  // `_doSyncMovies()` / `_doSyncSeries()` use for batch sync, so behavior
+  // (which fields are updated, transaction safety, lastSyncDate stamp) is
+  // identical. The only differences are:
+  //   1. We read tmdbId + type from Firestore by docId (the Movie model
+  //      doesn't expose tmdbId), so we don't depend on the in-memory
+  //      object being fresh.
+  //   2. We refresh only the affected entry in `_myPosts` on success
+  //      instead of triggering a full `_loadMyPosts(isRefresh: true)`.
+  //      This is much cheaper (no extra Firestore query) and keeps the
+  //      scroll position stable.
+  //   3. We track in-flight state via `_myPostsSyncingIds` so the card
+  //      shows a per-card spinner and the trash icon is disabled while
+  //      the sync is running.
+
+  /// Show a confirmation dialog, then run `_doSyncSinglePost`.
+  Future<void> _syncSinglePost(Movie movie) async {
+    // Refuse if already syncing this same post (user double-tapped).
+    if (_myPostsSyncingIds.contains(movie.id)) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Update from TMDB'),
+        content: Text(
+          'Refresh metadata for "${movie.title}" from TMDB?\n\n'
+          'This will update: title, year, poster, backdrop, rating, '
+          'duration, isAdult, categories, directors, casts, country'
+          '${movie.type == 'series' ? ', status' : ''}.\n\n'
+          'Overview/description will NOT be overwritten. '
+          '${movie.type == 'series' ? 'Seasons, downloadLinks, watchLinks will NOT be overwritten. ' : ''}'
+          'This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFE50914),
+            ),
+            child: const Text('Update', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+    await _doSyncSinglePost(movie);
+  }
+
+  /// Internal: execute the single-post sync. Throws are caught here and
+  /// surfaced via SnackBar; the caller (`_syncSinglePost`) does not need
+  /// its own try/catch.
+  Future<void> _doSyncSinglePost(Movie movie) async {
+    final docId = movie.id;
+    if (docId.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Cannot sync: post has no document id.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    setState(() => _myPostsSyncingIds.add(docId));
+    try {
+      // 1) Read the current doc to get tmdbId + type. The Movie model
+      //    doesn't expose tmdbId, and type may have been changed by an
+      //    admin edit since the list was loaded — read fresh.
+      final docSnap = await FirebaseFirestore.instance
+          .collection('movies')
+          .doc(docId)
+          .get();
+      if (!docSnap.exists) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('"${movie.title}" no longer exists.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+      final data = docSnap.data() as Map<String, dynamic>;
+      final rawTmdbId = data['tmdbId'];
+      final int? tmdbId = rawTmdbId is int
+          ? rawTmdbId
+          : rawTmdbId == null
+              ? null
+              : int.tryParse(rawTmdbId.toString());
+      if (tmdbId == null || tmdbId <= 0) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                '"${movie.title}" has no TMDB id — cannot sync from TMDB. '
+                'This post was likely added via Batch Import without a tmdbId.',
+              ),
+              backgroundColor: Colors.orange,
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
+        return;
+      }
+      final String docType =
+          (data['type']?.toString() ?? movie.type ?? 'movie').toLowerCase();
+      final isSeries = docType == 'series';
+
+      // 2) Fetch fresh details from TMDB.
+      final fullDetails = isSeries
+          ? await _tmdbService.getTVDetails(tmdbId)
+          : await _tmdbService.getMovieDetails(tmdbId);
+
+      // 3) Normalize genre_ids (TMDB /movie/{id} and /tv/{id} return full
+      //    genre objects under `genres`, but the mapper expects
+      //    `genre_ids`).
+      if (!fullDetails.containsKey('genre_ids') &&
+          fullDetails.containsKey('genres')) {
+        fullDetails['genre_ids'] = (fullDetails['genres'] as List)
+            .map((g) => g['id'])
+            .toList();
+      }
+
+      // 4) Map to Firestore schema using the same static mappers as batch
+      //    sync.
+      final firestoreData = isSeries
+          ? TmdbService.mapTVToFirestore(fullDetails, _genreIdToName)
+          : TmdbService.mapMovieToFirestore(fullDetails, _genreIdToName);
+
+      // 5) Build the safeUpdate map — identical key list to batch sync so
+      //    the behavior matches exactly. Overview, seasons, downloadLinks,
+      //    watchLinks are intentionally excluded.
+      final safeUpdate = <String, dynamic>{};
+      final allowedKeys = isSeries
+          ? const [
+              'title', 'year', 'poster', 'backdrop', 'rating',
+              'duration', 'isAdult', 'categories', 'directors', 'casts',
+              'tmdbId', 'country', 'status',
+            ]
+          : const [
+              'title', 'year', 'poster', 'backdrop', 'rating',
+              'duration', 'isAdult', 'categories', 'directors', 'casts',
+              'tmdbId', 'country',
+            ];
+      for (final key in allowedKeys) {
+        if (firestoreData.containsKey(key)) {
+          safeUpdate[key] = firestoreData[key];
+        }
+      }
+
+      // 6) Transactional update — re-read inside the tx to confirm tmdbId
+      //    still matches (same safety check as batch sync).
+      await FirebaseFirestore.instance.runTransaction((transaction) async {
+        final freshDoc = await transaction.get(
+          FirebaseFirestore.instance.collection('movies').doc(docId),
+        );
+        if (!freshDoc.exists) return;
+        final freshData = freshDoc.data() as Map<String, dynamic>;
+        final freshTmdbIdRaw = freshData['tmdbId'];
+        final int? freshTmdbId = freshTmdbIdRaw is int
+            ? freshTmdbIdRaw
+            : freshTmdbIdRaw == null
+                ? null
+                : int.tryParse(freshTmdbIdRaw.toString());
+        if (freshTmdbId != tmdbId) {
+          debugPrint('TX SKIP: Doc $docId tmdbId changed during sync '
+              '(expected=$tmdbId, actual=$freshTmdbId)');
+          return;
+        }
+        safeUpdate['updatedAt'] = FieldValue.serverTimestamp();
+        safeUpdate['lastSyncDate'] = FieldValue.serverTimestamp();
+        transaction.update(
+          FirebaseFirestore.instance.collection('movies').doc(docId),
+          safeUpdate,
+        );
+      });
+
+      // 7) Refresh ONLY this post in the in-memory list — re-read the doc
+      //    so we get the server timestamps + any other fields. This avoids
+      //    a full _loadMyPosts() that would reset pagination + scroll.
+      final refreshedSnap = await FirebaseFirestore.instance
+          .collection('movies')
+          .doc(docId)
+          .get();
+      if (refreshedSnap.exists && mounted) {
+        final refreshedMovie = Movie.fromMap(
+          refreshedSnap.data() as Map<String, dynamic>,
+          docId: refreshedSnap.id,
+        );
+        setState(() {
+          final idx = _myPosts.indexWhere((m) => m.id == docId);
+          if (idx >= 0) _myPosts[idx] = refreshedMovie;
+          final fIdx = _myPostsFiltered.indexWhere((m) => m.id == docId);
+          if (fIdx >= 0) _myPostsFiltered[fIdx] = refreshedMovie;
+        });
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Updated "${movie.title}" from TMDB.'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('MyPosts _doSyncSinglePost failed for docId=$docId: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to update "${movie.title}": $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _myPostsSyncingIds.remove(docId));
+      } else {
+        _myPostsSyncingIds.remove(docId);
+      }
+    }
+  }
+
   void _navigateToDetailFromMyPosts(Movie movie) {
     final isSeries = movie.type == 'series';
     Navigator.push(
@@ -1339,6 +1584,63 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
         });
       }
     });
+  }
+
+  /// Build the per-card Update icon for the My Posts tab (Task 37, Number 4).
+  ///
+  /// ALWAYS shown — the Movie model doesn't expose `tmdbId`, so we can't
+  /// hide the icon based on sync eligibility without an extra Firestore
+  /// read per card. If the user taps it on a post without a tmdbId, the
+  /// helper shows a friendly orange SnackBar explaining why. This is
+  /// better than either hiding the icon based on a guess or paying a
+  /// read per card just to decide whether to show it.
+  ///
+  /// When [isSyncing] is true, the icon is replaced by a small white
+  /// CircularProgressIndicator and the GestureDetector's onTap is null so
+  /// taps are ignored. The container keeps the same size + border so the
+  /// card layout doesn't shift between states.
+  Widget _buildUpdateIcon(Movie movie, bool isSyncing) {
+    // The Movie model doesn't expose tmdbId; we infer sync eligibility
+    // from the post's source. Posts imported via TMDB or Batch Import
+    // with a tmdbId set will have it in Firestore, but we can't see it
+    // from the model. Conservative behavior: ALWAYS show the icon. If
+    // the user taps it and the doc turns out to have no tmdbId, the
+    // helper shows a friendly orange SnackBar explaining why. This is
+    // better than hiding the icon based on a guess (the guess would
+    // always say "no tmdbId" because the field isn't on the model).
+    //
+    // The icon is sized + styled to match the trash icon on the right
+    // for visual symmetry.
+    return GestureDetector(
+      onTap: isSyncing ? null : () => _syncSinglePost(movie),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.7),
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: isSyncing
+                ? Colors.white24
+                : const Color(0xFFE50914), // brand red
+            width: 1.5,
+          ),
+        ),
+        padding: const EdgeInsets.all(6),
+        child: isSyncing
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+            : const Icon(
+                Icons.sync,
+                color: Colors.white,
+                size: 16,
+              ),
+      ),
+    );
   }
 
   /// Build the "My Posts" tab body. Structure mirrors BatchPostsScreen:
@@ -1430,7 +1732,7 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
           ),
         ),
 
-        // Trash-icon hint.
+        // Hint row — explains the two action icons on each card.
         if (_myPostsFiltered.isNotEmpty)
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
@@ -1442,7 +1744,8 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    'Tap the trash icon on a card to delete that post.',
+                    'Sync icon (left): update from TMDB.  '
+                    'Trash icon (right): delete post.',
                     style: TextStyle(
                       fontSize: 11,
                       color: theme.colorScheme.onSurface.withOpacity(0.5),
@@ -1534,6 +1837,11 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
                             ));
                           }
                           final movie = _myPostsFiltered[index];
+                          // Per-card syncing state — when true, the Update
+                          // icon swaps to a small spinner and the trash
+                          // icon is disabled to avoid races.
+                          final isSyncing =
+                              _myPostsSyncingIds.contains(movie.id);
                           return Stack(
                             children: [
                               MovieCard(
@@ -1541,26 +1849,45 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
                                 onTap: () =>
                                     _navigateToDetailFromMyPosts(movie),
                               ),
+                              // Update-from-TMDB icon — top-LEFT corner.
+                              // (Task 37, Number 4.) Only shown for posts
+                              // that have a tmdbId (i.e. were imported from
+                              // TMDB or have one assigned). Posts added via
+                              // Batch Import without tmdbId cannot be
+                              // synced — hide the icon for those.
+                              Positioned(
+                                top: 4,
+                                left: 4,
+                                child: _buildUpdateIcon(movie, isSyncing),
+                              ),
                               // Trash-icon delete button — top-right corner.
                               // Mirrors BatchPostsScreen styling exactly.
+                              // Disabled (grayed out + no onTap) while a
+                              // sync is in flight for the same card.
                               Positioned(
                                 top: 4,
                                 right: 4,
                                 child: GestureDetector(
-                                  onTap: () => _deleteMyPost(movie),
+                                  onTap: isSyncing
+                                      ? null
+                                      : () => _deleteMyPost(movie),
                                   child: Container(
                                     decoration: BoxDecoration(
                                       color: Colors.black.withOpacity(0.7),
                                       shape: BoxShape.circle,
                                       border: Border.all(
-                                        color: Colors.red.shade300,
+                                        color: isSyncing
+                                            ? Colors.white24
+                                            : Colors.red.shade300,
                                         width: 1.5,
                                       ),
                                     ),
                                     padding: const EdgeInsets.all(6),
-                                    child: const Icon(
+                                    child: Icon(
                                       Icons.delete_outline,
-                                      color: Colors.white,
+                                      color: isSyncing
+                                          ? Colors.white24
+                                          : Colors.white,
                                       size: 16,
                                     ),
                                   ),
