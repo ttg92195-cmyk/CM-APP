@@ -1597,3 +1597,57 @@ Stage Summary:
 - Number 1 (Batch Import posts view + delete) is already on GitHub
   as commit 2e91632 (Task 26) — verify in parallel with this fix
   once build is green.
+
+---
+Task ID: 33 (Phase 2: UI Layout Safety)
+Agent: main
+Task: Implement Phase 2 of the localization strategy — per-widget maxLines + overflow rules + dev-only overflow detector. Bro gave full creative freedom ("Bro ဘာသာစိတ်ကြိုက်ဖြစ်ဖြစ်လုပ်ပေးနိုင်ပါတယ်") after Phase 1 (Task 32) build succeeded.
+
+Work Log:
+- Pulled latest origin/main (f2fe939 — Task 32 hotfix). Reset 4 files that had local file-mode bumps (644 → 755) from prior session — kept working tree clean before starting.
+- Audited UI: 984 Text widgets across 42 files. Mass-patching all is too risky for one commit. Decided on layered approach: helper widget + detector + targeted patches + docs.
+- Created lib/app/ui/components/safe_text.dart:
+  * Drop-in replacement for Text with safe defaults (maxLines:2, overflow:ellipsis, softWrap:true).
+  * Fully documented — when to use, when plain Text is OK, migration notes.
+- Created lib/app/core/services/debug_overflow_detector.dart:
+  * Captures RenderFlex overflow errors via FlutterError.onError in dev mode only.
+  * Saves + forwards to previous handler (does NOT swallow existing error logging).
+  * Deduplicates per session by normalizing pixel counts in the signature.
+  * Optional SnackBar via global ScaffoldMessengerKey.
+  * Release mode: install() is silent no-op. Class stays in binary so dev/prod code paths match.
+- Patched lib/app/ui/home/trending_movie_component.dart:
+  * Section title (inside Expanded) was plain Text — long Myanmar section names would overflow.
+  * "More" button label was plain Text — same risk.
+  * Both switched to SafeText(maxLines: 1).
+- Patched lib/app/ui/screens/movie_detail_screen.dart _detailRow():
+  * Label Text had no maxLines — long labels could wrap and push value off-screen.
+  * Value Text (inside Expanded) had no maxLines — long director lists could wrap indefinitely.
+  * Now: label = maxLines:1 + ellipsis, value = maxLines:3 + ellipsis.
+- Wired into lib/main.dart:
+  * Added global GlobalKey<ScaffoldMessengerState> scaffoldMessengerKey.
+  * Added DebugOverflowDetector.instance.install(scaffoldMessengerKey: ...) at top of main() BEFORE FlutterError.onError is set, so the detector's saved _previousHandler is null and it falls through to FlutterError.presentError.
+  * Added scaffoldMessengerKey: scaffoldMessengerKey to MaterialApp.
+- Created docs/UI_LAYOUT_SAFETY.md:
+  * 4 rules for developers (maxLines+overflow, Row+Expanded, Wrap for chips, test in both langs).
+  * Audit notes on which screens are already safe (movie_card.dart, movie_detail_screen.dart, series_detail_screen.dart).
+  * Migration backlog (profile_page, admin_panel_page, edit_movie_page — opportunistic).
+  * SnackBar workflow when dev sees ⚠️ Layout overflow detected.
+  * Future lint aspiration (custom_lint package) — not done now.
+- Wrote scripts/task33_syntax_check.py:
+  * First version used regex to strip strings — had false positives on main.dart (raw strings r'...' not handled, so braces inside raw strings were counted).
+  * Rewrote as character-level Dart-aware scanner: handles // comments, /* */ blocks, ' and " strings, escape sequences, raw strings r'...' and r"...", string interpolation ${...} (braces inside strings are skipped).
+  * All 5 modified files pass: braces/parens/brackets all balanced, all expected imports present.
+- Commit c3bab22 pushed to origin/main.
+
+Stage Summary:
+- 6 files changed, 617 insertions(+), 2 deletions(-).
+- New: safe_text.dart, debug_overflow_detector.dart, docs/UI_LAYOUT_SAFETY.md.
+- Modified: trending_movie_component.dart, movie_detail_screen.dart, main.dart.
+- Phase 2 complete. Bro to rebuild and test:
+  1. flutter pub get (no new deps — only stdlib + existing packages).
+  2. Build the app.
+  3. Switch to Myanmar language.
+  4. Navigate through all screens — if any layout overflow happens, a red SnackBar pops with the offending RenderFlex message + "Logs" action button.
+  5. No SnackBar = no overflow detected = layout is safe in Myanmar.
+  6. Release builds: detector is no-op, no SnackBars ever shown to end users.
+- Next: Phase 3 (CI/CD GitHub Actions for task32_verify_translations.py) — separate task, awaiting Bro's go-ahead.
