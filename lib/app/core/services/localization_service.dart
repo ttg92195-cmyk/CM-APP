@@ -116,16 +116,23 @@ class LocalizationService {
       _translations = await _loadJsonForLanguage(languageCode);
     }
 
-    // Extract _meta block if present (Task 32-f: versioning).
-    final meta = _translations['_meta'];
-    if (meta is Map) {
-      _version = meta['version']?.toString() ?? '';
-      _lastUpdated = meta['lastUpdated']?.toString() ?? '';
+    // Extract _meta block (Task 32-f: versioning).
+    // _loadJsonForLanguage() already strips _meta and returns Map<String,String>,
+    // so we re-read the raw JSON to access _meta while it's still dynamic.
+    // The rootBundle cache makes this second load negligible.
+    _version = '';
+    _lastUpdated = '';
+    try {
+      final raw = await rootBundle.loadString('assets/lang/$languageCode.json');
+      final decoded = json.decode(raw) as Map<String, dynamic>;
+      final meta = decoded['_meta'];
+      if (meta is Map) {
+        _version = meta['version']?.toString() ?? '';
+        _lastUpdated = meta['lastUpdated']?.toString() ?? '';
+      }
+    } catch (e) {
+      debugPrint('[LocalizationService] Failed to extract _meta: $e');
     }
-
-    // _meta is reserved — never expose it to translate()
-    _translations.remove('_meta');
-    _englishFallback.remove('_meta');
 
     _isInitialized = true;
     debugPrint(
