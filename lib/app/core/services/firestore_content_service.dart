@@ -693,10 +693,21 @@ class FirestoreContentService {
     String genreName, {
     int limit = 50,
     DocumentSnapshot? startAfter,
+    String? typeFilter,
   }) async {
+    // Task 38 Req 5 — server-side type filter for Genres tab pagination.
+    // Without this, the 20-doc page contains mixed movie+series docs, the
+    // client-side filter (in FilterResultPage) discards the wrong-type ones,
+    // and the visible grid is shorter than the viewport — so the scroll
+    // trigger never fires and infinite scroll silently dies at 20 docs.
+    // See genres_tags_collections_page.dart for the matching call sites.
     try {
       Query query = _moviesRef
-          .where('categories', arrayContains: genreName)
+          .where('categories', arrayContains: genreName);
+      if (typeFilter != null) {
+        query = query.where('type', isEqualTo: typeFilter);
+      }
+      query = query
           .orderBy('createdAt', descending: true)
           .limit(limit);
 
@@ -719,11 +730,18 @@ class FirestoreContentService {
       };
     } catch (e) {
       // Fallback without orderBy if composite index missing
+      // (e.g., the new (categories, type, createdAt) 3-field index isn't
+      // deployed yet — see firestore.indexes.json). This fallback path
+      // works WITHOUT any composite index because equality + array-contains
+      // queries don't require one; only orderBy on a 3rd field does.
       debugPrint('getMoviesByGenre with orderBy failed, trying fallback: $e');
       try {
         Query query = _moviesRef
-            .where('categories', arrayContains: genreName)
-            .limit(limit);
+            .where('categories', arrayContains: genreName);
+        if (typeFilter != null) {
+          query = query.where('type', isEqualTo: typeFilter);
+        }
+        query = query.limit(limit);
 
         final snapshot = await query.get();
         final movies = snapshot.docs
@@ -756,10 +774,17 @@ class FirestoreContentService {
     String tagName, {
     int limit = 50,
     DocumentSnapshot? startAfter,
+    String? typeFilter,
   }) async {
+    // Task 38 Req 5 — server-side type filter for Tags tab pagination.
+    // See getMoviesByGenre above for the rationale.
     try {
       Query query = _moviesRef
-          .where('tags', arrayContains: tagName)
+          .where('tags', arrayContains: tagName);
+      if (typeFilter != null) {
+        query = query.where('type', isEqualTo: typeFilter);
+      }
+      query = query
           .orderBy('createdAt', descending: true)
           .limit(limit);
 
@@ -785,8 +810,11 @@ class FirestoreContentService {
       debugPrint('getMoviesByTag with orderBy failed, trying fallback: $e');
       try {
         Query query = _moviesRef
-            .where('tags', arrayContains: tagName)
-            .limit(limit);
+            .where('tags', arrayContains: tagName);
+        if (typeFilter != null) {
+          query = query.where('type', isEqualTo: typeFilter);
+        }
+        query = query.limit(limit);
 
         final snapshot = await query.get();
         final movies = snapshot.docs
@@ -1350,10 +1378,17 @@ class FirestoreContentService {
     String collectionName, {
     int limit = 50,
     DocumentSnapshot? startAfter,
+    String? typeFilter,
   }) async {
+    // Task 38 Req 5 — server-side type filter for Collections tab pagination.
+    // See getMoviesByGenre above for the rationale.
     try {
       Query query = _moviesRef
-          .where('collections', arrayContains: collectionName)
+          .where('collections', arrayContains: collectionName);
+      if (typeFilter != null) {
+        query = query.where('type', isEqualTo: typeFilter);
+      }
+      query = query
           .orderBy('createdAt', descending: true)
           .limit(limit);
 
@@ -1378,8 +1413,11 @@ class FirestoreContentService {
       debugPrint('getMoviesByCollection with orderBy failed, trying fallback: $e');
       try {
         Query query = _moviesRef
-            .where('collections', arrayContains: collectionName)
-            .limit(limit);
+            .where('collections', arrayContains: collectionName);
+        if (typeFilter != null) {
+          query = query.where('type', isEqualTo: typeFilter);
+        }
+        query = query.limit(limit);
 
         final snapshot = await query.get();
         final movies = snapshot.docs

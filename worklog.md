@@ -2405,3 +2405,83 @@ Stage Summary:
 - New script: scripts/task38_req2_hotfix_syntax_check.py
 - This was a build-breaker hotfix, NOT a new feature. The Task 38 Req 2 feature (cast.character subtitle display) is preserved — only the invalid color constant was corrected.
 - Bro to rebuild — release APK should compile now. The cast.character subtitle will appear slightly lighter (54% white) than originally intended (45% white) in dark mode, but this matches the rest of the codebase's muted-subtitle convention so it will look consistent.
+
+---
+Task ID: 38-req5
+Agent: main
+Task: Task 38 Req 5 — Genres tab pagination broken (only 20 posts show, no infinite scroll to load more). Fix infinite scroll on FilterResultPage (used by Genres / Tags / Collections tabs).
+
+Work Log:
+- Pulled origin/main — confirmed local HEAD = 6c6a5e6 (Task 38 Req 2 hotfix).
+- Read lib/app/ui/screens/genres_tags_collections_page.dart:
+  * FilterResultPage is the page that opens when user taps a genre/tag/collection button.
+  * The Genres / Tags tabs ALWAYS pass typeFilter: 'movie' or typeFilter: 'series' (line 170, 191, 245, 266).
+  * The Collections tab does NOT pass typeFilter (line ~317 — passes null).
+  * Existing pagination infrastructure: _hasMore, _lastDoc, _loadMore, scroll listener comparing pixels == maxScrollExtent.
+- Read lib/app/core/services/firestore_content_service.dart:
+  * getMoviesByGenre / getMoviesByTag / getMoviesByCollection all use `where('categories|tags|collections', arrayContains:).orderBy('createdAt', descending:).limit()`.
+  * None of them filter by `type` — they return mixed movie+series docs.
+  * Compare to getMovies() (line 35) which DOES filter server-side by `type == 'movie'`.
+- Identified ROOT CAUSE of pagination failure:
+  * Step 1: User taps "Action → Movies" sub-tab → FilterResultPage(genreName: 'Action', typeFilter: 'movie').
+  * Step 2: _loadMovies() calls getMoviesByGenre('Action', limit: 20). Returns 20 MIXED docs (say 12 movies + 8 series, or worse — 5 movies + 15 series).
+  * Step 3: Client-side filter `allMovies.where((m) => m.type == widget.typeFilter)` keeps only movies — say 8 visible items.
+  * Step 4: 8 items in a 3-column grid = 3 rows. Grid is SHORTER than the viewport.
+  * Step 5: Scroll listener `pixels == maxScrollExtent` never fires (content doesn't fill viewport, so pixels == 0 == maxScrollExtent, and the listener fires on every pixel change which sets _isLoadingMore=true on the first frame — but then _loadMore returns the next 20 mixed docs, of which say 8 are movies — the cycle continues but the user sees a stuttering stream of mostly-series docs being silently discarded).
+  * Step 6: Even worse — if the genre has fewer than 20 total mixed docs, `hasMore = snapshot.docs.length >= limit` = `15 >= 20` = false → pagination dies immediately at 15 docs.
+  * Same bug applies to Tags tab (always passes typeFilter) and the "Series" sub-tab.
+  * Collections tab is partially OK (no typeFilter, so client-side filter is a no-op), but still hits the scroll-trigger edge case for genres with exactly 20 docs that don't fill a large tablet screen.
+
+- IMPLEMENTED FIX (3 files):
+
+  (1) lib/app/core/services/firestore_content_service.dart:
+      Added optional `String? typeFilter` parameter to ALL THREE methods:
+      - getMoviesByGenre (line ~692)
+      - getMoviesByTag (line ~773)
+      - getMoviesByCollection (line ~1377)
+      When typeFilter is non-null, both the primary path (with orderBy) AND the fallback path (without orderBy) add `.where('type', isEqualTo: typeFilter)`. This filters server-side so the 20-doc page contains 20 ACTUAL movies OR 20 ACTUAL series, not a mix.
+      Backward-compatible: existing call sites in category_page.dart, movie_detail_screen.dart, series_detail_screen.dart do NOT pass typeFilter → param defaults to null → no type filter applied → behavior unchanged.
+
+  (2) lib/app/ui/screens/genres_tags_collections_page.dart:
+      - Updated all 6 service call sites in _loadMovies (3) and _loadMore (3) to pass `typeFilter: widget.typeFilter`.
+      - Relaxed scroll trigger from `pixels == maxScrollExtent` to `pixels >= maxScrollExtent * 0.8` so the next page kicks in BEFORE the user hits the bottom (smoother infinite scroll UX, matches industry standard).
+      - Added post-frame auto-load safety net in _loadMovies: if after the initial load the visible items count is < 30 AND _hasMore is true, schedule a _loadMore() on the next frame. This handles the edge case where the first page didn't fill the viewport (e.g., on a large tablet) so the scroll listener never fires.
+      - Added the same safety net in _loadMore (chained auto-load). Recursion is bounded because _loadMore no-ops once _hasMore flips false (Firestore returned fewer than `limit` docs).
+
+  (3) firestore.indexes.json:
+      Declared 3 new composite indexes (one per filter dimension) so the primary path with orderBy runs fast once Bro deploys them:
+      - (categories, type, createdAt DESC)
+      - (tags, type, createdAt DESC)
+      - (collections, type, createdAt DESC)
+      These are NEEDED because the new query has 3 clauses: arrayContains + isEqualTo + orderBy on a 3rd field — Firestore requires a composite index for that combination. Without them deployed, the primary path throws, the catch block runs the fallback (no orderBy, just arrayContains + isEqualTo + limit) which works WITHOUT any composite index (Firestore allows equality + array-contains in the same query without one). So the app works immediately on this build; deploying the indexes only makes it faster.
+
+- Verified backward compatibility:
+  * category_page.dart calls (4 sites) — no typeFilter passed, default null, no behavior change.
+  * movie_detail_screen.dart:114 — calls getMoviesByGenre(limit: 11) for related movies, no typeFilter. Unchanged. (Note: this means a movie's detail page may show series in its "related" row — a pre-existing bug, NOT in scope for Req 5. Filed mentally for v2.1.0+.)
+  * series_detail_screen.dart:114 — same situation as movie_detail_screen. Unchanged.
+
+- Ran scripts/task38_req5_syntax_check.py (Dart-aware delimiter scanner, new) — OK on both modified .dart files (2241 lines / 1749 openers / 1749 closers; 667 lines / 410 openers / 410 closers; all balanced).
+- Ran scripts/verify_translations.py — OK (no UI string changes; pagination is server-side + scroll-trigger, no new visible labels).
+- Ran prior scripts/task38_req1_syntax_check.py, scripts/task38_req2_syntax_check.py, scripts/task38_req2_hotfix_syntax_check.py — all still pass (no regression on previously-touched files).
+- Validated firestore.indexes.json — JSON parses cleanly.
+
+- Submodule situation discovered & handled:
+  * /home/z/my-project is the canonical git repo at HEAD=6c6a5e6.
+  * /home/z/my-project/CM-APP was a STALE clone at HEAD=561ff2a (19 commits behind origin/main) — likely an old scratch checkout. The working tree had been manually synced to latest, but git HEAD was stale.
+  * Before committing my Req 5 edits, I: stashed the edits, fast-forwarded CM-APP to 6c6a5e6, popped the stash. No conflicts. All edits applied cleanly on top of the latest commit.
+
+Stage Summary:
+- 3 files changed (126 insertions, 16 deletions):
+  * firestore.indexes.json — 3 new composite indexes declared (categories/tags/collections × type × createdAt).
+  * lib/app/core/services/firestore_content_service.dart — added optional `typeFilter` param to 3 methods (getMoviesByGenre, getMoviesByTag, getMoviesByCollection). Server-side type filter applied in both primary and fallback paths.
+  * lib/app/ui/screens/genres_tags_collections_page.dart — 6 call sites updated to pass `typeFilter: widget.typeFilter`. Scroll trigger relaxed to 80% threshold. Two post-frame auto-load safety nets added (in _loadMovies and in _loadMore) for the short-viewport edge case.
+- New script: scripts/task38_req5_syntax_check.py
+- No Firestore data migration needed — the `type` field already exists on every movie doc.
+- Bro should optionally run `firebase deploy --only firestore:indexes` to deploy the 3 new composite indexes. Without this deploy, the app still works (fallback path), just slower on large genres. With it deployed, the primary path runs fast.
+- Bro to rebuild and verify:
+  1. Open Genres tab → tap "Action" under Movies sub-tab. Should see 20 movie cards (NOT mixed with series). Scroll down — should load next 20 movie cards. Keep scrolling until the genre is exhausted (spinner disappears, no more loads).
+  2. Switch to Series sub-tab → tap "Action". Should see 20 series cards. Same infinite scroll behavior.
+  3. Repeat for Tags tab (e.g., "K Drama", "4K Movies") and Collections tab (no typeFilter, but scroll trigger fix still applies).
+  4. Edge case test: open a genre with fewer than 20 total movies. Should show all of them, no spinner, no infinite scroll attempt.
+  5. Edge case test: open a genre on a large tablet (landscape). The post-frame auto-load safety net should kick in if the first 20 don't fill the screen — you'll see a brief spinner then more items load automatically without user scrolling.
+- v2.0.0 wrap-up: This is the LAST of the 5 requirements. After Bro confirms the build is green and tests pass, v2.0.0 is ready for release. Any future issues go to v2.1.0+.

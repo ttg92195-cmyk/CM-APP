@@ -471,11 +471,17 @@ class _FilterResultPageState extends State<FilterResultPage> {
     try {
       Map<String, dynamic> result;
       if (widget.genreName != null) {
-        result = await _contentService.getMoviesByGenre(widget.genreName!, limit: 20); // PAGINATION: 20/page
+        result = await _contentService.getMoviesByGenre(
+          widget.genreName!, limit: 20, typeFilter: widget.typeFilter, // PAGINATION: 20/page (Task 38 Req 5)
+        );
       } else if (widget.tagName != null) {
-        result = await _contentService.getMoviesByTag(widget.tagName!, limit: 20); // PAGINATION: 20/page
+        result = await _contentService.getMoviesByTag(
+          widget.tagName!, limit: 20, typeFilter: widget.typeFilter, // PAGINATION: 20/page (Task 38 Req 5)
+        );
       } else if (widget.collectionName != null) {
-        result = await _contentService.getMoviesByCollection(widget.collectionName!, limit: 20); // PAGINATION: 20/page
+        result = await _contentService.getMoviesByCollection(
+          widget.collectionName!, limit: 20, typeFilter: widget.typeFilter, // PAGINATION: 20/page (Task 38 Req 5)
+        );
       } else {
         result = await _contentService.getMovies(limit: 20); // PAGINATION: 20/page
       }
@@ -507,6 +513,22 @@ class _FilterResultPageState extends State<FilterResultPage> {
           _lastDoc = result['lastDoc'] as DocumentSnapshot?;
           _isLoading = false;
         });
+
+        // Task 38 Req 5 — post-frame auto-load safety net.
+        // If the first page returned fewer items than would fill the
+        // viewport (e.g., on a large tablet showing 30+ items per screen,
+        // or a genre with exactly 20 docs that doesn't fill the screen),
+        // the scroll listener never fires — and infinite scroll silently
+        // dies. Schedule a `_loadMore()` on the next frame; `_loadMore`
+        // will no-op if `_hasMore` is already false (e.g., the genre only
+        // had 20 docs total).
+        if (_hasMore && _filteredMovies.length < 30) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && _hasMore && !_isLoadingMore) {
+              _loadMore();
+            }
+          });
+        }
       }
     } catch (e) {
       debugPrint('FilterResultPage load error: $e');
@@ -522,14 +544,17 @@ class _FilterResultPageState extends State<FilterResultPage> {
       if (widget.genreName != null) {
         result = await _contentService.getMoviesByGenre(
           widget.genreName!, limit: 20, startAfter: _lastDoc,
+          typeFilter: widget.typeFilter, // Task 38 Req 5
         );
       } else if (widget.tagName != null) {
         result = await _contentService.getMoviesByTag(
           widget.tagName!, limit: 20, startAfter: _lastDoc,
+          typeFilter: widget.typeFilter, // Task 38 Req 5
         );
       } else if (widget.collectionName != null) {
         result = await _contentService.getMoviesByCollection(
           widget.collectionName!, limit: 20, startAfter: _lastDoc,
+          typeFilter: widget.typeFilter, // Task 38 Req 5
         );
       } else {
         result = await _contentService.getMovies(limit: 20, startAfter: _lastDoc);
@@ -563,6 +588,21 @@ class _FilterResultPageState extends State<FilterResultPage> {
           _lastDoc = result['lastDoc'] as DocumentSnapshot?;
           _isLoadingMore = false;
         });
+
+        // Task 38 Req 5 — chained auto-load safety net (mirror of the one
+        // in _loadMovies). If after a `_loadMore` we still have fewer
+        // than 30 visible items AND `_hasMore` is still true, the grid
+        // likely still doesn't fill the viewport — schedule another
+        // `_loadMore` on the next frame. Caps infinite recursion because
+        // `_loadMore` no-ops once `_hasMore` flips false (Firestore
+        // returned fewer than `limit` docs).
+        if (_hasMore && _filteredMovies.length < 30) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && _hasMore && !_isLoadingMore) {
+              _loadMore();
+            }
+          });
+        }
       }
     } catch (e) {
       if (mounted) setState(() => _isLoadingMore = false);
@@ -587,10 +627,15 @@ class _FilterResultPageState extends State<FilterResultPage> {
               onRefresh: _loadMovies,
               child: NotificationListener<ScrollNotification>(
                 onNotification: (scrollInfo) {
-                  if (scrollInfo.metrics.pixels ==
-                          scrollInfo.metrics.maxScrollExtent &&
-                      !_isLoadingMore &&
-                      _hasMore) {
+                  // Task 38 Req 5 — trigger at 80% scroll instead of 100%
+                  // so the next page kicks in BEFORE the user hits the
+                  // bottom (smoother infinite scroll). Combined with the
+                  // post-frame auto-load below, this also handles the case
+                  // where the first page didn't even fill the viewport
+                  // (e.g., on a large tablet).
+                  final trigger = scrollInfo.metrics.pixels >=
+                      scrollInfo.metrics.maxScrollExtent * 0.8;
+                  if (trigger && !_isLoadingMore && _hasMore) {
                     _loadMore();
                   }
                   return false;
