@@ -1651,3 +1651,46 @@ Stage Summary:
   5. No SnackBar = no overflow detected = layout is safe in Myanmar.
   6. Release builds: detector is no-op, no SnackBars ever shown to end users.
 - Next: Phase 3 (CI/CD GitHub Actions for task32_verify_translations.py) — separate task, awaiting Bro's go-ahead.
+
+---
+Task ID: 34 (Phase 3: CI/CD Translation Parity Gate)
+Agent: main
+Task: Implement Phase 3 of the localization strategy — GitHub Actions workflow running translation parity check on PRs. Bro gave full creative freedom after Phase 2 (Task 33) build succeeded.
+
+Work Log:
+- Pulled latest origin/main (c3bab22 — Phase 2 Task 33). Working tree clean.
+- Audited existing CI: .github/workflows/build.yml does full Flutter APK build (~3 min) on every push/PR to main. Too expensive for a 1-second parity check — would block translation-only PRs for 3 minutes.
+- Designed lightweight separate workflow: Python-only, ~5 second runtime, path-filtered to only run when translation-related files change.
+- Created scripts/verify_translations.py inside CM-APP repo (was previously in /home/z/my-project/scripts/ which isn't part of the Flutter repo):
+  * Six checks: file existence + JSON validity, _meta block completeness, value types are strings, key-set parity (excluding _meta), no empty values, {placeholder} token parity.
+  * Self-contained — uses only stdlib (json, re, argparse, pathlib, sys). No pip installs needed in CI.
+  * Optional --strict flag warns on suspicious length ratios (MY 3x longer or shorter than EN) — non-blocking.
+  * Optional --quiet flag suppresses OK output for cleaner CI logs.
+  * Exit 0 = pass, exit 1 = fail. CI gate uses exit code.
+  * Path resolution: REPO_ROOT = parent of scripts/. Works regardless of where the script is invoked from.
+- Tested verify_translations.py against current en.json/my.json: 0 errors, 0 warnings. Pass.
+- Tested 3 synthetic failure cases (all caught correctly):
+  * Missing key in my.json → reports which key(s) are missing and in which file.
+  * Empty value in en.json → reports which key(s) have empty values.
+  * Missing {placeholder} in my.json (vip_expires_on) → reports placeholder mismatch with which placeholders are missing in each direction.
+- Created .github/workflows/translations-check.yml:
+  * Triggers: push to main (path-filtered), PR to main (path-filtered), workflow_dispatch (manual).
+  * Path filters (4): assets/lang/*.json, lib/app/core/services/localization_service.dart, scripts/verify_translations.py, .github/workflows/translations-check.yml.
+  * 4 steps: checkout, setup-python@v5 (3.11), run verify script, summary step (always runs, writes markdown to $GITHUB_STEP_SUMMARY).
+  * YAML validated with PyYAML — parses correctly, triggers and path filters confirmed.
+- Created scripts/README.md documenting verify_translations.py: what it checks, exit codes, common failure causes, local-before-push workflow, and conventions for adding future scripts.
+- Commit d1af001 pushed to origin/main.
+
+Stage Summary:
+- 3 files added, 522 insertions(+).
+- New: scripts/verify_translations.py, scripts/README.md, .github/workflows/translations-check.yml.
+- Phase 3 complete. Localization strategy (Phase 1+2+3) is now fully implemented:
+  * Phase 1 (Task 32): JSON-driven translations with English fallback + dev-mode missing-key logging.
+  * Phase 2 (Task 33): UI layout safety — SafeText helper + DebugOverflowDetector + per-widget maxLines/overflow rules.
+  * Phase 3 (Task 34): CI gate catching translation drift before the full Flutter build runs.
+- Bro to verify in GitHub Actions tab:
+  1. Push should have triggered both build.yml (full APK build) AND translations-check.yml (parity check).
+  2. Both should pass on this commit (script was tested locally).
+  3. Future PRs touching assets/lang/*.json will be gated by the parity check.
+  4. Future PRs touching code only will skip the parity check (path-filtered).
+- Localization strategy 3-phase plan is complete. Next: Bro's "Number 4" (Single movie TMDB sync) when he's ready to explain the details.
