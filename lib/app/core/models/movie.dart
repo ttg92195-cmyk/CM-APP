@@ -38,24 +38,51 @@ class Movie {
   });
 
   factory Movie.fromMap(Map<String, dynamic> map, {String? docId}) {
-    final title = map['title'] as String? ?? '';
+    // =========================================================================
+    // DEFENSIVE PARSING (Task 27, "All Posts disappeared" bug)
+    //
+    // ROOT CAUSE: When a JSON Batch Import file contains a field with the
+    // wrong type (e.g., `categories: "Action"` as a string instead of a
+    // list, or `isAdult: true` as a bool instead of an int), `addMovie()`
+    // writes the wrong-type value to Firestore. Then on the next
+    // `getAllPosts()` call, the `.map((doc) => Movie.fromMap(...)).toList()`
+    // chain throws on the FIRST corrupted doc — and the exception
+    // propagates up. All three fallback tiers in getAllPosts() use the
+    // same `Movie.fromMap`, so they ALL throw, and the function returns
+    // an empty list. Net effect: ONE corrupted doc makes the ENTIRE
+    // Admin Panel All Posts tab appear empty.
+    //
+    // The TMDB Sync workaround Bro discovered works because Sync
+    // overwrites the corrupted fields with proper TMDB data — fixing
+    // `Movie.fromMap` for that one doc, which un-breaks the chain.
+    //
+    // FIX: This factory now uses defensive parsing helpers that fall
+    // back to sensible defaults instead of throwing. A doc with bad
+    // data still renders (with some fields empty), so the admin can
+    // SEE it in the grid and delete/fix it. The grid never goes empty
+    // because of one bad doc.
+    //
+    // The original `as String?`, `as int?`, `as bool?`, `as List`
+    // casts were the throwing culprits — they're all replaced below.
+    // =========================================================================
+    final title = _parseString(map['title']);
     return Movie(
       id: docId ?? map['id']?.toString() ?? '',
       title: title,
-      titleLowercase: map['title_lowercase'] as String? ?? title.toLowerCase(),
-      slug: map['slug'] as String? ?? '',
+      titleLowercase: _parseString(map['title_lowercase'], title.toLowerCase()),
+      slug: _parseString(map['slug']),
       year: map['year']?.toString(),
-      poster: map['poster'] as String?,
+      poster: _parseNullableString(map['poster']),
       rating: map['rating']?.toString(),
-      resolution: map['resolution'] as String?,
+      resolution: _parseNullableString(map['resolution']),
       duration: map['duration']?.toString(),
-      seasons: map['seasons'] is List ? (map['seasons'] as List).length.toString() : map['seasons']?.toString(),
-      isAdult: map['isAdult'] as int?,
-      categories: map['categories'] != null
-          ? List<String>.from(map['categories'] as List)
-          : [],
-      type: map['type'] as String?,
-      isTrending: map['isTrending'] as bool? ?? false,
+      seasons: map['seasons'] is List
+          ? (map['seasons'] as List).length.toString()
+          : map['seasons']?.toString(),
+      isAdult: _parseInt(map['isAdult']),
+      categories: _parseStringList(map['categories']),
+      type: _parseNullableString(map['type']),
+      isTrending: _parseBool(map['isTrending']),
       createdAt: _parseDateTime(map['createdAt']),
       updatedAt: _parseDateTime(map['updatedAt']),
     );
@@ -124,4 +151,73 @@ DateTime? _parseDateTime(dynamic value) {
     );
   }
   return DateTime.tryParse(value.toString());
+}
+
+/// Defensive String parser — never throws. Returns [dflt] for non-String
+/// values (e.g., int, bool, null). Used by `Movie.fromMap` so a single
+/// bad doc doesn't break the entire `.map().toList()` chain.
+/// See Task 27 ("All Posts disappeared" bug) for context.
+String _parseString(dynamic value, [String dflt = '']) {
+  if (value is String) return value;
+  return dflt;
+}
+
+/// Defensive nullable String parser — never throws. Returns null for
+/// non-String values OR empty strings. Used for optional string fields
+/// like `poster`, `resolution`, `type` so a bad value just becomes null
+/// instead of crashing the grid.
+String? _parseNullableString(dynamic value) {
+  if (value is String && value.isNotEmpty) return value;
+  return null;
+}
+
+/// Defensive int parser — never throws. Coerces common alternative
+/// types (num, bool, numeric string) to int. Returns null for
+/// unparseable values. Used for `isAdult` which JSON files sometimes
+/// send as bool or string.
+int? _parseInt(dynamic value) {
+  if (value == null) return null;
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  if (value is bool) return value ? 1 : 0;
+  if (value is String) return int.tryParse(value);
+  return null;
+}
+
+/// Defensive bool parser — never throws. Coerces int (0/1), common
+/// string forms ("true"/"false"/"1"/"0") to bool. Returns [dflt] for
+/// unparseable values. Used for `isTrending` which JSON files sometimes
+/// send as int or string.
+bool _parseBool(dynamic value, [bool dflt = false]) {
+  if (value == null) return dflt;
+  if (value is bool) return value;
+  if (value is int) return value != 0;
+  if (value is String) {
+    final s = value.toLowerCase();
+    if (s == 'true' || s == '1') return true;
+    if (s == 'false' || s == '0') return false;
+  }
+  return dflt;
+}
+
+/// Defensive List<String> parser — never throws. Used for `categories`
+/// and `tags`. This is the BIG one — a JSON file with
+/// `categories: "Action"` (string instead of list) used to crash the
+/// entire Admin Panel All Posts tab. Now:
+///   - List<String>           → returned as-is (after filtering empties)
+///   - List with mixed types  → each element coerced via toString()
+///   - String (non-empty)     → wrapped into a 1-element list (better
+///                              than throwing; admin can still see/edit)
+///   - null / empty / other   → empty list
+List<String> _parseStringList(dynamic value) {
+  if (value is List) {
+    return value
+        .map((e) => e?.toString() ?? '')
+        .where((s) => s.isNotEmpty)
+        .toList();
+  }
+  if (value is String && value.trim().isNotEmpty) {
+    return [value.trim()];
+  }
+  return [];
 }

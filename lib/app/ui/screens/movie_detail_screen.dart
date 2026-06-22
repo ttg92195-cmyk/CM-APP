@@ -988,6 +988,8 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
           SizedBox(
             width: 80,
             child: Text(label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                     color: metaTextColor,
                     fontSize: 13,
@@ -996,6 +998,8 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
           const SizedBox(width: 12),
           Expanded(
             child: Text(value,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                     color: bodyTextColor,
                     fontSize: 13,

@@ -23,6 +23,22 @@ class MovieCard extends StatefulWidget {
 class _MovieCardState extends State<MovieCard> {
   double? _watchProgress; // 0.0 to 1.0, null = not watched
 
+  // STATIC CACHE of SharedPreferences instance across ALL MovieCard
+  // instances. Without this, every card calls
+  // `SharedPreferences.getInstance()` independently — and although
+  // getInstance() returns a cached Future after the first call, each
+  // call still schedules a microtask on the event loop. With 100+
+  // cards on a Movies/Series grid, that's 100+ microtasks queued
+  // before any card can read its watch progress, delaying the
+  // progress bar from appearing and adding to first-screen jank.
+  //
+  // By caching the resolved instance in a static field, only the
+  // FIRST card ever awaits getInstance(); subsequent cards skip the
+  // await entirely and go straight to the synchronous getInt() calls.
+  // This is safe because SharedPreferences is a process-wide singleton
+  // and the underlying map is in-memory after init.
+  static SharedPreferences? _prefsCache;
+
   @override
   void initState() {
     super.initState();
@@ -30,7 +46,10 @@ class _MovieCardState extends State<MovieCard> {
   }
 
   Future<void> _loadWatchProgress() async {
-    final prefs = await SharedPreferences.getInstance();
+    // Reuse the cached instance if available; otherwise await the
+    // first init. Subsequent cards in the same grid build will hit
+    // the cache and skip the await.
+    final prefs = _prefsCache ??= await SharedPreferences.getInstance();
     final posMs = prefs.getInt('watch_pos_${widget.movie.id}');
     final durMs = prefs.getInt('watch_dur_${widget.movie.id}');
     if (posMs != null && durMs != null && posMs > 5000 && durMs > 0) {
@@ -128,17 +147,15 @@ class _MovieCardState extends State<MovieCard> {
                   ),
 
                 // IMDb Rating Badge - bottom right corner
-                // HIDDEN when rating is null/empty/0.0 — previously this
-                // showed "N/A" which Bro reported as a bug because users
-                // expected to see the actual rating (e.g. "7.4"). With the
-                // bookmark/recent refresh fix (see recent_page.dart and
-                // movie_bookmark_screen.dart), the rating will now come
-                // from the latest Firestore doc, so this badge will almost
-                // always have a real value. We still hide it for the rare
-                // case where the movie genuinely has no rating in the DB,
-                // rather than showing the unhelpful "N/A" placeholder.
-                if (_hasValidRating(widget.movie.rating))
-                  Positioned(
+                // Always shown. When the rating is null/empty/0.0, we display
+                // "N/A" via _formatRating() instead of hiding the badge — Bro
+                // reported that hiding it looked inconsistent across the grid
+                // (some posters had the badge, some didn't, no obvious reason
+                // why). Always-on with N/A fallback gives visual consistency.
+                // The flame icon stays red regardless of the rating value so
+                // the badge's visual weight doesn't change between real and
+                // placeholder values.
+                Positioned(
                     bottom: 6,
                     right: 6,
                     child: Container(
@@ -343,22 +360,16 @@ class _MovieCardState extends State<MovieCard> {
     );
   }
 
-  /// Format rating: show "N/A" if null, empty, or 0.0
+  /// Format rating: show "N/A" if null, empty, or 0.0.
+  /// Used for the always-on rating badge — Bro reported that hiding the
+  /// badge when rating was missing looked inconsistent across the grid,
+  /// so we now always show the badge and fall back to "N/A" when there
+  /// is no real rating value.
   static String _formatRating(String? rating) {
     if (rating == null || rating.trim().isEmpty) return 'N/A';
     final parsed = double.tryParse(rating);
     if (parsed == null || parsed == 0.0) return 'N/A';
     return rating;
-  }
-
-  /// Returns true if the rating is a non-zero, parseable number.
-  /// Used to decide whether to show the rating badge at all — if the
-  /// movie has no real rating in the DB, we hide the badge rather than
-  /// showing the unhelpful "N/A" placeholder.
-  static bool _hasValidRating(String? rating) {
-    if (rating == null || rating.trim().isEmpty) return false;
-    final parsed = double.tryParse(rating);
-    return parsed != null && parsed > 0.0;
   }
 
   /// Get standardized quality label from resolution string

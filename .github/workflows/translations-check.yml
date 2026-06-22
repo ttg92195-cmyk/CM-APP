@@ -1,0 +1,78 @@
+name: Translation Parity Check
+
+# Lightweight CI gate that runs the Python translation-parity script
+# against assets/lang/en.json and assets/lang/my.json. Catches:
+#   - missing keys in either direction
+#   - empty values (missed-edit mistakes during translation)
+#   - mismatched {placeholder} tokens between EN and MY
+#   - malformed _meta blocks
+#   - non-string values
+#
+# Triggers:
+#   - Any PR touching translation-related files (assets/lang/*.json,
+#     lib/app/core/services/localization_service.dart, scripts/verify_translations.py)
+#   - Any push to main on those same files
+#
+# This runs in seconds (Python only, no Flutter SDK install) and is
+# separate from the main build.yml workflow (which does the full
+# Flutter APK build and takes ~3 minutes). The split means a bad
+# translation edit gets blocked in ~5 seconds without waiting for
+# the full build to fail.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'assets/lang/*.json'
+      - 'lib/app/core/services/localization_service.dart'
+      - 'scripts/verify_translations.py'
+      - '.github/workflows/translations-check.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'assets/lang/*.json'
+      - 'lib/app/core/services/localization_service.dart'
+      - 'scripts/verify_translations.py'
+      - '.github/workflows/translations-check.yml'
+  # Allow manual triggering from the Actions tab for debugging
+  workflow_dispatch:
+
+jobs:
+  verify-translations:
+    name: Verify EN/MY translation parity
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run translation parity check
+        run: |
+          echo "::group::Translation parity check output"
+          python3 scripts/verify_translations.py
+          echo "::endgroup::"
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Translation Parity Check" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "✅ All checks passed — en.json and my.json have matching keys, no empty values, and matching placeholders." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Check failed — see log above for details. Common causes:" >> $GITHUB_STEP_SUMMARY
+            echo "- Added a key to en.json but forgot to add the my.json translation" >> $GITHUB_STEP_SUMMARY
+            echo "- Left a translation value as an empty string" >> $GITHUB_STEP_SUMMARY
+            echo "- Used {placeholder} in one language but not the other" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Fix the JSON files locally, then run:" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```bash' >> $GITHUB_STEP_SUMMARY
+            echo "python3 scripts/verify_translations.py" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi

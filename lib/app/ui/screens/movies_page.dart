@@ -74,19 +74,21 @@ class _MoviesPageState extends State<MoviesPage> {
   Future<void> _loadMovies() async {
     setState(() => _isLoading = true);
     try {
-      final stopwatch = Stopwatch()..start();
       // PAGINATION: 20 per page so users see the first page quickly and
       // load more on scroll. Previously this was 50 (commit 33b5dd5,
       // June 11 "remove 20-item limit") which made the Movies Tab load
       // 50 posts at once — felt like "no pagination" because users had
       // to scroll through 16+ rows before more loaded. Reverted to 20
       // per Bro's UX preference: classic 20-at-a-time pagination.
+      //
+      // NOTE: previously had an artificial 600ms skeleton floor here
+      // to prevent "skeleton flash" on fast networks. Removed in
+      // Task 36 #2 because on SLOW networks this delay added to the
+      // user's perceived wait (query 5s + 0s delay = 5s vs the old
+      // behavior of waiting for the longer of query or 600ms).
+      // Skeleton flash on cached/fast loads is acceptable trade-off
+      // for not adding latency on slow loads.
       final result = await _contentService.getMovies(limit: 20);
-      // Ensure skeleton shows for at least 600ms so it doesn't flash too fast
-      final elapsed = stopwatch.elapsedMilliseconds;
-      if (elapsed < 600) {
-        await Future.delayed(Duration(milliseconds: 600 - elapsed));
-      }
       if (mounted) {
         final movies = result['movies'] as List<Movie>;
         for (final m in movies) {

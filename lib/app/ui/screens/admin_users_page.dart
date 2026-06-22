@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
+import 'package:cm_movies/app/ui/components/no_toolbar_on_single_tap_text_field.dart';
 import 'package:provider/provider.dart';
 
 class AdminUsersPage extends StatefulWidget {
@@ -396,7 +397,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
           // Search bar
           Padding(
             padding: const EdgeInsets.all(12),
-            child: TextField(
+            child: NoToolbarOnSingleTapTextField(
               decoration: InputDecoration(
                 hintText: appConfig.languageCode == 'my' ? 'အသုံးပြုသူ ရှာဖွေရန်...' : 'Search users...',
                 prefixIcon: const Icon(Icons.search),

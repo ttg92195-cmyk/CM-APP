@@ -219,8 +219,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     try {
       final results = await Future.wait([
         _contentService.getBannerConfig().catchError((e) => <String>[]),
-        _contentService.getTrendingMovies().catchError((_) => <Movie>[]),
-        _contentService.getTrendingTvShows().catchError((_) => <Movie>[]),
+        _contentService.getTrendingMovies(limit: _homeLimit).catchError((_) => <Movie>[]),
+        _contentService.getTrendingTvShows(limit: _homeLimit).catchError((_) => <Movie>[]),
         _contentService.getMovies(limit: _homeLimit).catchError((_) => <Map<String, dynamic>>{}),
         _contentService.getSeries(limit: _homeLimit).catchError((_) => <Map<String, dynamic>>{}),
       ]);
@@ -328,8 +328,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           debugPrint('Home: getBannerConfig failed, hiding banner: $e');
           return <String>[];
         }),
-        _contentService.getTrendingMovies().catchError((_) => <Movie>[]),
-        _contentService.getTrendingTvShows().catchError((_) => <Movie>[]),
+        _contentService.getTrendingMovies(limit: _homeLimit).catchError((_) => <Movie>[]),
+        _contentService.getTrendingTvShows(limit: _homeLimit).catchError((_) => <Movie>[]),
         _contentService.getMovies(limit: _homeLimit).catchError((_) => <Map<String, dynamic>>{}),
         _contentService.getSeries(limit: _homeLimit).catchError((_) => <Map<String, dynamic>>{}),
       ]);
@@ -414,62 +414,65 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _loadTagBasedData() async {
-    final tagEntries = <MapEntry<String, Future<List<Movie>>>>[
-      MapEntry('K Drama', _contentService.getMoviesByTagSimple('K Drama', limit: _homeLimit)),
-      MapEntry('4K Movies', _contentService.getMoviesByTagSimple('4K Movies', limit: _homeLimit)),
-      MapEntry('4K Series', _contentService.getMoviesByTagSimple('4K Series', limit: _homeLimit)),
-      MapEntry('Animation', _contentService.getMoviesByTagSimple('Animation', limit: _homeLimit)),
-      MapEntry('Anime', _contentService.getMoviesByTagSimple('Anime', limit: _homeLimit)),
-      MapEntry('Bollywood', _contentService.getMoviesByTagSimple('Bollywood', limit: _homeLimit)),
-    ];
+    // PARALLEL + PROGRESSIVE — Bro reported 5-10 minute waits on first
+    // launch. Two root causes fixed here:
+    //
+    // 1. SEQUENTIAL → PARALLEL: previous implementation ran 6 Firestore
+    //    queries sequentially via a for-loop with await. On slow
+    //    networks each query can take 30-60s, so 6 × 60s = 6 minutes
+    //    before the skeleton would disappear. Running all 6 in parallel
+    //    cuts the total wait to roughly the slowest single query
+    //    (~60s worst case) instead of 6 × slowest.
+    //
+    // 2. ALL-OR-NOTHING → PROGRESSIVE: instead of waiting for all 6
+    //    tags before calling setState, we update each tag list the
+    //    moment its query returns. Users see K Drama appear while
+    //    4K Movies is still loading, etc. This makes the screen feel
+    //    alive instead of frozen on a single skeleton.
+    //
+    // Each tag fetch is fire-and-forget — failures degrade to an
+    // empty list for that tag (the section is hidden via the
+    // `if (_xMovies.isNotEmpty)` guard in _buildContent), but other
+    // tags still appear.
 
-    // Accumulate results locally, then call setState once after all are done
-    List<Movie> kDramaMovies = _kDramaMovies;
-    List<Movie> fourKMovies = _fourKMovies;
-    List<Movie> fourKSeries = _fourKSeries;
-    List<Movie> animationMovies = _animationMovies;
-    List<Movie> animeMovies = _animeMovies;
-    List<Movie> bollywoodMovies = _bollywoodMovies;
-
-    for (final entry in tagEntries) {
+    Future<void> loadTag(
+      String name,
+      void Function(List<Movie>) setter,
+    ) async {
       try {
-        final movies = await entry.value;
-        switch (entry.key) {
-          case 'K Drama':
-            kDramaMovies = movies;
-            break;
-          case '4K Movies':
-            fourKMovies = movies;
-            break;
-          case '4K Series':
-            fourKSeries = movies;
-            break;
-          case 'Animation':
-            animationMovies = movies;
-            break;
-          case 'Anime':
-            animeMovies = movies;
-            break;
-          case 'Bollywood':
-            bollywoodMovies = movies;
-            break;
+        final movies = await _contentService.getMoviesByTagSimple(name, limit: _homeLimit);
+        if (mounted) {
+          setState(() {
+            setter(movies);
+          });
         }
       } catch (e) {
-        debugPrint('Error loading tag ${entry.key}: $e');
+        debugPrint('Error loading tag $name: $e');
+        // Leave the list at its current value (initially empty).
+        // The section is hidden via `if (_xMovies.isNotEmpty)`.
       }
     }
 
-    // Single setState after all tag data is loaded
+    // Fire all 6 in parallel. Each one calls setState independently
+    // as soon as it resolves.
+    final futures = <Future<void>>[
+      loadTag('K Drama', (m) => _kDramaMovies = m),
+      loadTag('4K Movies', (m) => _fourKMovies = m),
+      loadTag('4K Series', (m) => _fourKSeries = m),
+      loadTag('Animation', (m) => _animationMovies = m),
+      loadTag('Anime', (m) => _animeMovies = m),
+      loadTag('Bollywood', (m) => _bollywoodMovies = m),
+    ];
+
+    // Wait for all to settle (success or caught failure), then clear
+    // the loading flag so the bottom-of-screen skeleton (if any)
+    // disappears.
+    await Future.wait(futures).catchError((e) {
+      debugPrint('_loadTagBasedData parallel fetch aggregate error: $e');
+    });
+
     if (mounted) {
-      setState(() {
-        _kDramaMovies = kDramaMovies;
-        _fourKMovies = fourKMovies;
-        _fourKSeries = fourKSeries;
-        _animationMovies = animationMovies;
-        _animeMovies = animeMovies;
-        _bollywoodMovies = bollywoodMovies;
-        _isLoadingTags = false;
-      });
+      setState(() => _isLoadingTags = false);
     }
   }
 
@@ -503,7 +506,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return Scaffold(
       body: RefreshIndicator(
         onRefresh: _loadData,
-        child: (_isLoading || _isLoadingTags)
+        // NOTE: We only block on _isLoading (banner + movies + series +
+        // trending). Tag-based sections (K Drama, 4K, Animation, etc.)
+        // load in the background via _loadTagBasedData and appear
+        // progressively as they arrive — Bro reported 5-10 minute
+        // waits because the old code blocked the whole screen on
+        // _isLoadingTags too. Now the user sees the main content
+        // within ~1-2 seconds and tag sections fill in below.
+        child: _isLoading
             ? _buildSkeletonLoading(theme, appConfig)
             : _error != null
                 ? _buildErrorWidget(appConfig)

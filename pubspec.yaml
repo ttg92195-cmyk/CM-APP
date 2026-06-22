@@ -8,6 +8,13 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # Task 32: Localization foundation — JSON-driven translations + system
+  # locale-aware date/number formatting. flutter_localizations provides
+  # MaterialApp.localizationsDelegates + GlobalMaterialLocalizations
+  # (so DatePicker / AlertDialog / etc. get translated automatically).
+  flutter_localizations:
+    sdk: flutter
+  intl: any
   provider: ^6.1.1
   shared_preferences: ^2.2.2
   cached_network_image: ^3.3.0
@@ -79,4 +86,5 @@ flutter:
   uses-material-design: true
   assets:
     - assets/
+    - assets/lang/
     - .env

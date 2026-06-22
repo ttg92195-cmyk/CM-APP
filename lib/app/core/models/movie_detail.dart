@@ -59,64 +59,51 @@ class MovieDetail {
   });
 
   factory MovieDetail.fromMap(Map<String, dynamic> map, {String? docId}) {
+    // =========================================================================
+    // DEFENSIVE PARSING (Task 31, "An Error Occurred" on detail page)
+    //
+    // ROOT CAUSE: When a Batch Import JSON file updates an existing movie via
+    // `addMovie()` → `_buildSafeUpdateMap()`, list-typed fields like `casts`
+    // and `directors` get coerced to List<String>. But `MovieDetail.fromMap`
+    // expected `casts` to be a List<Map<String, dynamic>> (for CastMember).
+    // So opening the detail page of such a movie threw, and the page showed
+    // "An Error Occurred".
+    //
+    // Same issue applied to: isAdult (int vs bool/string), tmdbId (int vs
+    // string), isTrending (bool vs int/string), and nested lists whose
+    // elements were not Maps (e.g., `casts: ["Actor A"]`).
+    //
+    // FIX: This factory now uses defensive parsing helpers that fall back
+    // to sensible defaults instead of throwing. A doc with bad data still
+    // renders (with some fields empty), so the user can SEE it. Mirrors
+    // the same approach already used in `Movie.fromMap` (Task 27).
+    // =========================================================================
     return MovieDetail(
       id: docId ?? map['id']?.toString() ?? '',
-      title: map['title'] as String? ?? '',
-      slug: map['slug'] as String? ?? '',
+      title: _parseDetailString(map['title']),
+      slug: _parseDetailString(map['slug']),
       year: map['year']?.toString(),
-      poster: map['poster'] as String?,
-      backdrop: map['backdrop'] as String?,
-      overview: map['overview'] as String?,
+      poster: _parseDetailNullableString(map['poster']),
+      backdrop: _parseDetailNullableString(map['backdrop']),
+      overview: _parseDetailNullableString(map['overview']),
       rating: map['rating']?.toString(),
-      resolution: map['resolution'] as String?,
+      resolution: _parseDetailNullableString(map['resolution']),
       duration: map['duration']?.toString(),
-      format: map['format'] as String?,
+      format: _parseDetailNullableString(map['format']),
       fileSize: map['fileSize']?.toString(),
-      isAdult: map['isAdult'] as int?,
-      type: map['type'] as String?,
-      isTrending: map['isTrending'] as bool? ?? false,
-      views: map['views'] as int?,
-      country: map['country'] as String?,
-      directors: map['directors'] != null
-          ? List<String>.from(
-              (map['directors'] as List).map((x) => x.toString()),
-            )
-          : [],
-      casts: map['casts'] != null
-          ? List<CastMember>.from(
-              (map['casts'] as List).map(
-                (x) => CastMember.fromMap(x as Map<String, dynamic>),
-              ),
-            )
-          : [],
-      categories: map['categories'] != null
-          ? List<String>.from(map['categories'] as List)
-          : [],
-      tags: map['tags'] != null
-          ? List<String>.from(map['tags'] as List)
-          : [],
-      downloadLinks: map['downloadLinks'] != null
-          ? List<MovieDownloadLink>.from(
-              (map['downloadLinks'] as List).map(
-                (x) => MovieDownloadLink.fromMap(x as Map<String, dynamic>),
-              ),
-            )
-          : [],
-      watchLinks: map['watchLinks'] != null
-          ? List<MovieWatchLink>.from(
-              (map['watchLinks'] as List).map(
-                (x) => MovieWatchLink.fromMap(x as Map<String, dynamic>),
-              ),
-            )
-          : [],
-      seasons: map['seasons'] != null
-          ? List<Season>.from(
-              (map['seasons'] as List).map(
-                (x) => Season.fromMap(x as Map<String, dynamic>),
-              ),
-            )
-          : [],
-      tmdbId: map['tmdbId'] as int?,
+      isAdult: _parseDetailInt(map['isAdult']),
+      type: _parseDetailNullableString(map['type']),
+      isTrending: _parseDetailBool(map['isTrending']),
+      views: _parseDetailInt(map['views']),
+      country: _parseDetailNullableString(map['country']),
+      directors: _parseDetailStringList(map['directors']),
+      casts: _parseCastMembers(map['casts']),
+      categories: _parseDetailStringList(map['categories']),
+      tags: _parseDetailStringList(map['tags']),
+      downloadLinks: _parseDownloadLinks(map['downloadLinks']),
+      watchLinks: _parseWatchLinks(map['watchLinks']),
+      seasons: _parseSeasons(map['seasons']),
+      tmdbId: _parseDetailInt(map['tmdbId']),
       createdAt: _parseDateTimeDetail(map['createdAt']),
     );
   }
@@ -349,4 +336,165 @@ DateTime? _parseDateTimeDetail(dynamic value) {
     );
   }
   return DateTime.tryParse(value.toString());
+}
+
+// =========================================================================
+// DEFENSIVE PARSING HELPERS (Task 31)
+//
+// Mirrors the helpers in movie.dart but for MovieDetail. Every helper
+// here is total — it NEVER throws. Bad input becomes a sensible default
+// (empty string, empty list, null, false) so a single corrupted field
+// in a Firestore doc can't take down the whole detail page.
+// =========================================================================
+
+/// Defensive String parser — never throws. Returns [dflt] for non-String
+/// values (e.g., int, bool, null).
+String _parseDetailString(dynamic value, [String dflt = '']) {
+  if (value is String) return value;
+  return dflt;
+}
+
+/// Defensive nullable String parser — never throws. Returns null for
+/// non-String values OR empty strings.
+String? _parseDetailNullableString(dynamic value) {
+  if (value is String && value.isNotEmpty) return value;
+  return null;
+}
+
+/// Defensive int parser — never throws. Coerces num/bool/numeric string.
+int? _parseDetailInt(dynamic value) {
+  if (value == null) return null;
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  if (value is bool) return value ? 1 : 0;
+  if (value is String) return int.tryParse(value);
+  return null;
+}
+
+/// Defensive bool parser — never throws. Coerces int/string.
+bool _parseDetailBool(dynamic value, [bool dflt = false]) {
+  if (value == null) return dflt;
+  if (value is bool) return value;
+  if (value is int) return value != 0;
+  if (value is String) {
+    final s = value.toLowerCase();
+    if (s == 'true' || s == '1') return true;
+    if (s == 'false' || s == '0') return false;
+  }
+  return dflt;
+}
+
+/// Defensive List<String> parser — never throws.
+///   - List<String>           → returned as-is (after filtering empties)
+///   - List with mixed types  → each element coerced via toString()
+///   - String (non-empty)     → wrapped into a 1-element list
+///   - null / empty / other   → empty list
+List<String> _parseDetailStringList(dynamic value) {
+  if (value is List) {
+    return value
+        .map((e) => e?.toString() ?? '')
+        .where((s) => s.isNotEmpty)
+        .toList();
+  }
+  if (value is String && value.trim().isNotEmpty) {
+    return [value.trim()];
+  }
+  return [];
+}
+
+/// Defensive CastMember list parser — never throws.
+/// Handles all the bad shapes that Batch Import can leave behind:
+///   - List<Map<String, dynamic>>  → proper CastMember list
+///   - List<String>                → each string becomes CastMember(name: s)
+///   - List with mixed types       → each element coerced to CastMember
+///   - String (non-empty)          → 1-element list
+///   - null / empty / other        → empty list
+///
+/// This is the critical fix for the "An Error Occurred" bug: the old code
+/// did `(map['casts'] as List).map((x) => CastMember.fromMap(x as Map...))`
+/// which throws when `x` is a String (because Batch Import coerced
+/// `casts: "Actor A"` to `["Actor A"]`).
+List<CastMember> _parseCastMembers(dynamic value) {
+  if (value is List) {
+    final result = <CastMember>[];
+    for (final e in value) {
+      if (e == null) continue;
+      if (e is Map<String, dynamic>) {
+        result.add(CastMember.fromMap(e));
+      } else if (e is Map) {
+        // Loose Map — copy to Map<String, dynamic> for CastMember.fromMap.
+        final cast = <String, dynamic>{};
+        e.forEach((k, v) => cast[k.toString()] = v);
+        result.add(CastMember.fromMap(cast));
+      } else {
+        // String, int, etc. — treat the toString() as the actor name.
+        final name = e.toString().trim();
+        if (name.isNotEmpty) {
+          result.add(CastMember(name: name));
+        }
+      }
+    }
+    return result;
+  }
+  if (value is String && value.trim().isNotEmpty) {
+    return [CastMember(name: value.trim())];
+  }
+  return [];
+}
+
+/// Defensive MovieDownloadLink list parser — never throws.
+/// Same rationale as _parseCastMembers: handles List<Map> (proper),
+/// List<String> (loose), and anything else (skipped).
+List<MovieDownloadLink> _parseDownloadLinks(dynamic value) {
+  if (value is List) {
+    final result = <MovieDownloadLink>[];
+    for (final e in value) {
+      if (e is Map<String, dynamic>) {
+        result.add(MovieDownloadLink.fromMap(e));
+      } else if (e is Map) {
+        final m = <String, dynamic>{};
+        e.forEach((k, v) => m[k.toString()] = v);
+        result.add(MovieDownloadLink.fromMap(m));
+      }
+      // String/int — skip; can't coerce to a download link safely.
+    }
+    return result;
+  }
+  return [];
+}
+
+/// Defensive MovieWatchLink list parser — never throws.
+List<MovieWatchLink> _parseWatchLinks(dynamic value) {
+  if (value is List) {
+    final result = <MovieWatchLink>[];
+    for (final e in value) {
+      if (e is Map<String, dynamic>) {
+        result.add(MovieWatchLink.fromMap(e));
+      } else if (e is Map) {
+        final m = <String, dynamic>{};
+        e.forEach((k, v) => m[k.toString()] = v);
+        result.add(MovieWatchLink.fromMap(m));
+      }
+    }
+    return result;
+  }
+  return [];
+}
+
+/// Defensive Season list parser — never throws.
+List<Season> _parseSeasons(dynamic value) {
+  if (value is List) {
+    final result = <Season>[];
+    for (final e in value) {
+      if (e is Map<String, dynamic>) {
+        result.add(Season.fromMap(e));
+      } else if (e is Map) {
+        final m = <String, dynamic>{};
+        e.forEach((k, v) => m[k.toString()] = v);
+        result.add(Season.fromMap(m));
+      }
+    }
+    return result;
+  }
+  return [];
 }

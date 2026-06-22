@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/ui/components/movie_card.dart';
+import 'package:cm_movies/app/ui/components/no_toolbar_on_single_tap_text_field.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
 import 'package:cm_movies/app/ui/screens/series_detail_screen.dart';
 
@@ -344,7 +345,7 @@ class _BatchPostsScreenState extends State<BatchPostsScreen> {
         // Search bar — client-side filter on title.
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
-          child: TextField(
+          child: NoToolbarOnSingleTapTextField(
             controller: _searchController,
             decoration: InputDecoration(
               hintText: 'Search by title...',
