@@ -2216,3 +2216,63 @@ Stage Summary:
   2. Open a movie with a short overview (e.g. <6 lines) → no "View More" button (entire overview visible).
   3. Tap "View More" → expands fully. Tap "View Less" → collapses to 15 lines.
   4. Same flow on a series detail page.
+
+---
+Task ID: 38-req1
+Agent: Main Agent
+Task: Task 38 Req 1 — Fix Dark Mode poster color issue (posters looked dull/incorrect in Dark Mode, fine in Light Mode).
+
+Work Log:
+- Pulled origin/main (already up to date with 3141f03 = Task 38 #4 Overview 15 lines).
+- Investigated every poster render site in lib/ via Explore agent:
+  * Searched for ColorFilter / ShaderMask / Opacity / BackdropFilter / ImageFilter — ZERO matches.
+  * Verified MovieCard is NOT wrapped in Card/Material anywhere — it's GestureDetector > Column > Stack > ClipRRect > AspectRatio > CachedNetworkImage. So no Material 3 surface tint applies to grid posters directly.
+  * Confirmed banner slider, movie detail hero poster, related movies row, cast avatars — none have overlays or scrims.
+  * Confirmed cached_network_image ^3.3.0 has no known dark-mode rendering bug.
+  * Confirmed no Android force-dark (values-night/styles.xml parents off Theme.Light.NoTitleBar with no forceDarkAllowed).
+
+- ROOT CAUSE #1 (confirmed real bug — cardTheme surfaceTint gotcha):
+  * main.dart _buildDarkTheme had `cardTheme: CardTheme(color: kDarkCard, elevation: 2, ...)` with NO `surfaceTintColor` override.
+  * In Material 3 (useMaterial3: true), an elevated Card receives a "surface tint" overlay of colorScheme.primary (kNetflixRed) at ~3% opacity per elevation level. Elevation 2 ≈ 6% red tint.
+  * The AppBar theme already had `surfaceTintColor: Colors.transparent` (main.dart line 692/862), but the dev forgot to apply the same override to cardTheme.
+  * This affected every Card() widget in dark mode — most notably:
+    - Admin Panel post list (admin_panel_page.dart:1052 Card wraps a poster thumbnail at line 1104) → poster area got a red tint from the Card surface behind it.
+    - Download page list items, Profile cards, Admin Users cards, etc.
+  * Bro's "posters look dull/incorrect in Dark Mode" was a fair description of this red-tint effect on Cards that contain posters.
+
+- ROOT CAUSE #2 (perceptual, no code bug — Movies/Series grid):
+  * MovieCard grid posters (movies_page.dart, series_page.dart, etc.) are NOT in Cards, so the surfaceTint gotcha doesn't touch them.
+  * However, in dark mode the poster sits directly on the 0xFF121212 scaffold background with no shadow or visual frame. Posters are opaque JPGs from TMDB, but the lack of edge separation makes them appear "flat" / "dull" against the dark background vs. the natural contrast they get against a light scaffold.
+  * This is perceptual, not a tint bug, but it's still worth fixing for visual polish.
+
+- FIX #1 (main.dart): Added `surfaceTintColor: Colors.transparent` to BOTH cardTheme definitions:
+  * Dark theme (around line 714): added surfaceTintColor + a long comment block explaining the M3 gotcha and why we're matching the existing appBarTheme pattern.
+  * Light theme (around line 887): added surfaceTintColor for parity (light Cards were not visibly affected since the tint is red on white at very low opacity, but defensive parity is correct).
+  * This kills the red tint on every Card in dark mode while keeping the elevation shadow.
+
+- FIX #2 (movie_card.dart): Wrapped the poster ClipRRect in a Container with a subtle BoxDecoration boxShadow:
+  * Dark mode: Colors.black @ opacity 0.45, blurRadius 4, offset (0, 2) — gives the poster a clear lift off the dark background.
+  * Light mode: Colors.black @ opacity 0.12, blurRadius 2, offset (0, 2) — barely visible, just adds a touch of depth (matches the shadow already used on the movie detail hero poster at movie_detail_screen.dart:407).
+  * The shadow Container sits INSIDE the Stack as the first child, so the quality/rating/progress badges still draw on top of it unaffected.
+  * Performance: boxShadow on a Container is GPU-composited; with ~9-12 visible cards in a 3-column grid the cost is negligible vs. the CachedNetworkImage decode already happening on each card.
+  * Comment block explains the rationale (perceptual contrast fix, GPU-cheap, matches existing detail-page pattern).
+
+- Ran Dart-aware delimiter scanner on both files: OK (all depths = 0 at EOF).
+- Ran translation parity check (verify_translations.py): OK (no translation changes needed — this is pure theme/widget work).
+
+Stage Summary:
+- 2 files changed:
+  * lib/main.dart (~30 lines added: surfaceTintColor override + 2 explanatory comment blocks for dark and light cardTheme)
+  * lib/app/ui/components/movie_card.dart (~20 lines added: shadow Container wrapping the poster ClipRRect + comment block)
+- Behavior change:
+  * Dark mode: every Card() in the app (Admin Panel post list, Downloads, Profile, etc.) no longer gets the red M3 surface tint — Card backgrounds are now the intended kDarkCard (#1E1E1E) without red contamination. Posters inside those Cards read with their true colors.
+  * Dark mode grid: MovieCard posters now have a subtle drop shadow giving them visual separation from the #121212 scaffold.
+  * Light mode: unchanged (no visible tint was present; shadow is barely visible at 0.12 opacity).
+- No translation changes.
+- No state field changes.
+- Bro to rebuild and verify:
+  1. Dark mode → Admin Panel → All Posts tab: scroll the post list. Card backgrounds should be flat dark grey (#1E1E1E) with NO reddish tint. Posters inside should look the same color as in Light Mode.
+  2. Dark mode → Movies tab: scroll the grid. Posters should now have a subtle shadow / lift off the dark background (vs. looking flat before).
+  3. Dark mode → Downloads tab: same — Card backgrounds should be flat, no red tint.
+  4. Light mode → all the same screens: should look unchanged (sanity check that we didn't regress light mode).
+  5. Dark mode → Profile page: Cards (VIP card, settings cards) should be flat dark grey, no red tint.

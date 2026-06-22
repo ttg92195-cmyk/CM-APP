@@ -698,9 +698,23 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
         ),
         iconTheme: IconThemeData(color: Colors.white),
       ),
+      // Task 38 Req 1: surfaceTintColor MUST be transparent for Cards.
+      // In Material 3, an elevated Card receives a "surface tint" overlay
+      // equal to colorScheme.primary (kNetflixRed) at ~3% opacity per
+      // elevation level. Without this override, every Card in dark mode
+      // gets a faint red tint over its surface — and because the Admin
+      // Panel post list, Download list, Profile cards, etc. all sit
+      // inside Card widgets, Bro reported this as "posters look dull /
+      // incorrect in Dark Mode". The poster thumbnails inside those
+      // Cards appeared to take on a reddish cast from the Card surface
+      // behind them. Setting surfaceTintColor: Colors.transparent kills
+      // the tint while keeping the elevation shadow. (The AppBar theme
+      // already does this at line 692 — we're now extending the same
+      // pattern to Card.)
       cardTheme: CardTheme(
         color: kDarkCard,
         elevation: 2,
+        surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
         ),
@@ -868,9 +882,12 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
         ),
         iconTheme: IconThemeData(color: Colors.black87),
       ),
+      // Task 38 Req 1: surfaceTintColor transparent for light Cards too
+      // (parity with the dark theme — see comment in _buildDarkTheme).
       cardTheme: CardTheme(
         color: Colors.white,
         elevation: 2,
+        surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
         ),

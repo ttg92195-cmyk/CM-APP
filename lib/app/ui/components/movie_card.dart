@@ -77,27 +77,63 @@ class _MovieCardState extends State<MovieCard> {
           mainAxisSize: MainAxisSize.min,
           children: [
             // Poster with overlays
+            //
+            // Task 38 Req 1: Wrap the poster in a Container with a subtle
+            // boxShadow. In dark mode the poster sits on a 0xFF121212
+            // scaffold background — without a shadow the poster's edges
+            // blend into the background and the poster looks "dull" /
+            // visually flat (Bro's complaint). The shadow gives the
+            // poster a subtle lift off the page so it reads as a
+            // distinct element. In light mode the shadow is barely
+            // visible (low opacity) — posters already have good
+            // contrast against the light scaffold.
+            //
+            // Performance: boxShadow on a Container is GPU-composited
+            // and is cheap relative to the CachedNetworkImage decode
+            // already happening on this card. With ~9-12 visible cards
+            // in a 3-column grid, the cost is negligible.
             Stack(
               children: [
-                // Poster Image
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: AspectRatio(
-                    aspectRatio: 2 / 3,
-                    child: widget.movie.fullPosterUrl.isNotEmpty
-                        ? CachedNetworkImage(
-                            imageUrl: widget.movie.fullPosterUrl,
-                            cacheManager: PosterCacheManager.instance,
-                            cacheKey: widget.movie.id, // stable key per movie
-                            fit: BoxFit.cover,
-                            fadeInDuration: const Duration(milliseconds: 200),
-                            placeholder: (context, url) => Container(
-                              color: theme.colorScheme.surfaceContainerHighest,
-                              child: const Center(
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                // Poster Image (wrapped in shadow Container)
+                Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(isDark ? 0.45 : 0.12),
+                        blurRadius: isDark ? 4 : 2,
+                        spreadRadius: 0,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: AspectRatio(
+                      aspectRatio: 2 / 3,
+                      child: widget.movie.fullPosterUrl.isNotEmpty
+                          ? CachedNetworkImage(
+                              imageUrl: widget.movie.fullPosterUrl,
+                              cacheManager: PosterCacheManager.instance,
+                              cacheKey: widget.movie.id, // stable key per movie
+                              fit: BoxFit.cover,
+                              fadeInDuration: const Duration(milliseconds: 200),
+                              placeholder: (context, url) => Container(
+                                color: theme.colorScheme.surfaceContainerHighest,
+                                child: const Center(
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                ),
                               ),
-                            ),
-                            errorWidget: (context, url, error) => Container(
+                              errorWidget: (context, url, error) => Container(
+                                color: theme.colorScheme.surfaceContainerHighest,
+                                child: Icon(
+                                  Icons.movie,
+                                  color: theme.colorScheme.onSurface.withOpacity(0.5),
+                                  size: 40,
+                                ),
+                              ),
+                            )
+                          : Container(
                               color: theme.colorScheme.surfaceContainerHighest,
                               child: Icon(
                                 Icons.movie,
@@ -105,15 +141,7 @@ class _MovieCardState extends State<MovieCard> {
                                 size: 40,
                               ),
                             ),
-                          )
-                        : Container(
-                            color: theme.colorScheme.surfaceContainerHighest,
-                            child: Icon(
-                              Icons.movie,
-                              color: theme.colorScheme.onSurface.withOpacity(0.5),
-                              size: 40,
-                            ),
-                          ),
+                    ),
                   ),
                 ),
 
