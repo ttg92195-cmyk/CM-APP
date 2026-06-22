@@ -19,6 +19,10 @@ import 'package:cm_movies/app/core/services/fcm_notification_service.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
 import 'package:cm_movies/app/ui/screens/login_page.dart';
 import 'firebase_options.dart';
+// Task 32: flutter_localizations — gives us GlobalMaterialLocalizations,
+// GlobalWidgetsLocalizations, GlobalCupertinoLocalizations for automatic
+// locale-aware date/number formatting (DatePicker, TimePicker, etc.).
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 // Netflix-style Red accent color
 const Color kNetflixRed = Color(0xFFE50914);
@@ -492,6 +496,22 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
         theme: _buildLightTheme(),
         darkTheme: _buildDarkTheme(),
         themeMode: appConfig.themeMode,
+        // Task 32: Localization — wire up flutter_localizations so that
+        // Material/Cupertino widgets (DatePicker, AlertDialog buttons, etc.)
+        // are translated automatically based on the user's language choice.
+        // The app's own translations are still loaded from assets/lang/*.json
+        // via LocalizationService, but these delegates fill in the platform
+        // widgets we don't translate ourselves.
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        supportedLocales: const [
+          Locale('en'),
+          Locale('my'),
+        ],
+        locale: Locale(appConfig.languageCode),
         // Named routes for notification tap navigation
         routes: {
           '/movie-detail': (context) {
@@ -568,6 +588,62 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
   ThemeData _buildDarkTheme() {
     final base = ThemeData.dark(useMaterial3: true);
     return base.copyWith(
+      // Task 32: Myanmar-aware text theme.
+      //
+      // Bro's UI/UX concern: Myanmar text is taller than English and uses
+      // combining marks (stacked diacritics) that often get clipped when
+      // line-height is too tight. Two mitigations here:
+      //
+      // 1. fontFamilyFallback: ['Noto Sans Myanmar', 'Padauk']
+      //    On Android, both fonts are typically pre-installed at the system
+      //    level (Noto Sans Myanmar ships with every Android 7+ device via
+      //    the system font stack). On devices that don't have them, Flutter
+      //    falls back to Roboto, which still has Myanmar glyph coverage via
+      //    its bundled Noto fallback.
+      //
+      // 2. height: 1.3 (line-height multiplier)
+      //    Gives Myanmar stacked diacritics breathing room. For English
+      //    text this is slightly loose but doesn't look weird — it's a
+      //    safe default that works for both scripts.
+      //
+      // 3. fontSize base untouched — Material 3 defaults are fine.
+      //    We rely on maxLines + overflow rules in individual widgets to
+      //    handle text-overflow (Phase 2 work, separate task).
+      textTheme: base.textTheme.copyWith(
+        bodyLarge: base.textTheme.bodyLarge?.copyWith(
+          height: 1.3,
+          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+        ),
+        bodyMedium: base.textTheme.bodyMedium?.copyWith(
+          height: 1.3,
+          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+        ),
+        bodySmall: base.textTheme.bodySmall?.copyWith(
+          height: 1.3,
+          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+        ),
+        titleLarge: base.textTheme.titleLarge?.copyWith(
+          height: 1.3,
+          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+        ),
+        titleMedium: base.textTheme.titleMedium?.copyWith(
+          height: 1.3,
+          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+        ),
+        titleSmall: base.textTheme.titleSmall?.copyWith(
+          height: 1.3,
+          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+        ),
+        labelLarge: base.textTheme.labelLarge?.copyWith(
+          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+        ),
+        labelMedium: base.textTheme.labelMedium?.copyWith(
+          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+        ),
+        labelSmall: base.textTheme.labelSmall?.copyWith(
+          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+        ),
+      ),
       colorScheme: ColorScheme.fromSeed(
         seedColor: kNetflixRed,
         brightness: Brightness.dark,
@@ -701,6 +777,43 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
   ThemeData _buildLightTheme() {
     final base = ThemeData.light(useMaterial3: true);
     return base.copyWith(
+      // Task 32: Myanmar-aware text theme (mirror of dark theme).
+      // See _buildDarkTheme for the full rationale.
+      textTheme: base.textTheme.copyWith(
+        bodyLarge: base.textTheme.bodyLarge?.copyWith(
+          height: 1.3,
+          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+        ),
+        bodyMedium: base.textTheme.bodyMedium?.copyWith(
+          height: 1.3,
+          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+        ),
+        bodySmall: base.textTheme.bodySmall?.copyWith(
+          height: 1.3,
+          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+        ),
+        titleLarge: base.textTheme.titleLarge?.copyWith(
+          height: 1.3,
+          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+        ),
+        titleMedium: base.textTheme.titleMedium?.copyWith(
+          height: 1.3,
+          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+        ),
+        titleSmall: base.textTheme.titleSmall?.copyWith(
+          height: 1.3,
+          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+        ),
+        labelLarge: base.textTheme.labelLarge?.copyWith(
+          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+        ),
+        labelMedium: base.textTheme.labelMedium?.copyWith(
+          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+        ),
+        labelSmall: base.textTheme.labelSmall?.copyWith(
+          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+        ),
+      ),
       colorScheme: ColorScheme.fromSeed(
         seedColor: kNetflixRed,
         brightness: Brightness.light,
