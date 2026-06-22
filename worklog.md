@@ -1694,3 +1694,32 @@ Stage Summary:
   3. Future PRs touching assets/lang/*.json will be gated by the parity check.
   4. Future PRs touching code only will skip the parity check (path-filtered).
 - Localization strategy 3-phase plan is complete. Next: Bro's "Number 4" (Single movie TMDB sync) when he's ready to explain the details.
+
+---
+Task ID: 35 (Always-show rating badge with N/A fallback)
+Agent: main
+Task: Bro reported that the rating badge on series post posters (e.g. "The One Piece") was missing. Previously the badge showed "N/A" when rating was 0.0/null; now it disappears entirely. Revert to always-show with N/A fallback.
+
+Work Log:
+- Bro's question about Phase 1-3 visible changes: explained that Phase 1 affects language switching + Myanmar font rendering, Phase 2 only adds ellipsis on long text in a few places (release builds do not show the dev-only overflow SnackBar), Phase 3 has zero in-app impact (CI gate only).
+- Pulled latest origin/main (d1af001 — Phase 3 Task 34). Working tree clean.
+- Audited rating display logic across the codebase via grep:
+  * movie_card.dart: had _hasValidRating() guard that HID the badge when rating was null/empty/0.0. This was the bug.
+  * movie_detail_screen.dart: always shows rating Text via _formatRating() which returns "N/A" for missing. Already correct.
+  * series_detail_screen.dart: same as movie_detail_screen.dart. Already correct.
+- Root cause: Task 29 introduced the _hasValidRating() guard with the rationale that hiding the badge was better than showing "N/A". Bro now reports the opposite — the inconsistency of some posters having the badge and some not looks like a bug.
+- Fix in lib/app/ui/components/movie_card.dart:
+  * Removed the "if (_hasValidRating(widget.movie.rating))" guard around the Positioned widget — badge is now always rendered.
+  * Removed the now-unused _hasValidRating() static method (8 lines deleted).
+  * Kept _formatRating() unchanged — it already returns "N/A" for null/empty/0.0/unparseable ratings and the actual rating string otherwise.
+  * Updated inline comment on the badge widget to explain the always-on rationale.
+  * Updated _formatRating() doc comment to note it is now the single source of truth for badge text.
+- Net change: 14 insertions, 22 deletions. File got smaller.
+- Syntax check via Dart-aware brace/paren/bracket scanner: all balanced. _hasValidRating confirmed removed, _formatRating confirmed intact, old if-guard confirmed gone.
+- Commit cb794f7 pushed to origin/main.
+
+Stage Summary:
+- 1 file changed: lib/app/ui/components/movie_card.dart.
+- After next build, every movie/series poster in the grid will show the red flame rating badge. Real ratings (e.g. "7.4") display as-is. Missing ratings (null, empty, 0.0, or unparseable) display as "N/A".
+- movie_detail_screen.dart and series_detail_screen.dart were audited and confirmed already correct — no changes needed.
+- Bro to rebuild and verify on "The One Piece" series post: badge should now be visible with "N/A" text.
