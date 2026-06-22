@@ -2122,3 +2122,52 @@ Stage Summary:
   5. Tap sync icon, then immediately try to tap trash icon on the same card → trash icon should be grayed out + not respond
   6. Tap sync icon, then double-tap sync icon again → second tap should be a no-op (no second confirmation dialog)
 - Next: Bro confirms build + behavior. If green, can resume with Number 4 Idea 1 (Sync tab search) as a separate one-at-a-time task.
+
+---
+Task ID: 38 #3 (v2.0.0 — Disable Video Player 2 in Settings)
+Agent: main
+Task: Bro's v2.0.0 release, requirement 3 of 5. Disable "Video Player 2" in the Settings → Video Player selector. Show it as a disabled/grayed-out option with a friendly message ("Under construction — not available yet. Please use the Built-in Player."). Real implementation deferred to v2.1.0+.
+
+Work Log:
+- Pulled origin/main — local was up to date (c85677b).
+- Audited Settings UI:
+  * lib/app/ui/screens/settings_page.dart:140 _showVideoPlayerSheet() builds a bottom sheet with 2 RadioListTile<String> options — `builtin` and `external`.
+  * lib/more_libs/setting/app_config.dart:95 — `_videoPlayerMode` defaults to `'builtin'`, valid values currently `'builtin'` or `'external'`.
+  * Translation keys exist for `built_in_player`, `external_player`, `select_video_player`, `video_player`, `video_player_desc`.
+  * No "Video Player 2" key/code anywhere — this is a NEW disabled placeholder, not a removal.
+
+- Added 2 translation keys (alphabetically near existing `video_player*`):
+  * en.json: `"video_player_2": "Video Player 2"` and `"video_player_2_desc": "Under construction — not available yet. Please use the Built-in Player."`
+  * my.json: `"video_player_2": "ဗီဒီယိုပလေယာ 2"` and `"video_player_2_desc": "တည်ဆောက်ဆဲနေပါသည် — ယခုအချိန်တွင် ရနိုင်မည်မဟုတ်ပါ။ မူရင်း Built-in ပလေယာကို ရွေးချယ်အသုံးပြုနိုင်ပါသည်။"`
+  * verify_translations.py: All checks passed. 0 warnings.
+
+- Updated `_showVideoPlayerSheet()` in settings_page.dart:
+  * Added a 3rd RadioListTile<String> with value `'builtin_v2'`, groupValue `appConfig.videoPlayerMode`, and `onChanged: null` — this is the official Flutter way to render a RadioListTile in disabled state (grayed out, no ripple, no tap response).
+  * Title row uses a `Row` with `Flexible(Text(...))` + a small chip showing "Soon" (EN) / "ဆောက်ဆဲ" (MY) so the user sees at-a-glance that this is a coming-soon item, not just a broken option.
+  * Title text color forced to white38 (dark) / black38 (light) to reinforce the disabled visual.
+  * Subtitle uses the new `video_player_2_desc` translation; font size 12, color white30/black38.
+  * Added a multi-line comment block explaining (a) why this is disabled, (b) what the visual cues mean, (c) how to re-enable in v2.1.0+ — so the next person touching this code knows the intent.
+
+- Verified settings_page.dart syntax via Dart-aware delimiter scanner: OK.
+- Verified translation parity via scripts/verify_translations.py: OK.
+
+Stage Summary:
+- 3 files changed:
+  * assets/lang/en.json (+2 keys)
+  * assets/lang/my.json (+2 keys)
+  * lib/app/ui/screens/settings_page.dart (+~55 lines: new disabled RadioListTile + comment block)
+- Behavior:
+  * Settings → Video Player → bottom sheet now shows 3 options: Built-in Player (selectable), External Player (selectable), Video Player 2 (DISABLED, grayed out, "Soon" chip, friendly under-construction message).
+  * Tapping Video Player 2 does nothing (RadioListTile with onChanged:null is non-interactive).
+  * Existing users with `videoPlayerMode == 'builtin'` or `'external'` are unaffected.
+  * No data migration needed — the `'builtin_v2'` value is never written to SharedPreferences because the option is unselectable.
+- v2.1.0+ re-enable notes (left in source comment):
+  1. Wire `onChanged` to a real handler that calls `appConfig.setVideoPlayerMode('builtin_v2')`.
+  2. Update video_player_screen.dart's `_checkVideoPlayerMode()` to route `'builtin_v2'` to the new player widget.
+  3. Remove the "Soon" chip + the disabled-state color overrides.
+  4. Update app_config.dart if needed (the getter/setter already accept any string).
+- Bro to rebuild and verify:
+  1. Settings → Video Player → bottom sheet shows 3 options
+  2. Video Player 2 is grayed out, has "Soon" / "ဆောက်ဆဲ" chip
+  3. Tapping it does nothing (no selection change, no error)
+  4. Built-in Player + External Player still work normally

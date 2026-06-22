@@ -198,6 +198,62 @@ class _SettingsPageState extends State<SettingsPage> {
                 Navigator.pop(ctx);
               },
             ),
+            // ============================================================
+            // Video Player 2 — DISABLED placeholder (v2.0.0, Task 38 #3)
+            // ============================================================
+            // Bro explicitly disabled this for the v2.0.0 release. The
+            // option is shown so users know it's coming, but it cannot be
+            // selected. The `onChanged: null` makes RadioListTile render
+            // in its disabled state (grayed out, no ripple). Tapping the
+            // title/subtitle area still does nothing because the radio is
+            // disabled.
+            //
+            // To re-enable in a future version (v2.1.0+): wire `onChanged`
+            // to a real handler that calls `appConfig.setVideoPlayerMode(
+            // 'builtin_v2')` (or whatever the new mode key is), and
+            // remove the trailing "Under construction" chip.
+            RadioListTile<String>(
+              value: 'builtin_v2',
+              groupValue: appConfig.videoPlayerMode,
+              // onChanged: null → disabled state (grayed out, no tap)
+              onChanged: null,
+              title: Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      appConfig.translate('video_player_2'),
+                      style: TextStyle(
+                        color: isDark ? Colors.white38 : Colors.black38,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: (isDark ? Colors.white12 : Colors.black12),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      appConfig.languageCode == 'my' ? 'ဆောက်ဆဲ' : 'Soon',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: isDark ? Colors.white54 : Colors.black54,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              subtitle: Text(
+                appConfig.translate('video_player_2_desc'),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: isDark ? Colors.white30 : Colors.black38,
+                ),
+              ),
+            ),
             const SizedBox(height: 10),
           ],
         ),

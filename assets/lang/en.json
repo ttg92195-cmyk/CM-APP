@@ -191,6 +191,8 @@
   "username_min_length": "Username must be at least 3 characters",
   "version": "Version",
   "video_player": "Video Player",
+  "video_player_2": "Video Player 2",
+  "video_player_2_desc": "Under construction — not available yet. Please use the Built-in Player.",
   "video_player_desc": "Choose default video player",
   "view_detail": "View Detail",
   "vip_active": "VIP Active",
