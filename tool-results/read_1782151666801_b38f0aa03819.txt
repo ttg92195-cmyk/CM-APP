@@ -1,0 +1,783 @@
+     1→import 'dart:async';
+     2→import 'dart:io';
+     3→import 'package:flutter/material.dart';
+     4→import 'package:package_info_plus/package_info_plus.dart';
+     5→import 'package:provider/provider.dart';
+     6→import 'package:cm_movies/more_libs/setting/app_config.dart';
+     7→import 'package:cm_movies/app/ui/home/home_screen.dart';
+     8→import 'package:cm_movies/app/ui/screens/movies_page.dart';
+     9→import 'package:cm_movies/app/ui/screens/series_page.dart';
+    10→import 'package:cm_movies/app/ui/screens/recent_page.dart';
+    11→import 'package:cm_movies/app/ui/screens/genres_tags_collections_page.dart';
+    12→import 'package:cm_movies/app/ui/screens/download_page.dart';
+    13→import 'package:cm_movies/app/ui/screens/settings_page.dart';
+    14→import 'package:cm_movies/app/ui/screens/login_page.dart';
+    15→import 'package:cm_movies/app/ui/screens/profile_page.dart';
+    16→import 'package:cm_movies/app/ui/screens/search_screen.dart';
+    17→import 'package:cm_movies/app/ui/screens/admin_panel_page.dart';
+    18→import 'package:cm_movies/app/core/services/download_manager_service.dart';
+    19→import 'package:cm_movies/app/ui/screens/tmdb_generator_page.dart';
+    20→import 'package:cm_movies/app/ui/screens/vip_page.dart';
+    21→import 'package:cm_movies/app/ui/components/download_notification_banner.dart';
+    22→
+    23→// Bottom nav tab indices (4 tabs)
+    24→const int kHomeTab = 0;
+    25→const int kMoviesTab = 1;
+    26→const int kSeriesTab = 2;
+    27→const int kSettingsTab = 3;
+    28→
+    29→class HomePage extends StatefulWidget {
+    30→  const HomePage({super.key});
+    31→
+    32→  @override
+    33→  State<HomePage> createState() => _HomePageState();
+    34→}
+    35→
+    36→class _HomePageState extends State<HomePage> {
+    37→  int _currentIndex = kHomeTab;
+    38→
+    39→  // Global keys for tab pages to allow refresh
+    40→  final GlobalKey<State<MoviesPage>> _moviesKey = GlobalKey();
+    41→  final GlobalKey<State<SeriesPage>> _seriesKey = GlobalKey();
+    42→  // Home has its own key so we can call its public refresh() method after
+    43→  // returning from content-modifying screens (TMDB Generator, Admin Panel,
+    44→  // Add Movie, Edit Movie, Batch Import). Without this, Home keeps showing
+    45→  // stale data because IndexedStack keeps HomeScreen alive across tab
+    46→  // switches and does NOT auto-reload on Navigator.pop().
+    47→  final GlobalKey<State<HomeScreen>> _homeKey = GlobalKey();
+    48→
+    49→  // Tab pages - created once to preserve state across tab switches
+    50→  late final List<Widget> _bottomNavPages;
+    51→
+    52→  // Double-back-to-exit: prevent accidental app exit from root route
+    53→  bool _canExit = false;
+    54→  Timer? _exitTimer;
+    55→
+    56→  // Real app version (fetched from package_info_plus)
+    57→  String _appVersion = '';
+    58→
+    59→  @override
+    60→  void initState() {
+    61→    super.initState();
+    62→    _loadAppVersion();
+    63→    _bottomNavPages = [
+    64→      HomeScreen(
+    65→        key: _homeKey,
+    66→        onNavigateToTab: (index) {
+    67→          // Switch tab first
+    68→          setState(() => _currentIndex = index);
+    69→          // Trigger data refresh with skeleton loading when navigating via "More" button
+    70→          // This ensures skeleton shows first, then fresh data loads
+    71→          if (index == kMoviesTab) {
+    72→            // Use addPostFrameCallback to ensure the tab is visible before refreshing
+    73→            WidgetsBinding.instance.addPostFrameCallback((_) {
+    74→              final state = _moviesKey.currentState;
+    75→              if (state != null) (state as dynamic).onTabSelected();
+    76→            });
+    77→          } else if (index == kSeriesTab) {
+    78→            WidgetsBinding.instance.addPostFrameCallback((_) {
+    79→              final state = _seriesKey.currentState;
+    80→              if (state != null) (state as dynamic).onTabSelected();
+    81→            });
+    82→          }
+    83→        },
+    84→      ),
+    85→      MoviesPage(key: _moviesKey),
+    86→      SeriesPage(key: _seriesKey),
+    87→      const SettingsPage(),
+    88→    ];
+    89→  }
+    90→
+    91→  @override
+    92→  void dispose() {
+    93→    _exitTimer?.cancel();
+    94→    super.dispose();
+    95→  }
+    96→
+    97→  // Fetch the real app version (e.g. "1.9.0+15") from pubspec at runtime
+    98→  Future<void> _loadAppVersion() async {
+    99→    try {
+   100→      final info = await PackageInfo.fromPlatform();
+   101→      final version = info.version;
+   102→      final build = info.buildNumber;
+   103→      final formatted = build.isEmpty ? version : '$version+$build';
+   104→      if (mounted) {
+   105→        setState(() => _appVersion = formatted);
+   106→      }
+   107→    } catch (_) {
+   108→      // Fallback: leave empty so UI can fall back to a static label
+   109→    }
+   110→  }
+   111→
+   112→  /// Silently refresh the Home tab's data. Called after returning from
+   113→  /// content-modifying screens (TMDB Generator, Admin Panel, etc.) so that
+   114→  /// newly-added or edited posts appear at the top of the Home feed
+   115→  /// without requiring the user to pull-to-refresh.
+   116→  ///
+   117→  /// Safe to call when Home is not the current tab — IndexedStack keeps
+   118→  /// HomeScreen alive, so the GlobalKey state is always available.
+   119→  void _refreshHomeIfMounted() {
+   120→    final state = _homeKey.currentState;
+   121→    if (state != null) {
+   122→      // ignore: avoid_dynamic_calls — HomeScreen.refresh() is a public API
+   123→      (state as dynamic).refresh();
+   124→    }
+   125→  }
+   126→
+   127→  @override
+   128→  Widget build(BuildContext context) {
+   129→    final appConfig = Provider.of<AppConfig>(context);
+   130→    final theme = Theme.of(context);
+   131→
+   132→    // Bottom Nav pages (4 main tabs: Home, Movies, Series, Settings)
+   133→    // Pages are created once in initState to preserve state across tab switches
+   134→
+   135→    return PopScope(
+   136→      // Prevent accidental app exit: require double-back press
+   137→      canPop: _canExit,
+   138→      onPopInvokedWithResult: (didPop, result) {
+   139→        if (didPop) return;
+   140→        if (_canExit) {
+   141→          // Second back press within 2 seconds → allow exit
+   142→          Navigator.of(context).pop();
+   143→        } else {
+   144→          // First back press → show toast and start 2-second window
+   145→          setState(() => _canExit = true);
+   146→          ScaffoldMessenger.of(context).clearSnackBars();
+   147→          ScaffoldMessenger.of(context).showSnackBar(
+   148→            SnackBar(
+   149→              content: Text(appConfig.translate('press_back_again_exit')),
+   150→              duration: const Duration(seconds: 2),
+   151→              backgroundColor: const Color(0xFFE50914),
+   152→              behavior: SnackBarBehavior.floating,
+   153→            ),
+   154→          );
+   155→          _exitTimer?.cancel();
+   156→          _exitTimer = Timer(const Duration(seconds: 2), () {
+   157→            if (mounted) {
+   158→              setState(() => _canExit = false);
+   159→            }
+   160→          });
+   161→        }
+   162→      },
+   163→      child: Scaffold(
+   164→      appBar: AppBar(
+   165→        leading: Builder(
+   166→          builder: (context) => IconButton(
+   167→            icon: const Icon(Icons.menu),
+   168→            onPressed: () => Scaffold.of(context).openDrawer(),
+   169→          ),
+   170→        ),
+   171→        title: Text(
+   172→          appConfig.translate('app_name'),
+   173→          style: theme.textTheme.titleLarge?.copyWith(
+   174→            fontWeight: FontWeight.bold,
+   175→            color: theme.colorScheme.onSurface,
+   176→          ),
+   177→        ),
+   178→        centerTitle: true,
+   179→        actions: [
+   180→          IconButton(
+   181→            icon: Icon(Icons.search, color: theme.colorScheme.onSurface),
+   182→            onPressed: () {
+   183→              Navigator.push(
+   184→                context,
+   185→                MaterialPageRoute(builder: (_) => const SearchScreen()),
+   186→              );
+   187→            },
+   188→          ),
+   189→        ],
+   190→      ),
+   191→      drawer: _buildDrawer(appConfig, theme),
+   192→      body: Stack(
+   193→        children: [
+   194→          IndexedStack(
+   195→            index: _currentIndex,
+   196→            children: _bottomNavPages,
+   197→          ),
+   198→          // Floating download progress indicator - shows when downloads are active
+   199→          Positioned(
+   200→            left: 0,
+   201→            right: 0,
+   202→            bottom: 0,
+   203→            child: DownloadMiniIndicator(
+   204→              downloadManager: DownloadManagerService.instance,
+   205→              onTap: () async {
+   206→                // Navigate to download page
+   207→                if (Platform.isAndroid) {
+   208→                  final hasPermission = await DownloadManagerService.instance.hasRuntimePermission();
+   209→                  if (!hasPermission) {
+   210→                    final granted = await DownloadManagerService.instance.requestRuntimePermission();
+   211→                    if (!granted) {
+   212→                      if (mounted) {
+   213→                        ScaffoldMessenger.of(context).showSnackBar(
+   214→                          SnackBar(
+   215→                            content: Text(appConfig.translate('storage_permission_required')),
+   216→                            backgroundColor: Colors.redAccent,
+   217→                            duration: const Duration(seconds: 3),
+   218→                          ),
+   219→                        );
+   220→                      }
+   221→                      return;
+   222→                    }
+   223→                  }
+   224→                }
+   225→                if (mounted) {
+   226→                  Navigator.push(
+   227→                    context,
+   228→                    MaterialPageRoute(builder: (_) => const DownloadPage()),
+   229→                  );
+   230→                }
+   231→              },
+   232→            ),
+   233→          ),
+   234→        ],
+   235→      ),
+   236→      bottomNavigationBar: _buildBottomNav(appConfig, theme),
+   237→    ),
+   238→    );
+   239→  }
+   240→
+   241→  Widget _buildBottomNav(AppConfig appConfig, ThemeData theme) {
+   242→    final isDark = theme.brightness == Brightness.dark;
+   243→    final unselectedColor = isDark ? Colors.grey.shade500 : Colors.grey.shade600;
+   244→    const selectedColor = Color(0xFFE50914);
+   245→
+   246→    return Container(
+   247→      decoration: BoxDecoration(
+   248→        color: isDark ? const Color(0xFF121212) : Colors.white,
+   249→        boxShadow: [
+   250→          BoxShadow(
+   251→            color: isDark ? Colors.black26 : Colors.grey.shade300,
+   252→            blurRadius: 4,
+   253→            spreadRadius: 0,
+   254→            offset: const Offset(0, -1),
+   255→          ),
+   256→        ],
+   257→      ),
+   258→      child: NavigationBarTheme(
+   259→        data: NavigationBarThemeData(
+   260→          backgroundColor: isDark ? const Color(0xFF121212) : Colors.white,
+   261→          indicatorColor: Colors.transparent,
+   262→          height: 64,
+   263→          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+   264→          surfaceTintColor: Colors.transparent,
+   265→          overlayColor: WidgetStateProperty.all(Colors.transparent),
+   266→          iconTheme: WidgetStateProperty.resolveWith<IconThemeData?>((states) {
+   267→            final isSelected = states.contains(WidgetState.selected);
+   268→            return IconThemeData(
+   269→              size: 24,
+   270→              color: isSelected ? selectedColor : unselectedColor,
+   271→            );
+   272→          }),
+   273→          labelTextStyle: WidgetStateProperty.resolveWith<TextStyle?>((states) {
+   274→            final isSelected = states.contains(WidgetState.selected);
+   275→            return TextStyle(
+   276→              fontSize: 11,
+   277→              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+   278→              color: isSelected ? selectedColor : unselectedColor,
+   279→            );
+   280→          }),
+   281→        ),
+   282→        child: NavigationBar(
+   283→        selectedIndex: _currentIndex,
+   284→        onDestinationSelected: (index) {
+   285→          // If user taps Home tab while already on Home, treat it as a
+   286→          // refresh trigger (silently — no skeleton). This mirrors the
+   287→          // common "tap the active tab to refresh" pattern in apps like
+   288→          // Twitter / Instagram. Otherwise just switch tabs.
+   289→          if (index == _currentIndex && index == kHomeTab) {
+   290→            _refreshHomeIfMounted();
+   291→            return;
+   292→          }
+   293→          setState(() {
+   294→            _currentIndex = index;
+   295→          });
+   296→          // Trigger data refresh when switching to Movies/Series tabs
+   297→          if (index == kMoviesTab) {
+   298→            final state = _moviesKey.currentState;
+   299→            if (state != null) (state as dynamic).onTabSelected();
+   300→          } else if (index == kSeriesTab) {
+   301→            final state = _seriesKey.currentState;
+   302→            if (state != null) (state as dynamic).onTabSelected();
+   303→          } else if (index == kHomeTab) {
+   304→            // Returning to Home — silently refresh in case the user
+   305→            // added/edited content elsewhere since Home was last visible.
+   306→            _refreshHomeIfMounted();
+   307→          }
+   308→        },
+   309→        destinations: [
+   310→          NavigationDestination(
+   311→            icon: const Icon(Icons.home_outlined),
+   312→            selectedIcon: const Icon(Icons.home),
+   313→            label: appConfig.translate('home'),
+   314→          ),
+   315→          NavigationDestination(
+   316→            icon: const Icon(Icons.movie_outlined),
+   317→            selectedIcon: const Icon(Icons.movie),
+   318→            label: appConfig.translate('movies'),
+   319→          ),
+   320→          NavigationDestination(
+   321→            icon: const Icon(Icons.tv_outlined),
+   322→            selectedIcon: const Icon(Icons.tv),
+   323→            label: appConfig.translate('series'),
+   324→          ),
+   325→          NavigationDestination(
+   326→            icon: const Icon(Icons.settings_outlined),
+   327→            selectedIcon: const Icon(Icons.settings),
+   328→            label: appConfig.translate('settings'),
+   329→          ),
+   330→        ],
+   331→      ),
+   332→      ),
+   333→    );
+   334→  }
+   335→
+   336→  Widget _buildDrawer(AppConfig appConfig, ThemeData theme) {
+   337→    final isDark = theme.brightness == Brightness.dark;
+   338→    final textColor = isDark ? Colors.white : Colors.black87;
+   339→    final subTextColor = isDark ? Colors.white54 : Colors.black54;
+   340→    final bgDrawer = isDark ? const Color(0xFF121212) : Colors.white;
+   341→    final bgHeader = isDark ? const Color(0xFF1E1E1E) : Colors.grey.shade100;
+   342→
+   343→    return Drawer(
+   344→      backgroundColor: bgDrawer,
+   345→      child: DividerTheme(
+   346→        data: const DividerThemeData(color: Colors.transparent),
+   347→        child: SafeArea(
+   348→          child: Column(
+   349→            children: [
+   350→              // Drawer Header
+   351→              Container(
+   352→                width: double.infinity,
+   353→                padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
+   354→                decoration: BoxDecoration(
+   355→                  color: bgHeader,
+   356→                ),
+   357→              child: Column(
+   358→                crossAxisAlignment: CrossAxisAlignment.start,
+   359→                children: [
+   360→                  Container(
+   361→                    padding: const EdgeInsets.all(10),
+   362→                    decoration: BoxDecoration(
+   363→                      shape: BoxShape.circle,
+   364→                      color: const Color(0xFFE50914).withOpacity(0.15),
+   365→                      boxShadow: [
+   366→                        BoxShadow(
+   367→                          color: const Color(0xFFE50914).withOpacity(0.3),
+   368→                          blurRadius: 12,
+   369→                          spreadRadius: 2,
+   370→                        ),
+   371→                      ],
+   372→                    ),
+   373→                    child: const Icon(
+   374→                      Icons.play_circle_fill,
+   375→                      size: 40,
+   376→                      color: Color(0xFFE50914),
+   377→                    ),
+   378→                  ),
+   379→                  const SizedBox(height: 12),
+   380→                  Text(
+   381→                    'KMM',
+   382→                    style: TextStyle(
+   383→                      color: textColor,
+   384→                      fontSize: 22,
+   385→                      fontWeight: FontWeight.bold,
+   386→                    ),
+   387→                  ),
+   388→                  const SizedBox(height: 4),
+   389→                  Text(
+   390→                    _appVersion.isEmpty
+   391→                        ? appConfig.translate('version')
+   392→                        : '${appConfig.translate('version')} $_appVersion',
+   393→                    style: TextStyle(
+   394→                      color: subTextColor,
+   395→                      fontSize: 12,
+   396→                    ),
+   397→                  ),
+   398→                  const SizedBox(height: 14),
+   399→                  // VIP Status Card — shows active VIP (red badge) or "not purchased yet"
+   400→                  _buildVipStatusCard(appConfig, isDark),
+   401→                ],
+   402→              ),
+   403→            ),
+   404→
+   405→            // Menu Items
+   406→            Expanded(
+   407→              child: ListView(
+   408→                padding: const EdgeInsets.symmetric(vertical: 8),
+   409→                children: [
+   410→                  // Recent
+   411→                  _buildDrawerItem(
+   412→                    icon: Icons.history_outlined,
+   413→                    activeIcon: Icons.history,
+   414→                    title: appConfig.translate('recently_viewed'),
+   415→                    isDark: isDark,
+   416→                    onTap: () {
+   417→                      Navigator.pop(context);
+   418→                      Navigator.push(
+   419→                        context,
+   420→                        MaterialPageRoute(builder: (_) => const RecentPage()),
+   421→                      );
+   422→                    },
+   423→                  ),
+   424→
+   425→                  // Genres/Tags/Collections
+   426→                  _buildDrawerItem(
+   427→                    icon: Icons.category_outlined,
+   428→                    activeIcon: Icons.category,
+   429→                    title: appConfig.translate('genres_tags_collections'),
+   430→                    isDark: isDark,
+   431→                    onTap: () {
+   432→                      Navigator.pop(context);
+   433→                      Navigator.push(
+   434→                        context,
+   435→                        MaterialPageRoute(builder: (_) => const GenresTagsCollectionsPage()),
+   436→                      );
+   437→                    },
+   438→                  ),
+   439→
+   440→                  // Downloads
+   441→                  _buildDrawerItem(
+   442→                    icon: Icons.download_outlined,
+   443→                    activeIcon: Icons.download,
+   444→                    title: appConfig.translate('downloads'),
+   445→                    isDark: isDark,
+   446→                    onTap: () async {
+   447→                      Navigator.pop(context); // Close drawer first
+   448→
+   449→                      // Check if runtime storage permission has been granted
+   450→                      if (Platform.isAndroid) {
+   451→                        final downloadManager = DownloadManagerService.instance;
+   452→                        final hasPermission = await downloadManager.hasRuntimePermission();
+   453→                        if (!hasPermission) {
+   454→                          // Show native Android system permission dialog
+   455→                          final granted = await downloadManager.requestRuntimePermission();
+   456→                          if (!granted) {
+   457→                            // Permission denied — show message and don't navigate
+   458→                            if (mounted) {
+   459→                              ScaffoldMessenger.of(context).showSnackBar(
+   460→                                SnackBar(
+   461→                                  content: Text(appConfig.translate('storage_permission_required')),
+   462→                                  backgroundColor: Colors.redAccent,
+   463→                                  duration: const Duration(seconds: 3),
+   464→                                  action: SnackBarAction(
+   465→                                    label: appConfig.translate('settings'),
+   466→                                    textColor: Colors.white,
+   467→                                    onPressed: () => downloadManager.requestRuntimePermission(),
+   468→                                  ),
+   469→                                ),
+   470→                              );
+   471→                            }
+   472→                            return;
+   473→                          }
+   474→                        }
+   475→                      }
+   476→
+   477→                      // Permission granted — navigate to Download page
+   478→                      Navigator.push(
+   479→                        context,
+   480→                        MaterialPageRoute(builder: (_) => const DownloadPage()),
+   481→                      );
+   482→                    },
+   483→                  ),
+   484→
+   485→                  // Admin Panel (only for admin users)
+   486→                  if (appConfig.isCurrentUserAdmin) ...[
+   487→                    const SizedBox(height: 8),
+   488→                    _buildDrawerItem(
+   489→                      icon: Icons.admin_panel_settings_outlined,
+   490→                      activeIcon: Icons.admin_panel_settings,
+   491→                      title: 'Admin Panel',
+   492→                      isDark: isDark,
+   493→                      onTap: () {
+   494→                        Navigator.pop(context);
+   495→                        Navigator.push(
+   496→                          context,
+   497→                          MaterialPageRoute(builder: (_) => const AdminPanelPage()),
+   498→                        ).then((_) => _refreshHomeIfMounted());
+   499→                      },
+   500→                    ),
+   501→                    _buildDrawerItem(
+   502→                      icon: Icons.auto_awesome_outlined,
+   503→                      activeIcon: Icons.auto_awesome,
+   504→                      title: 'TMDB Generator',
+   505→                      isDark: isDark,
+   506→                      onTap: () {
+   507→                        Navigator.pop(context);
+   508→                        Navigator.push(
+   509→                          context,
+   510→                          MaterialPageRoute(
+   511→                            builder: (_) => const TmdbGeneratorPage(),
+   512→                          ),
+   513→                        ).then((_) => _refreshHomeIfMounted());
+   514→                      },
+   515→                    ),
+   516→                  ],
+   517→
+   518→                  const SizedBox(height: 8),
+   519→
+   520→                  // Profile (if logged in)
+   521→                  if (appConfig.isLoggedIn)
+   522→                    _buildDrawerItem(
+   523→                      icon: Icons.person_outline,
+   524→                      activeIcon: Icons.person,
+   525→                      title: appConfig.translate('profile'),
+   526→                      isDark: isDark,
+   527→                      onTap: () {
+   528→                        Navigator.pop(context);
+   529→                        Navigator.push(
+   530→                          context,
+   531→                          MaterialPageRoute(builder: (_) => const ProfilePage()),
+   532→                        );
+   533→                      },
+   534→                    ),
+   535→
+   536→                  // Login / Logout
+   537→                  if (appConfig.isLoggedIn)
+   538→                    _buildDrawerItem(
+   539→                      icon: Icons.logout,
+   540→                      activeIcon: Icons.logout,
+   541→                      title: appConfig.translate('logout'),
+   542→                      isDark: isDark,
+   543→                      onTap: () async {
+   544→                        Navigator.pop(context);
+   545→                        await appConfig.logoutUser();
+   546→                        if (mounted) {
+   547→                          ScaffoldMessenger.of(context).showSnackBar(
+   548→                            SnackBar(
+   549→                              content: Text(appConfig.translate('logout')),
+   550→                              backgroundColor: Colors.orange,
+   551→                            ),
+   552→                          );
+   553→                        }
+   554→                      },
+   555→                    )
+   556→                  else
+   557→                    _buildDrawerItem(
+   558→                      icon: Icons.login,
+   559→                      activeIcon: Icons.login,
+   560→                      title: appConfig.translate('login'),
+   561→                      isDark: isDark,
+   562→                      onTap: () {
+   563→                        Navigator.pop(context);
+   564→                        Navigator.push(
+   565→                          context,
+   566→                          MaterialPageRoute(builder: (_) => const LoginPage()),
+   567→                        );
+   568→                      },
+   569→                    ),
+   570→                ],
+   571→              ),
+   572→            ),
+   573→
+   574→            // Footer
+   575→            Padding(
+   576→              padding: const EdgeInsets.all(16),
+   577→              child: Text(
+   578→                _appVersion.isEmpty ? 'KMM' : 'KMM v$_appVersion',
+   579→                style: TextStyle(
+   580→                  color: subTextColor,
+   581→                  fontSize: 11,
+   582→                ),
+   583→              ),
+   584→            ),
+   585→          ],
+   586→        ),
+   587→      ),
+   588→      ),
+   589→    );
+   590→  }
+   591→
+   592→  Widget _buildDrawerItem({
+   593→    required IconData icon,
+   594→    required IconData activeIcon,
+   595→    required String title,
+   596→    required bool isDark,
+   597→    required VoidCallback onTap,
+   598→  }) {
+   599→    return Padding(
+   600→      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+   601→      child: ListTile(
+   602→        leading: Icon(
+   603→          icon,
+   604→          color: isDark ? Colors.white70 : Colors.black54,
+   605→          size: 22,
+   606→        ),
+   607→        title: Text(
+   608→          title,
+   609→          style: TextStyle(
+   610→            color: isDark ? Colors.white : Colors.black87,
+   611→            fontSize: 14,
+   612→          ),
+   613→        ),
+   614→        shape: RoundedRectangleBorder(
+   615→          borderRadius: BorderRadius.circular(10),
+   616→        ),
+   617→        onTap: onTap,
+   618→      ),
+   619→    );
+   620→  }
+   621→
+   622→  /// VIP status card shown inside the drawer header.
+   623→  /// - VIP users → red gradient badge with crown + "VIP Active" + expiry date
+   624→  /// - Non-VIP users → outlined grey/orange card with "VIP Not Active" + "Tap to upgrade"
+   625→  ///   (tapping opens the VipPage where they can purchase VIP via Telegram)
+   626→  Widget _buildVipStatusCard(AppConfig appConfig, bool isDark) {
+   627→    final isVip = appConfig.isCurrentUserVip;
+   628→    final isAdmin = appConfig.isCurrentUserAdmin;
+   629→    // Admins implicitly have all VIP perks — show VIP-style badge for them too
+   630→    final showAsVip = isVip || isAdmin;
+   631→
+   632→    if (showAsVip) {
+   633→      // Format the VIP expiry date for display (if available)
+   634→      String expiryDisplay = '';
+   635→      final rawExpiry = appConfig.currentUser?['vipExpiry'] as String?;
+   636→      if (rawExpiry != null && rawExpiry.isNotEmpty) {
+   637→        final dt = DateTime.tryParse(rawExpiry);
+   638→        if (dt != null) {
+   639→          expiryDisplay =
+   640→              '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+   641→        }
+   642→      }
+   643→
+   644→      return Container(
+   645→        width: double.infinity,
+   646→        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+   647→        decoration: BoxDecoration(
+   648→          borderRadius: BorderRadius.circular(12),
+   649→          gradient: const LinearGradient(
+   650→            colors: [Color(0xFFE50914), Color(0xFFB20710)],
+   651→            begin: Alignment.topLeft,
+   652→            end: Alignment.bottomRight,
+   653→          ),
+   654→          boxShadow: [
+   655→            BoxShadow(
+   656→              color: const Color(0xFFE50914).withOpacity(0.35),
+   657→              blurRadius: 10,
+   658→              offset: const Offset(0, 3),
+   659→            ),
+   660→          ],
+   661→        ),
+   662→        child: Row(
+   663→          children: [
+   664→            const Icon(
+   665→              Icons.workspace_premium_rounded,
+   666→              color: Colors.white,
+   667→              size: 24,
+   668→            ),
+   669→            const SizedBox(width: 10),
+   670→            Expanded(
+   671→              child: Column(
+   672→                crossAxisAlignment: CrossAxisAlignment.start,
+   673→                mainAxisSize: MainAxisSize.min,
+   674→                children: [
+   675→                  Text(
+   676→                    isAdmin
+   677→                        ? '${appConfig.translate('vip_active')} · Admin'
+   678→                        : appConfig.translate('vip_active'),
+   679→                    style: const TextStyle(
+   680→                      color: Colors.white,
+   681→                      fontSize: 13,
+   682→                      fontWeight: FontWeight.bold,
+   683→                    ),
+   684→                  ),
+   685→                  const SizedBox(height: 2),
+   686→                  Text(
+   687→                    expiryDisplay.isEmpty
+   688→                        ? appConfig.translate('vip_active_desc')
+   689→                        : appConfig
+   690→                            .translate('vip_expires_on')
+   691→                            .replaceAll('{date}', expiryDisplay),
+   692→                    style: TextStyle(
+   693→                      color: Colors.white.withOpacity(0.85),
+   694→                      fontSize: 11,
+   695→                    ),
+   696→                  ),
+   697→                ],
+   698→              ),
+   699→            ),
+   700→          ],
+   701→        ),
+   702→      );
+   703→    }
+   704→
+   705→    // Non-VIP card — tap to open VipPage and purchase VIP
+   706→    return Material(
+   707→      color: Colors.transparent,
+   708→      child: InkWell(
+   709→        borderRadius: BorderRadius.circular(12),
+   710→        onTap: () {
+   711→          Navigator.pop(context); // close drawer
+   712→          Navigator.push(
+   713→            context,
+   714→            MaterialPageRoute(builder: (_) => const VipPage()),
+   715→          );
+   716→        },
+   717→        child: Container(
+   718→          width: double.infinity,
+   719→          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+   720→          decoration: BoxDecoration(
+   721→            borderRadius: BorderRadius.circular(12),
+   722→            color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.04),
+   723→            border: Border.all(
+   724→              color: const Color(0xFFE50914).withOpacity(0.5),
+   725→              width: 1.2,
+   726→            ),
+   727→          ),
+   728→          child: Row(
+   729→            children: [
+   730→              Icon(
+   731→                Icons.lock_outline,
+   732→                color: const Color(0xFFE50914).withOpacity(0.9),
+   733→                size: 24,
+   734→              ),
+   735→              const SizedBox(width: 10),
+   736→              Expanded(
+   737→                child: Column(
+   738→                  crossAxisAlignment: CrossAxisAlignment.start,
+   739→                  mainAxisSize: MainAxisSize.min,
+   740→                  children: [
+   741→                    Text(
+   742→                      appConfig.translate('vip_inactive'),
+   743→                      style: TextStyle(
+   744→                        color: isDark ? Colors.white : Colors.black87,
+   745→                        fontSize: 13,
+   746→                        fontWeight: FontWeight.bold,
+   747→                      ),
+   748→                    ),
+   749→                    const SizedBox(height: 2),
+   750→                    Text(
+   751→                      appConfig.translate('vip_inactive_desc'),
+   752→                      style: TextStyle(
+   753→                        color: isDark ? Colors.white60 : Colors.black54,
+   754→                        fontSize: 11,
+   755→                      ),
+   756→                    ),
+   757→                  ],
+   758→                ),
+   759→              ),
+   760→              const SizedBox(width: 6),
+   761→              Container(
+   762→                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+   763→                decoration: BoxDecoration(
+   764→                  color: const Color(0xFFE50914),
+   765→                  borderRadius: BorderRadius.circular(6),
+   766→                ),
+   767→                child: Text(
+   768→                  appConfig.translate('vip_get_now'),
+   769→                  style: const TextStyle(
+   770→                    color: Colors.white,
+   771→                    fontSize: 10,
+   772→                    fontWeight: FontWeight.bold,
+   773→                  ),
+   774→                ),
+   775→              ),
+   776→            ],
+   777→          ),
+   778→        ),
+   779→      ),
+   780→    );
+   781→  }
+   782→}
+   783→

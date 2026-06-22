@@ -1,0 +1,899 @@
+     1→import 'dart:async';
+     2→import 'package:flutter/material.dart';
+     3→import 'package:provider/provider.dart';
+     4→import 'package:cached_network_image/cached_network_image.dart';
+     5→import 'package:cm_movies/more_libs/setting/app_config.dart';
+     6→import 'package:cm_movies/app/core/models/movie.dart';
+     7→import 'package:cm_movies/app/core/services/firestore_content_service.dart';
+     8→import 'package:cm_movies/app/ui/home/trending_movie_component.dart';
+     9→import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
+    10→import 'package:cm_movies/app/ui/screens/series_detail_screen.dart';
+    11→import 'package:cm_movies/app/ui/screens/category_page.dart';
+    12→import 'package:cm_movies/app/ui/home/home_page.dart' show kMoviesTab, kSeriesTab;
+    13→import 'package:cm_movies/app/core/services/recent_service.dart';
+    14→
+    15→class HomeScreen extends StatefulWidget {
+    16→  final Function(int)? onNavigateToTab;
+    17→
+    18→  const HomeScreen({super.key, this.onNavigateToTab});
+    19→
+    20→  @override
+    21→  State<HomeScreen> createState() => _HomeScreenState();
+    22→}
+    23→
+    24→class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+    25→  final FirestoreContentService _contentService = FirestoreContentService();
+    26→  final RecentService _recentService = RecentService();
+    27→  // Banner PageController — created lazily once banner image count is known,
+    28→  // so initialPage can be set for the infinite-loop effect. Reused for the
+    29→  // lifetime of the State to avoid per-build memory leaks.
+    30→  PageController? _bannerController;
+    31→  // The ABSOLUTE page index the PageController is currently on (NOT the
+    32→  // modded real index). Used by the auto-scroll timer to advance the
+    33→  // carousel correctly — see _startAutoScroll for why this matters.
+    34→  int _currentAbsolutePage = 0;
+    35→  // The MODDED real banner index (0..length-1) currently displayed — used
+    36→  // only for the dots indicator below the banner.
+    37→  int _currentBannerIndex = 0;
+    38→  Timer? _autoScrollTimer;
+    39→
+    40→  List<Movie> _trendingMovies = [];
+    41→  List<Movie> _trendingTvShows = [];
+    42→  List<Movie> _allMovies = [];
+    43→  List<Movie> _allSeries = [];
+    44→
+    45→  // Banner images from Firestore admin config
+    46→  List<String> _bannerImageUrls = [];
+    47→
+    48→  // Tag-based lists
+    49→  List<Movie> _kDramaMovies = [];
+    50→  List<Movie> _fourKMovies = [];
+    51→  List<Movie> _fourKSeries = [];
+    52→  List<Movie> _animationMovies = [];
+    53→  List<Movie> _animeMovies = [];
+    54→  List<Movie> _bollywoodMovies = [];
+    55→
+    56→  bool _isLoading = true;
+    57→  bool _isLoadingTags = true;
+    58→  String? _error;
+    59→
+    60→  static const int _homeLimit = 10; // Show 10 posts per section on Home
+    61→
+    62→  // Whether the banner auto-scroll timer SHOULD be running. The actual
+    63→  // timer may be cancelled (e.g. during pull-to-refresh skeleton, or when
+    64→  // the app is backgrounded) but this flag remembers whether to restart
+    65→  // it once the interruption is over.
+    66→  bool _bannerAutoScrollEnabled = false;
+    67→
+    68→  @override
+    69→  void initState() {
+    70→    super.initState();
+    71→    WidgetsBinding.instance.addObserver(this);
+    72→    _loadData();
+    73→    // NOTE: Auto-scroll timer is NOT started here. It is started only after
+    74→    // banner data actually arrives in _loadData() — see the call to
+    75→    // _startAutoScroll() inside the successful setState block. Starting the
+    76→    // timer here (while _bannerImageUrls is still empty) was the original
+    77→    // cause of the "initial rapid scroll" glitch: the timer would tick the
+    78→    // moment data arrived, before the PageController had been lazily created
+    79→    // and settled on its initialPage, causing a giant backward jump from
+    80→    // initialPage (= length * 1000) down to _currentBannerIndex + 1 (= 1).
+    81→  }
+    82→
+    83→  @override
+    84→  void dispose() {
+    85→    WidgetsBinding.instance.removeObserver(this);
+    86→    _pauseAutoScroll();
+    87→    _bannerController?.dispose();
+    88→    _bannerController = null;
+    89→    super.dispose();
+    90→  }
+    91→
+    92→  @override
+    93→  void didChangeAppLifecycleState(AppLifecycleState state) {
+    94→    // Pause the banner auto-scroll timer when the app goes to background,
+    95→    // and resume it (only if banner data is loaded) when the app returns
+    96→    // to the foreground. Without this, the timer keeps firing in the
+    97→    // background and ticks accumulate; on resume, the PageView tries to
+    98→    // animate to multiple pages in quick succession, producing the
+    99→    // "rapid banner scroll" glitch Bro reported when returning to the
+   100→    // app after backgrounding it.
+   101→    if (state == AppLifecycleState.paused ||
+   102→        state == AppLifecycleState.inactive ||
+   103→        state == AppLifecycleState.detached) {
+   104→      _pauseAutoScroll();
+   105→    } else if (state == AppLifecycleState.resumed) {
+   106→      // Only restart if banner data is present and we are not currently
+   107→      // loading (skeleton would replace the banner in the widget tree).
+   108→      if (_bannerAutoScrollEnabled &&
+   109→          _bannerImageUrls.isNotEmpty &&
+   110→          !_isLoading &&
+   111→          mounted) {
+   112→        // Defer to next frame so the PageController has a chance to
+   113→        // re-attach to the PageView after the app resumes.
+   114→        WidgetsBinding.instance.addPostFrameCallback((_) {
+   115→          if (mounted &&
+   116→              _bannerAutoScrollEnabled &&
+   117→              _bannerImageUrls.isNotEmpty &&
+   118→              !_isLoading) {
+   119→            _startAutoScroll();
+   120→          }
+   121→        });
+   122→      }
+   123→    }
+   124→  }
+   125→
+   126→  /// Auto-scroll banner every 4 seconds.
+   127→  ///
+   128→  /// IMPORTANT: We track the ABSOLUTE page index (_currentAbsolutePage), not
+   129→  /// the modded realIndex, because animateToPage() needs the absolute page
+   130→  /// number the PageController is currently on. The previous implementation
+   131→  /// stored the modded realIndex in _currentBannerIndex and then called
+   132→  /// animateToPage(_currentBannerIndex + 1) — which is a tiny number like 1
+   133→  /// or 2 — causing the PageView to scroll backwards from initialPage
+   134→  /// (= length * 1000, e.g. 4000) all the way down to page 1 in a single
+   135→  /// 500ms animation. Visually this looked like a rapid auto-scroll burst
+   136→  /// on app launch. Storing the absolute page fixes it.
+   137→  ///
+   138→  /// This method is idempotent — it cancels any existing timer before
+   139→  /// starting a new one. It also sets _bannerAutoScrollEnabled = true so
+   140→  /// that didChangeAppLifecycleState knows whether to restart the timer
+   141→  /// when the app returns to the foreground.
+   142→  void _startAutoScroll() {
+   143→    _autoScrollTimer?.cancel();
+   144→    _bannerAutoScrollEnabled = true;
+   145→    // Initialize absolute page tracker to the controller's actual current
+   146→    // page (the lazy initialPage). This prevents the first timer tick from
+   147→    // jumping backwards.
+   148→    if (_bannerController != null && _bannerController!.hasClients) {
+   149→      _currentAbsolutePage = _bannerController!.page?.round() ?? _currentAbsolutePage;
+   150→    }
+   151→    _autoScrollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+   152→      if (_bannerImageUrls.isNotEmpty && _bannerController != null && _bannerController!.hasClients) {
+   153→        _currentAbsolutePage = _currentAbsolutePage + 1;
+   154→        _bannerController!.animateToPage(
+   155→          _currentAbsolutePage,
+   156→          duration: const Duration(milliseconds: 500),
+   157→          curve: Curves.easeInOut,
+   158→        );
+   159→      }
+   160→    });
+   161→  }
+   162→
+   163→  /// Public refresh hook for external callers (e.g. home_page.dart after
+   164→  /// returning from TMDB Generator / Admin Panel where the user may have
+   165→  /// added or edited posts). Without this, Home shows stale data because
+   166→  /// IndexedStack keeps HomeScreen alive across tab switches.
+   167→  ///
+   168→  /// NOTE: We DO NOT set _isLoading = true here, because that would flash
+   169→  /// the skeleton loader every time the user returns from Admin Panel —
+   170→  /// very jarring. Instead we silently refetch in the background and
+   171→  /// update the lists in place. The existing skeleton only shows on
+   172→  /// initial load (initState → _loadData) and on pull-to-refresh.
+   173→  Future<void> refresh() => _refreshSilently();
+   174→
+   175→  /// Stop the auto-scroll timer WITHOUT touching the PageController.
+   176→  /// Used during loading/refresh transitions so the timer doesn't keep
+   177→  /// firing animateToPage() against a controller that may be unmounted
+   178→  /// (because the skeleton replaces the banner in the widget tree).
+   179→  ///
+   180→  /// keepEnabledFlag: if true (default), preserves _bannerAutoScrollEnabled
+   181→  /// so didChangeAppLifecycleState can restart the timer on app resume.
+   182→  /// If false, clears the flag — used when we're tearing down the banner
+   183→  /// entirely (e.g. on dispose, or when the banner is hidden because no
+   184→  /// banner images are configured).
+   185→  void _pauseAutoScroll({bool keepEnabledFlag = true}) {
+   186→    _autoScrollTimer?.cancel();
+   187→    _autoScrollTimer = null;
+   188→    if (!keepEnabledFlag) {
+   189→      _bannerAutoScrollEnabled = false;
+   190→    }
+   191→  }
+   192→
+   193→  /// Tear down the banner PageController so a fresh one is created on the
+   194→  /// next _buildBannerSlider call. Used whenever the banner is about to
+   195→  /// disappear from the widget tree (e.g. skeleton loading appears during
+   196→  /// pull-to-refresh). Disposing the controller prevents the OLD detached
+   197→  /// controller from being animated by a lingering timer and keeps
+   198→  /// _currentAbsolutePage in sync with the new initialPage on rebuild.
+   199→  void _resetBannerController() {
+   200→    // Keep the enabled flag here — we'll restart the timer once banner
+   201→    // data arrives in _loadData's postFrame callback.
+   202→    _pauseAutoScroll(keepEnabledFlag: true);
+   203→    _bannerController?.dispose();
+   204→    _bannerController = null;
+   205→    // Reset to a safe default; _buildBannerSlider will set it to the
+   206→    // new initialPage once the controller is recreated.
+   207→    _currentAbsolutePage = 0;
+   208→    _currentBannerIndex = 0;
+   209→  }
+   210→
+   211→  /// Silent background refresh — does NOT show skeleton loader. Used by
+   212→  /// refresh() above and by Navigator.push(...).then() callbacks in
+   213→  /// home_page.dart. Falls back to _loadData if lists are still empty.
+   214→  Future<void> _refreshSilently() async {
+   215→    if (_allMovies.isEmpty && _allSeries.isEmpty && _trendingMovies.isEmpty) {
+   216→      // Initial load never completed — fall back to full load with skeleton.
+   217→      return _loadData();
+   218→    }
+   219→    try {
+   220→      final results = await Future.wait([
+   221→        _contentService.getBannerConfig().catchError((e) => <String>[]),
+   222→        _contentService.getTrendingMovies().catchError((_) => <Movie>[]),
+   223→        _contentService.getTrendingTvShows().catchError((_) => <Movie>[]),
+   224→        _contentService.getMovies(limit: _homeLimit).catchError((_) => <Map<String, dynamic>>{}),
+   225→        _contentService.getSeries(limit: _homeLimit).catchError((_) => <Map<String, dynamic>>{}),
+   226→      ]);
+   227→
+   228→      final bannerUrls = results[0] as List<String>;
+   229→      final trendingMovies = results[1] as List<Movie>;
+   230→      final trendingTvShows = results[2] as List<Movie>;
+   231→      final moviesResult = results[3];
+   232→      final seriesResult = results[4];
+   233→
+   234→      List<Movie> allMovies = [];
+   235→      List<Movie> allSeries = [];
+   236→      if (moviesResult is Map<String, dynamic>) {
+   237→        allMovies = List<Movie>.from(moviesResult['movies'] ?? []);
+   238→      }
+   239→      if (seriesResult is Map<String, dynamic>) {
+   240→        allSeries = List<Movie>.from(seriesResult['movies'] ?? []);
+   241→      }
+   242→
+   243→      if (mounted) {
+   244→        // Detect whether the banner image set actually changed. We compare
+   245→        // BOTH the length AND the contents, because the count alone can
+   246→        // miss the case where an image was replaced with a different URL
+   247→        // at the same position.
+   248→        final bannerChanged = !_listEquals(bannerUrls, _bannerImageUrls);
+   249→
+   250→        // ALWAYS pause the timer before setState — even if bannerChanged
+   251→        // is false, the existing timer is now pointing at potentially stale
+   252→        // _currentAbsolutePage state (e.g. if the PageController was
+   253→        // recreated elsewhere). _startAutoScroll will re-sync it on restart.
+   254→        // We keep the enabled flag so that didChangeAppLifecycleState
+   255→        // can still resume correctly if the app gets backgrounded during
+   256→        // this refresh.
+   257→        _pauseAutoScroll(keepEnabledFlag: true);
+   258→
+   259→        setState(() {
+   260→          _bannerImageUrls = bannerUrls;
+   261→          _trendingMovies = trendingMovies;
+   262→          _trendingTvShows = trendingTvShows;
+   263→          _allMovies = allMovies;
+   264→          _allSeries = allSeries;
+   265→        });
+   266→
+   267→        // If the banner set changed, dispose the old PageController so a
+   268→        // fresh one (with a correct initialPage for the new image count)
+   269→        // is created on the next build. Without this, the existing
+   270→        // controller's initialPage (sized for the OLD image count) could
+   271→        // be misaligned with the new mod-loop, causing rapid backward
+   272→        // scroll glitches.
+   273→        if (bannerChanged) {
+   274→          _bannerController?.dispose();
+   275→          _bannerController = null;
+   276→          _currentAbsolutePage = 0;
+   277→          _currentBannerIndex = 0;
+   278→        }
+   279→
+   280→        // Restart the auto-scroll timer on the next frame, AFTER the
+   281→        // setState above has been committed to the widget tree and the
+   282→        // lazy _bannerController has had a chance to recreate itself
+   283→        // with the correct initialPage for the (possibly new) image
+   284→        // count. Skipping this frame would cause _startAutoScroll to
+   285→        // read a stale/null controller.
+   286→        WidgetsBinding.instance.addPostFrameCallback((_) {
+   287→          if (mounted && _bannerImageUrls.isNotEmpty) {
+   288→            _startAutoScroll();
+   289→          } else if (mounted && _bannerImageUrls.isEmpty) {
+   290→            // No banner configured — make sure the enabled flag is cleared
+   291→            // so didChangeAppLifecycleState doesn't try to restart a
+   292→            // timer that has nothing to scroll.
+   293→            _bannerAutoScrollEnabled = false;
+   294→          }
+   295→        });
+   296→
+   297→        // Reload tag-based sections in the background.
+   298→        _loadTagBasedData();
+   299→      }
+   300→    } catch (e) {
+   301→      debugPrint('Home silent refresh failed: $e');
+   302→      // Don't show error UI — keep the previously-loaded data visible.
+   303→    }
+   304→  }
+   305→
+   306→  Future<void> _loadData() async {
+   307→    // PAUSE the auto-scroll timer and tear down the banner controller
+   308→    // BEFORE the skeleton replaces the banner in the widget tree. This
+   309→    // closes the 'banner glitches during pull-to-refresh' bug: previously
+   310→    // the timer kept ticking against the OLD (now-detached) controller
+   311→    // while the skeleton was visible, and on data arrival a NEW controller
+   312→    // was created with a fresh initialPage but the lingering timer was
+   313→    // still pointing at the stale _currentAbsolutePage — producing rapid
+   314→    // jumps/glitches.
+   315→    _resetBannerController();
+   316→
+   317→    setState(() {
+   318→      _isLoading = true;
+   319→      _error = null;
+   320→    });
+   321→    try {
+   322→      // Load banner config and movie data in parallel.
+   323→      // Each future is wrapped with catchError so that one failure (e.g.
+   324→      // banner doc missing or temporarily failing) doesn't break the whole
+   325→      // home screen — the rest of the data still loads.
+   326→      final results = await Future.wait([
+   327→        _contentService.getBannerConfig().catchError((e) {
+   328→          debugPrint('Home: getBannerConfig failed, hiding banner: $e');
+   329→          return <String>[];
+   330→        }),
+   331→        _contentService.getTrendingMovies().catchError((_) => <Movie>[]),
+   332→        _contentService.getTrendingTvShows().catchError((_) => <Movie>[]),
+   333→        _contentService.getMovies(limit: _homeLimit).catchError((_) => <Map<String, dynamic>>{}),
+   334→        _contentService.getSeries(limit: _homeLimit).catchError((_) => <Map<String, dynamic>>{}),
+   335→      ]);
+   336→
+   337→      final bannerUrls = results[0] as List<String>;
+   338→      final trendingMovies = results[1] as List<Movie>;
+   339→      final trendingTvShows = results[2] as List<Movie>;
+   340→      final moviesResult = results[3];
+   341→      final seriesResult = results[4];
+   342→
+   343→      List<Movie> allMovies = [];
+   344→      List<Movie> allSeries = [];
+   345→
+   346→      if (moviesResult is Map<String, dynamic>) {
+   347→        allMovies = List<Movie>.from(moviesResult['movies'] ?? []);
+   348→      }
+   349→      if (seriesResult is Map<String, dynamic>) {
+   350→        allSeries = List<Movie>.from(seriesResult['movies'] ?? []);
+   351→      }
+   352→
+   353→      if (mounted) {
+   354→        setState(() {
+   355→          _bannerImageUrls = bannerUrls;
+   356→          _trendingMovies = trendingMovies;
+   357→          _trendingTvShows = trendingTvShows;
+   358→          _allMovies = allMovies;
+   359→          _allSeries = allSeries;
+   360→          _isLoading = false;
+   361→          _isLoadingTags = true;
+   362→        });
+   363→
+   364→        // Start the auto-scroll timer ONLY AFTER banner data has actually
+   365→        // arrived AND the banner widget is back in the tree (i.e. we are
+   366→        // no longer showing the skeleton). We use addPostFrameCallback so
+   367→        // that the lazy _bannerController (created inside _buildBannerSlider
+   368→        // on the next frame) is fully attached to the PageView before we
+   369→        // read its initial page and start ticking the timer. This
+   370→        // guarantees the timer's first tick targets the correct absolute
+   371→        // page instead of jumping backwards from initialPage.
+   372→        //
+   373→        // Defensive: also cancel any stale timer that may have survived
+   374→        // from a previous load cycle — _startAutoScroll already does this,
+   375→        // but doing it here makes the intent explicit and protects against
+   376→        // future regressions. We keep the enabled flag so lifecycle
+   377→        // resume-after-pause knows to restart the timer.
+   378→        _pauseAutoScroll(keepEnabledFlag: true);
+   379→        WidgetsBinding.instance.addPostFrameCallback((_) {
+   380→          if (mounted && _bannerImageUrls.isNotEmpty && !_isLoading) {
+   381→            _startAutoScroll();
+   382→          } else if (mounted && _bannerImageUrls.isEmpty) {
+   383→            // No banner configured — clear the enabled flag so that
+   384→            // didChangeAppLifecycleState doesn't try to restart a timer
+   385→            // that has nothing to scroll.
+   386→            _bannerAutoScrollEnabled = false;
+   387→          }
+   388→        });
+   389→
+   390→        _loadTagBasedData();
+   391→      }
+   392→    } catch (e) {
+   393→      debugPrint('Error in _loadData: $e');
+   394→      if (mounted) {
+   395→        setState(() {
+   396→          _error = e.toString();
+   397→          _isLoading = false;
+   398→        });
+   399→      }
+   400→    }
+   401→  }
+   402→
+   403→  /// Shallow list equality helper for comparing two banner URL lists.
+   404→  /// Returns true if both lists have the same length and contain the
+   405→  /// same strings in the same order. Used by _refreshSilently to decide
+   406→  /// whether to dispose + recreate the PageController.
+   407→  bool _listEquals(List<String> a, List<String> b) {
+   408→    if (identical(a, b)) return true;
+   409→    if (a.length != b.length) return false;
+   410→    for (var i = 0; i < a.length; i++) {
+   411→      if (a[i] != b[i]) return false;
+   412→    }
+   413→    return true;
+   414→  }
+   415→
+   416→  Future<void> _loadTagBasedData() async {
+   417→    final tagEntries = <MapEntry<String, Future<List<Movie>>>>[
+   418→      MapEntry('K Drama', _contentService.getMoviesByTagSimple('K Drama', limit: _homeLimit)),
+   419→      MapEntry('4K Movies', _contentService.getMoviesByTagSimple('4K Movies', limit: _homeLimit)),
+   420→      MapEntry('4K Series', _contentService.getMoviesByTagSimple('4K Series', limit: _homeLimit)),
+   421→      MapEntry('Animation', _contentService.getMoviesByTagSimple('Animation', limit: _homeLimit)),
+   422→      MapEntry('Anime', _contentService.getMoviesByTagSimple('Anime', limit: _homeLimit)),
+   423→      MapEntry('Bollywood', _contentService.getMoviesByTagSimple('Bollywood', limit: _homeLimit)),
+   424→    ];
+   425→
+   426→    // Accumulate results locally, then call setState once after all are done
+   427→    List<Movie> kDramaMovies = _kDramaMovies;
+   428→    List<Movie> fourKMovies = _fourKMovies;
+   429→    List<Movie> fourKSeries = _fourKSeries;
+   430→    List<Movie> animationMovies = _animationMovies;
+   431→    List<Movie> animeMovies = _animeMovies;
+   432→    List<Movie> bollywoodMovies = _bollywoodMovies;
+   433→
+   434→    for (final entry in tagEntries) {
+   435→      try {
+   436→        final movies = await entry.value;
+   437→        switch (entry.key) {
+   438→          case 'K Drama':
+   439→            kDramaMovies = movies;
+   440→            break;
+   441→          case '4K Movies':
+   442→            fourKMovies = movies;
+   443→            break;
+   444→          case '4K Series':
+   445→            fourKSeries = movies;
+   446→            break;
+   447→          case 'Animation':
+   448→            animationMovies = movies;
+   449→            break;
+   450→          case 'Anime':
+   451→            animeMovies = movies;
+   452→            break;
+   453→          case 'Bollywood':
+   454→            bollywoodMovies = movies;
+   455→            break;
+   456→        }
+   457→      } catch (e) {
+   458→        debugPrint('Error loading tag ${entry.key}: $e');
+   459→      }
+   460→    }
+   461→
+   462→    // Single setState after all tag data is loaded
+   463→    if (mounted) {
+   464→      setState(() {
+   465→        _kDramaMovies = kDramaMovies;
+   466→        _fourKMovies = fourKMovies;
+   467→        _fourKSeries = fourKSeries;
+   468→        _animationMovies = animationMovies;
+   469→        _animeMovies = animeMovies;
+   470→        _bollywoodMovies = bollywoodMovies;
+   471→        _isLoadingTags = false;
+   472→      });
+   473→    }
+   474→  }
+   475→
+   476→  void _navigateToDetail(Movie movie) async {
+   477→    final isSeries = movie.type == 'series';
+   478→    // Save to recent before navigating
+   479→    await _recentService.addRecent(movie);
+   480→    if (!mounted) return;
+   481→    Navigator.push(
+   482→      context,
+   483→      MaterialPageRoute(
+   484→        builder: (_) => isSeries
+   485→            ? SeriesDetailScreen(slug: movie.slug)
+   486→            : MovieDetailScreen(slug: movie.slug),
+   487→      ),
+   488→    );
+   489→  }
+   490→
+   491→  void _navigateToCategory(CategoryPage page) {
+   492→    Navigator.push(
+   493→      context,
+   494→      MaterialPageRoute(builder: (_) => page),
+   495→    );
+   496→  }
+   497→
+   498→  @override
+   499→  Widget build(BuildContext context) {
+   500→    final appConfig = Provider.of<AppConfig>(context);
+   501→    final theme = Theme.of(context);
+   502→
+   503→    return Scaffold(
+   504→      body: RefreshIndicator(
+   505→        onRefresh: _loadData,
+   506→        child: (_isLoading || _isLoadingTags)
+   507→            ? _buildSkeletonLoading(theme, appConfig)
+   508→            : _error != null
+   509→                ? _buildErrorWidget(appConfig)
+   510→                : _buildContent(appConfig, theme),
+   511→      ),
+   512→    );
+   513→  }
+   514→
+   515→  /// Skeleton loading matching expected number of sections
+   516→  Widget _buildSkeletonLoading(ThemeData theme, AppConfig appConfig) {
+   517→    return SingleChildScrollView(
+   518→      physics: const AlwaysScrollableScrollPhysics(),
+   519→      child: Column(
+   520→        crossAxisAlignment: CrossAxisAlignment.start,
+   521→        children: [
+   522→          // Banner skeleton
+   523→          const BannerSkeleton(),
+   524→          const SizedBox(height: 8),
+   525→          // Movies section skeleton
+   526→          TrendingMovieSkeleton(title: appConfig.translate('movies'), count: 5),
+   527→          const SizedBox(height: 4),
+   528→          // Series section skeleton
+   529→          TrendingMovieSkeleton(title: appConfig.translate('series'), count: 5),
+   530→          const SizedBox(height: 4),
+   531→          // Trending Movies skeleton
+   532→          TrendingMovieSkeleton(title: appConfig.translate('trending_movies'), count: 5),
+   533→          const SizedBox(height: 4),
+   534→          // Trending TV Shows skeleton
+   535→          TrendingMovieSkeleton(title: appConfig.translate('trending_tv_shows'), count: 5),
+   536→          const SizedBox(height: 4),
+   537→          // K Drama skeleton
+   538→          TrendingMovieSkeleton(title: appConfig.translate('k_drama'), count: 5),
+   539→          const SizedBox(height: 4),
+   540→          // 4K Movies skeleton
+   541→          TrendingMovieSkeleton(title: appConfig.translate('4k_movies'), count: 5),
+   542→          const SizedBox(height: 4),
+   543→          // 4K Series skeleton
+   544→          TrendingMovieSkeleton(title: appConfig.translate('4k_series'), count: 5),
+   545→          const SizedBox(height: 4),
+   546→          // Animation skeleton
+   547→          TrendingMovieSkeleton(title: appConfig.translate('animation'), count: 5),
+   548→          const SizedBox(height: 4),
+   549→          // Anime skeleton
+   550→          TrendingMovieSkeleton(title: appConfig.translate('anime'), count: 5),
+   551→          const SizedBox(height: 4),
+   552→          // Bollywood skeleton
+   553→          TrendingMovieSkeleton(title: appConfig.translate('bollywood'), count: 5),
+   554→          const SizedBox(height: 16),
+   555→        ],
+   556→      ),
+   557→    );
+   558→  }
+   559→
+   560→  Widget _buildErrorWidget(AppConfig appConfig) {
+   561→    return Center(
+   562→      child: Padding(
+   563→        padding: const EdgeInsets.all(24),
+   564→        child: Column(
+   565→          mainAxisAlignment: MainAxisAlignment.center,
+   566→          children: [
+   567→            const Icon(Icons.error_outline, size: 48, color: Colors.redAccent),
+   568→            const SizedBox(height: 16),
+   569→            Text(
+   570→              appConfig.translate('error_occurred'),
+   571→              style: const TextStyle(fontSize: 16),
+   572→            ),
+   573→            const SizedBox(height: 4),
+   574→            Text(
+   575→              _error != null ? _error! : '',
+   576→              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+   577→              textAlign: TextAlign.center,
+   578→              maxLines: 5,
+   579→              overflow: TextOverflow.ellipsis,
+   580→            ),
+   581→            const SizedBox(height: 16),
+   582→            ElevatedButton(
+   583→              onPressed: _loadData,
+   584→              child: Text(appConfig.translate('retry')),
+   585→            ),
+   586→          ],
+   587→        ),
+   588→      ),
+   589→    );
+   590→  }
+   591→
+   592→  Widget _buildContent(AppConfig appConfig, ThemeData theme) {
+   593→    return SingleChildScrollView(
+   594→      physics: const AlwaysScrollableScrollPhysics(),
+   595→      child: Column(
+   596→        crossAxisAlignment: CrossAxisAlignment.start,
+   597→        children: [
+   598→          // Banner Slider (Admin-managed images)
+   599→          _buildBannerSlider(theme),
+   600→
+   601→          const SizedBox(height: 8),
+   602→          // Movies Section
+   603→          if (_allMovies.isNotEmpty)
+   604→            TrendingMovieComponent(
+   605→              title: appConfig.translate('movies'),
+   606→              movies: _allMovies.length > _homeLimit ? _allMovies.sublist(0, _homeLimit) : _allMovies,
+   607→              onMovieTap: _navigateToDetail,
+   608→              onMore: () {
+   609→                widget.onNavigateToTab?.call(kMoviesTab);
+   610→              },
+   611→            ),
+   612→
+   613→          const SizedBox(height: 4),
+   614→
+   615→          // Series Section
+   616→          if (_allSeries.isNotEmpty)
+   617→            TrendingMovieComponent(
+   618→              title: appConfig.translate('series'),
+   619→              movies: _allSeries.length > _homeLimit ? _allSeries.sublist(0, _homeLimit) : _allSeries,
+   620→              onMovieTap: _navigateToDetail,
+   621→              onMore: () {
+   622→                widget.onNavigateToTab?.call(kSeriesTab);
+   623→              },
+   624→            ),
+   625→
+   626→          const SizedBox(height: 4),
+   627→
+   628→          // Trending Movies
+   629→          if (_trendingMovies.isNotEmpty)
+   630→            TrendingMovieComponent(
+   631→              title: appConfig.translate('trending_movies'),
+   632→              movies: _trendingMovies.length > _homeLimit ? _trendingMovies.sublist(0, _homeLimit) : _trendingMovies,
+   633→              onMovieTap: _navigateToDetail,
+   634→              onMore: () {
+   635→                _navigateToCategory(CategoryPage(
+   636→                  title: appConfig.translate('trending_movies'),
+   637→                  filterType: CategoryFilterType.trendingMovies,
+   638→                ));
+   639→              },
+   640→            ),
+   641→
+   642→          const SizedBox(height: 4),
+   643→
+   644→          // Trending Series
+   645→          if (_trendingTvShows.isNotEmpty)
+   646→            TrendingMovieComponent(
+   647→              title: appConfig.translate('trending_tv_shows'),
+   648→              movies: _trendingTvShows.length > _homeLimit ? _trendingTvShows.sublist(0, _homeLimit) : _trendingTvShows,
+   649→              onMovieTap: _navigateToDetail,
+   650→              onMore: () {
+   651→                _navigateToCategory(CategoryPage(
+   652→                  title: appConfig.translate('trending_tv_shows'),
+   653→                  filterType: CategoryFilterType.trendingSeries,
+   654→                ));
+   655→              },
+   656→            ),
+   657→
+   658→          const SizedBox(height: 4),
+   659→
+   660→          // K Drama
+   661→          if (_kDramaMovies.isNotEmpty)
+   662→            TrendingMovieComponent(
+   663→              title: appConfig.translate('k_drama'),
+   664→              movies: _kDramaMovies.length > _homeLimit ? _kDramaMovies.sublist(0, _homeLimit) : _kDramaMovies,
+   665→              onMovieTap: _navigateToDetail,
+   666→              onMore: () {
+   667→                _navigateToCategory(CategoryPage(
+   668→                  title: appConfig.translate('k_drama'),
+   669→                  filterType: CategoryFilterType.tag,
+   670→                  filterValue: 'K Drama',
+   671→                ));
+   672→              },
+   673→            ),
+   674→
+   675→          const SizedBox(height: 4),
+   676→
+   677→          // 4K Movies
+   678→          if (_fourKMovies.isNotEmpty)
+   679→            TrendingMovieComponent(
+   680→              title: appConfig.translate('4k_movies'),
+   681→              movies: _fourKMovies.length > _homeLimit ? _fourKMovies.sublist(0, _homeLimit) : _fourKMovies,
+   682→              onMovieTap: _navigateToDetail,
+   683→              onMore: () {
+   684→                _navigateToCategory(CategoryPage(
+   685→                  title: appConfig.translate('4k_movies'),
+   686→                  filterType: CategoryFilterType.tag,
+   687→                  filterValue: '4K Movies',
+   688→                ));
+   689→              },
+   690→            ),
+   691→
+   692→          const SizedBox(height: 4),
+   693→
+   694→          // 4K Series
+   695→          if (_fourKSeries.isNotEmpty)
+   696→            TrendingMovieComponent(
+   697→              title: appConfig.translate('4k_series'),
+   698→              movies: _fourKSeries.length > _homeLimit ? _fourKSeries.sublist(0, _homeLimit) : _fourKSeries,
+   699→              onMovieTap: _navigateToDetail,
+   700→              onMore: () {
+   701→                _navigateToCategory(CategoryPage(
+   702→                  title: appConfig.translate('4k_series'),
+   703→                  filterType: CategoryFilterType.tag,
+   704→                  filterValue: '4K Series',
+   705→                ));
+   706→              },
+   707→            ),
+   708→
+   709→          const SizedBox(height: 4),
+   710→
+   711→          // Animation
+   712→          if (_animationMovies.isNotEmpty)
+   713→            TrendingMovieComponent(
+   714→              title: appConfig.translate('animation'),
+   715→              movies: _animationMovies.length > _homeLimit ? _animationMovies.sublist(0, _homeLimit) : _animationMovies,
+   716→              onMovieTap: _navigateToDetail,
+   717→              onMore: () {
+   718→                _navigateToCategory(CategoryPage(
+   719→                  title: appConfig.translate('animation'),
+   720→                  filterType: CategoryFilterType.tag,
+   721→                  filterValue: 'Animation',
+   722→                ));
+   723→              },
+   724→            ),
+   725→
+   726→          const SizedBox(height: 4),
+   727→
+   728→          // Anime
+   729→          if (_animeMovies.isNotEmpty)
+   730→            TrendingMovieComponent(
+   731→              title: appConfig.translate('anime'),
+   732→              movies: _animeMovies.length > _homeLimit ? _animeMovies.sublist(0, _homeLimit) : _animeMovies,
+   733→              onMovieTap: _navigateToDetail,
+   734→              onMore: () {
+   735→                _navigateToCategory(CategoryPage(
+   736→                  title: appConfig.translate('anime'),
+   737→                  filterType: CategoryFilterType.tag,
+   738→                  filterValue: 'Anime',
+   739→                ));
+   740→              },
+   741→            ),
+   742→
+   743→          const SizedBox(height: 4),
+   744→
+   745→          // Bollywood
+   746→          if (_bollywoodMovies.isNotEmpty)
+   747→            TrendingMovieComponent(
+   748→              title: appConfig.translate('bollywood'),
+   749→              movies: _bollywoodMovies.length > _homeLimit ? _bollywoodMovies.sublist(0, _homeLimit) : _bollywoodMovies,
+   750→              onMovieTap: _navigateToDetail,
+   751→              onMore: () {
+   752→                _navigateToCategory(CategoryPage(
+   753→                  title: appConfig.translate('bollywood'),
+   754→                  filterType: CategoryFilterType.tag,
+   755→                  filterValue: 'Bollywood',
+   756→                ));
+   757→              },
+   758→            ),
+   759→
+   760→          // Empty state
+   761→          if (_trendingMovies.isEmpty &&
+   762→              _trendingTvShows.isEmpty &&
+   763→              _allMovies.isEmpty &&
+   764→              _allSeries.isEmpty)
+   765→            SizedBox(
+   766→              height: 300,
+   767→              child: Center(
+   768→                child: Text(
+   769→                  appConfig.translate('no_results'),
+   770→                  style: theme.textTheme.bodyLarge,
+   771→                ),
+   772→              ),
+   773→            ),
+   774→
+   775→          const SizedBox(height: 8),
+   776→        ],
+   777→      ),
+   778→    );
+   779→  }
+   780→
+   781→  /// Premium Banner Slider — Admin-managed pure image carousel
+   782→  /// Features: Card style with rounded corners, shadow, infinite loop, auto-scroll, dots indicator
+   783→  Widget _buildBannerSlider(ThemeData theme) {
+   784→    final isDark = theme.brightness == Brightness.dark;
+   785→
+   786→    // If no banner images configured, show nothing
+   787→    if (_bannerImageUrls.isEmpty) return const SizedBox.shrink();
+   788→
+   789→    // Lazily create the banner PageController once we know the image count.
+   790→    // initialPage is set to a large multiple of the image count so the user
+   791→    // can scroll both backwards and forwards (infinite-loop effect).
+   792→    // The controller is reused across rebuilds and disposed in dispose().
+   793→    if (_bannerController == null) {
+   794→      final initialPage = _bannerImageUrls.length * 1000;
+   795→      _bannerController = PageController(initialPage: initialPage);
+   796→      // Keep the absolute-page tracker in sync with the controller's
+   797→      // initialPage so the auto-scroll timer advances from the correct
+   798→      // position instead of jumping backwards.
+   799→      _currentAbsolutePage = initialPage;
+   800→    }
+   801→
+   802→    return Padding(
+   803→      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+   804→      child: Column(
+   805→        children: [
+   806→          // Banner card with rounded corners and shadow
+   807→          Container(
+   808→            decoration: BoxDecoration(
+   809→              borderRadius: BorderRadius.circular(12),
+   810→              boxShadow: [
+   811→                BoxShadow(
+   812→                  color: Colors.black.withOpacity(0.3),
+   813→                  blurRadius: 8,
+   814→                  spreadRadius: 1,
+   815→                  offset: const Offset(0, 4),
+   816→                ),
+   817→              ],
+   818→            ),
+   819→            child: ClipRRect(
+   820→              borderRadius: BorderRadius.circular(12),
+   821→              child: SizedBox(
+   822→                height: 180,
+   823→                child: Stack(
+   824→                  children: [
+   825→                    // Infinite loop PageView (reuse single _bannerController to avoid memory leak)
+   826→                    PageView.builder(
+   827→                      controller: _bannerController,
+   828→                      onPageChanged: (index) {
+   829→                        // Track BOTH the absolute page (for the auto-scroll
+   830→                        // timer's next animateToPage call) AND the modded
+   831→                        // real index (for the dots indicator).
+   832→                        _currentAbsolutePage = index;
+   833→                        final realIndex = index % _bannerImageUrls.length;
+   834→                        setState(() => _currentBannerIndex = realIndex);
+   835→                      },
+   836→                      itemBuilder: (context, index) {
+   837→                        final realIndex = index % _bannerImageUrls.length;
+   838→                        final imageUrl = _bannerImageUrls[realIndex];
+   839→
+   840→                        return CachedNetworkImage(
+   841→                          imageUrl: imageUrl,
+   842→                          fit: BoxFit.cover,
+   843→                          width: double.infinity,
+   844→                          height: double.infinity,
+   845→                          placeholder: (context, url) => Container(
+   846→                            color: isDark ? const Color(0xFF1A1A1A) : Colors.grey.shade300,
+   847→                            child: Center(
+   848→                              child: SizedBox(
+   849→                                width: 24,
+   850→                                height: 24,
+   851→                                child: CircularProgressIndicator(
+   852→                                  strokeWidth: 2,
+   853→                                  color: const Color(0xFFE50914),
+   854→                                ),
+   855→                              ),
+   856→                            ),
+   857→                          ),
+   858→                          errorWidget: (context, url, error) => Container(
+   859→                            color: isDark ? const Color(0xFF1A1A1A) : Colors.grey.shade300,
+   860→                            child: Icon(
+   861→                              Icons.broken_image_outlined,
+   862→                              color: isDark ? Colors.white24 : Colors.black12,
+   863→                              size: 48,
+   864→                            ),
+   865→                          ),
+   866→                        );
+   867→                      },
+   868→                    ),
+   869→                  ],
+   870→                ),
+   871→              ),
+   872→            ),
+   873→          ),
+   874→
+   875→          const SizedBox(height: 10),
+   876→
+   877→          // Dots indicator
+   878→          Row(
+   879→            mainAxisAlignment: MainAxisAlignment.center,
+   880→            children: List.generate(_bannerImageUrls.length, (index) {
+   881→              final isActive = index == _currentBannerIndex;
+   882→              return AnimatedContainer(
+   883→                duration: const Duration(milliseconds: 300),
+   884→                margin: const EdgeInsets.symmetric(horizontal: 3),
+   885→                width: isActive ? 20 : 6,
+   886→                height: 6,
+   887→                decoration: BoxDecoration(
+   888→                  color: isActive ? const Color(0xFFE50914) : (isDark ? Colors.white38 : Colors.black26),
+   889→                  borderRadius: BorderRadius.circular(3),
+   890→                ),
+   891→              );
+   892→            }),
+   893→          ),
+   894→        ],
+   895→      ),
+   896→    );
+   897→  }
+   898→}
+   899→

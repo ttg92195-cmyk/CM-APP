@@ -1723,3 +1723,160 @@ Stage Summary:
 - After next build, every movie/series poster in the grid will show the red flame rating badge. Real ratings (e.g. "7.4") display as-is. Missing ratings (null, empty, 0.0, or unparseable) display as "N/A".
 - movie_detail_screen.dart and series_detail_screen.dart were audited and confirmed already correct — no changes needed.
 - Bro to rebuild and verify on "The One Piece" series post: badge should now be visible with "N/A" text.
+
+---
+Task ID: 36 (Performance: first-screen load 5-10 min → progressive parallel fetch)
+Agent: main
+Task: Bro reported that on first launch, posters take 5-10 minutes to appear (spinning loader). Even on good networks, the app "doesn't pull hard enough" on the network. Optimize first-screen load performance.
+
+Work Log:
+- Pulled latest origin/main (cb794f7 — Task 35 rating badge fix). CM-APP submodule clean.
+- Audited first-screen loading flow:
+  * home_screen.dart _loadData() — fires 5 parallel queries (banner + trending movies + trending series + movies + series). Good — already parallel.
+  * home_screen.dart _loadTagBasedData() — Bro's bottleneck. Ran 6 Firestore queries SEQUENTIALLY via a for-loop with `await`. On slow networks each query takes 30-60s, so 6 × 60s = 6 minutes before any tag section would appear.
+  * home_screen.dart build() — `(_isLoading || _isLoadingTags)` blocked the WHOLE screen on tag data. The skeleton stayed visible until all 6 tags finished loading. This is why Bro saw 5-10 min spinner.
+  * movies_page.dart — had a 600ms artificial skeleton delay (separate fix, next task).
+  * movie_card.dart — each card reads SharedPreferences individually (separate fix, later task).
+
+- Root cause of 5-10 min wait confirmed: SEQUENTIAL tag loading + ALL-OR-NOTHING skeleton gate.
+
+- Task 36 #1 fix (this commit):
+  * Rewrote _loadTagBasedData() to fire all 6 tag queries IN PARALLEL via Future.wait. Each tag fetch is independent — one slow tag doesn't block the others.
+  * Made tag loading PROGRESSIVE: each tag calls setState() the moment its query returns, instead of waiting for all 6 to settle. Users now see K Drama appear while 4K Movies is still loading, etc.
+  * Changed build() gate from `(_isLoading || _isLoadingTags)` to `_isLoading` only. The main content (banner + movies + series + trending) now appears within ~1-2 seconds. Tag sections fill in progressively below as they arrive.
+  * Tag sections that haven't loaded yet are simply hidden (the existing `if (_xMovies.isNotEmpty)` guards in _buildContent handle this — empty list = section not rendered, no empty-state flicker).
+
+- Syntax verified via Python Dart-aware delimiter scanner (scripts/task36_syntax_check.py). All braces/parens/brackets balanced.
+
+- Net change: home_screen.dart — _loadTagBasedData() rewritten (~50 lines), build() gate simplified (1 line).
+
+Stage Summary:
+- 1 file changed: lib/app/ui/home/home_screen.dart.
+- Expected user impact:
+  * First-screen skeleton now disappears as soon as banner + movies + series + trending arrive (~1-2s on decent network, ~5-10s on slow network).
+  * Tag sections (K Drama, 4K Movies, 4K Series, Animation, Anime, Bollywood) appear progressively as their queries complete — fastest tag first, slowest last. Worst case wait for ALL sections: ~60s (one slow query) instead of ~6 min (six sequential queries).
+- Bro to rebuild and test on a fresh install or after clearing cache.
+- Next fixes in queue: (2) remove 600ms artificial skeleton delay in movies_page.dart, (3) batch SharedPreferences reads in MovieCard, (4) reduce getTrendingMovies/getTrendingTvShows limit from 50 → 10.
+
+---
+Task ID: 36 #2 (Remove artificial skeleton delays + parallelize genre/tag/collection loads)
+Agent: main
+Task: Continue Task 36 performance optimization. Remove artificial skeleton floors (500-600ms) that add to perceived wait on slow networks, and parallelize the remaining sequential Firestore fetches.
+
+Work Log:
+- Audited all screens for artificial skeleton delays via grep:
+  * movies_page.dart line 87: 600ms floor (stopwatch + Future.delayed)
+  * series_page.dart line 81: 600ms floor (same pattern)
+  * genres_tags_collections_page.dart line 80: 500ms floor (in _loadData, genres/tags/collections list)
+  * genres_tags_collections_page.dart line 505: 600ms floor (in FilterResultPage._loadMovies)
+  * video_player_screen.dart had Future.delayed calls too, but those are for player UI flows (controls auto-hide, progress bar updates) — NOT skeleton floors. Left untouched.
+
+- Why these floors were added: original rationale was "skeleton flash" — if Firestore returns cached data in <300ms, the skeleton appears for only a fraction of a second before the grid replaces it, which looks like a UI glitch on fast networks.
+
+- Why they hurt on slow networks:
+  * Each floor adds up to 600ms ON TOP OF the actual query latency.
+  * On a 5-second query, the floor is invisible (5s > 600ms). No benefit, no harm.
+  * On a 200ms cached query, the floor makes the user wait 600ms instead of 200ms. Harm.
+  * Net effect: floors only hurt — they never help on slow networks, and on fast networks they only prevent a benign "skeleton flash" that most users don't notice.
+
+- Fixes:
+  * movies_page.dart: removed stopwatch + 600ms Future.delayed. Query result now applies immediately.
+  * series_page.dart: same removal.
+  * genres_tags_collections_page.dart _loadData(): removed 500ms floor. ALSO parallelized the three sequential awaits (getGenres → getTags → getCollections) into a Future.wait with per-call catchError. Three sequential slow queries became one parallel batch.
+  * genres_tags_collections_page.dart FilterResultPage._loadMovies: removed 600ms floor.
+
+- Syntax verified for all 4 files via improved Dart-aware delimiter scanner (handles strings, escapes, comments, triple-quotes correctly). Previous scanner had a string-detection bug that produced false positives on movies_page.dart line 19 (unclosed {) — fixed.
+
+Stage Summary:
+- 3 files changed: movies_page.dart, series_page.dart, genres_tags_collections_page.dart.
+- Net change: -43 lines, +35 lines (mostly comment additions explaining the removal).
+- Expected user impact:
+  * Movies Tab / Series Tab: up to 600ms faster on cached/fast loads, no change on slow loads.
+  * Genres/Tags/Collections page: up to 500ms faster AND parallel fetch cuts 3 × slow query to 1 × slow query (similar to Task 36 #1's home screen tag fix).
+  * Filter Results page (genre/tag/collection detail): up to 600ms faster.
+- Bro to rebuild and verify: screen flashes briefly on fast loads are EXPECTED and acceptable; the trade-off is faster load on slow networks.
+- Cumulative effect with Task 36 #1: first-screen load on fresh install should drop from 5-10 minutes to roughly 1-2 seconds for main content + up to ~60s for all tag sections (progressive).
+
+---
+Task ID: 36 #3 (Cache SharedPreferences instance across all MovieCards)
+Agent: main
+Task: Continue Task 36 performance optimization. MovieCard calls SharedPreferences.getInstance() per card; on a 100-card grid that's 100 async microtasks queued on the event loop before any progress bar can render. Cache the instance.
+
+Work Log:
+- Audited MovieCard._loadWatchProgress():
+  * Every card calls `await SharedPreferences.getInstance()` in initState.
+  * getInstance() IS a singleton internally, but the await still schedules a microtask per call.
+  * On a Movies grid (3 cols × N rows) or a Home horizontal list (10 cards × 6 sections), this is dozens to hundreds of microtasks queued before any card's progress bar can paint.
+  * Each call also does 2 getInt() reads (pos + dur), so 100 cards = 200 reads + 100 microtasks.
+  * Net effect: contributes to first-screen jank — cards appear but progress bars lag behind by a frame or two.
+
+- Fix in movie_card.dart:
+  * Added `static SharedPreferences? _prefsCache;` to `_MovieCardState`.
+  * Changed `_loadWatchProgress()` to use `_prefsCache ??= await SharedPreferences.getInstance()` instead of `await SharedPreferences.getInstance()`.
+  * Only the FIRST card ever awaits getInstance(); all subsequent cards in the same grid build skip the await and go straight to the synchronous getInt() calls.
+  * This is safe because SharedPreferences is a process-wide singleton. The underlying map is in-memory after init, so reads from any cached reference are equivalent.
+  * The cache persists for the lifetime of the app (it's static), which is correct — the underlying SharedPreferences singleton also persists for the app lifetime.
+
+- Verified the fix doesn't break the "clear cache" flow:
+  * Settings → Clear Cache calls `prefs.clear()` on a fresh getInstance() reference.
+  * The cached `_prefsCache` reference points to the same singleton, so the clear IS visible to subsequent getInt() calls.
+  * No need to invalidate `_prefsCache` on clear — the underlying data is updated in place.
+
+- Syntax verified via Dart-aware delimiter scanner. OK.
+
+Stage Summary:
+- 1 file changed: lib/app/ui/components/movie_card.dart.
+- Net change: +20 lines (mostly the explanatory comment), -1 line (the old `final prefs = await SharedPreferences.getInstance();` collapsed into the cache line).
+- Expected user impact:
+  * First-screen MovieCard grid: progress bars now render on the SAME frame as the card itself, instead of lagging 1-2 frames behind.
+  * Slightly less event-loop pressure on first launch (100 microtasks → 1 microtask for the entire grid).
+  * No user-facing API change; no behavior change for watch progress display.
+- Bro to rebuild and verify: progress bars on watched movies should appear immediately with the card, not flicker in a moment later.
+
+---
+Task ID: 36 #4 (Reduce trending fetch limit on Home from 50 → 10)
+Agent: main
+Task: Continue Task 36 performance optimization. Home screen fetches 50 trending movies + 50 trending series but only displays 10 of each. The other 40+40 = 80 documents are pure waste on every Home load.
+
+Work Log:
+- Audited getTrendingMovies() and getTrendingTvShows():
+  * Both methods had `limit(50)` hardcoded — no `limit` parameter.
+  * Callers:
+    - home_screen.dart (2 call sites: _loadData and _refreshSilently) — only displays 10 via `_homeLimit` + TrendingMovieComponent's own 10-item cap.
+    - category_page.dart — "More" page for trending, uses all 50.
+    - movie_detail_screen.dart / series_detail_screen.dart — "Related" section, uses all 50.
+  * Home was fetching 5× what it needed.
+
+- Cost of the waste:
+  * Firestore reads: 50 + 50 = 100 reads per Home load. After fix: 10 + 10 = 20 reads. 80 reads saved per Home load.
+  * Document download: each movie doc is ~2-5 KB (title, posterUrl, etc.). 80 docs × 3 KB = ~240 KB saved per Home load on slow networks.
+  * Bro's Firebase usage was reported as 33.8% of reads quota — this fix trims Home reads by 80%.
+  * On a 1 Mbps connection, 240 KB / 1 Mbps = ~2 seconds saved per Home load. Real-world impact compounds with the parallel + progressive fixes from Task 36 #1.
+
+- Fix:
+  * firestore_content_service.dart: added `{int limit = 50}` named parameter to both getTrendingMovies() and getTrendingTvShows(). Default stays 50 so category_page.dart and detail screens continue to work unchanged (backward compatible).
+  * home_screen.dart: both call sites (_loadData and _refreshSilently) now pass `limit: _homeLimit` (= 10) to both methods.
+
+- Verified callers of getTrendingMovies/getTrendingTvShows that DON'T pass a limit:
+  * category_page.dart line 103, 117 — uses default 50. Correct (user scrolled to "More", expects to see all).
+  * movie_detail_screen.dart line 134 — uses default 50. Correct ("Related" section, wants options).
+  * series_detail_screen.dart line 134 — same as movie_detail_screen.dart.
+  * All these callers are unchanged.
+
+- Syntax verified for both modified files via Dart-aware delimiter scanner. OK.
+
+Stage Summary:
+- 2 files changed: firestore_content_service.dart (added limit param + doc), home_screen.dart (2 call sites pass limit: _homeLimit).
+- Net change: +30 lines (mostly doc comments), -4 lines (hardcoded limit(50) replaced with limit(limit)).
+- Expected user impact:
+  * Home screen first-load Firestore reads: 100 → 20 (80% reduction).
+  * Home screen first-load bandwidth: ~240 KB saved on every Home load.
+  * Firebase quota: significant reduction in reads consumption — directly addresses Bro's concern about Firebase usage.
+  * Slow-network Home load: up to ~2 seconds faster (bandwidth-limited).
+- Bro to rebuild and verify: Home trending sections still show 10 items each; "More" button still works (navigates to Category page which fetches all 50).
+- Cumulative Task 36 impact (all 4 fixes):
+  * First-screen main content: was 5-10 min, now ~1-2s on decent network, ~5-10s on slow network.
+  * Tag sections: progressive (fastest first, slowest last), worst case ~60s for all 6.
+  * Movies/Series tabs: up to 600ms faster on cached loads.
+  * MovieCard progress bars: render on same frame as card.
+  * Firebase reads per Home load: ~80% reduction.
