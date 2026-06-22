@@ -989,7 +989,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                                               fontSize: 9,
                                               fontStyle: FontStyle.italic,
                                               color: isDark
-                                                  ? Colors.white45
+                                                  ? Colors.white54
                                                   : Colors.black45,
                                             ),
                                           ),

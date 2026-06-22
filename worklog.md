@@ -2378,3 +2378,30 @@ Stage Summary:
   4. To get the new fields on existing posts: Bro can either:
      - Use TMDB Generator → Sync tab → batch sync, OR
      - Use My Posts tab → per-card sync icon (Task 37) on individual posts.
+
+---
+Task ID: 38-req2-hotfix
+Agent: main
+Task: Hotfix — Task 38 Req 2 commit (b91886b) introduced `Colors.white45` in movie_detail_screen.dart:992 and series_detail_screen.dart:833, which is not a valid Flutter Material color. Release APK build failed in CI with "Member not found: 'white45'". Fix the build break.
+
+Work Log:
+- Pulled origin/main — confirmed local HEAD = b91886b (Task 38 Req 2 commit).
+- Forced `git checkout HEAD --` on both files to refresh working tree (index was stale).
+- Verified the bad lines via `sed -n`:
+  * movie_detail_screen.dart:992 → `? Colors.white45`
+  * series_detail_screen.dart:833 → `? Colors.white45`
+  Both inside the cast.character subtitle TextStyle (italic muted tiny text under cast name).
+- Root cause: Flutter's `Colors.white` opacity variants are white10/12/24/30/38/54/70 — there is NO `white45`. The Task 38 Req 2 commit accidentally used `white45` (likely auto-completed from the nearby valid `black45`). `Colors.black45` IS valid (Flutter's `Colors.black` opacity variants are black12/26/38/45/54/87).
+- Verified codebase convention: 10 existing occurrences of `isDark ? Colors.white54 : Colors.black45` across the codebase (search_screen, settings_page, actor_movies_screen, movie_download_screen, series_download_screen, movie_watch_screen, series_watch_screen, etc.). The fix aligns the new cast.character subtitle with this convention.
+- Applied minimal fix: `Colors.white45` → `Colors.white54` in both files. Left `Colors.black45` untouched (it's valid — other AI's suggestion to also change black45 was incorrect).
+- Verified no remaining `white45` anywhere in lib/.
+- Ran scripts/task38_req2_hotfix_syntax_check.py (Dart-aware delimiter scanner skipping strings/comments) on both files — OK (1184 lines / 583 openers / 583 closers; 1006 lines / 561 openers / 561 closers; all balanced).
+- Ran scripts/verify_translations.py — OK (no translation changes needed; UI labels are static English).
+
+Stage Summary:
+- 2 files changed (1 line each):
+  * lib/app/ui/screens/movie_detail_screen.dart:992 — white45 → white54
+  * lib/app/ui/screens/series_detail_screen.dart:833 — white45 → white54
+- New script: scripts/task38_req2_hotfix_syntax_check.py
+- This was a build-breaker hotfix, NOT a new feature. The Task 38 Req 2 feature (cast.character subtitle display) is preserved — only the invalid color constant was corrected.
+- Bro to rebuild — release APK should compile now. The cast.character subtitle will appear slightly lighter (54% white) than originally intended (45% white) in dark mode, but this matches the rest of the codebase's muted-subtitle convention so it will look consistent.

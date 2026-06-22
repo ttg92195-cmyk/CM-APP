@@ -830,7 +830,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                                               fontSize: 9,
                                               fontStyle: FontStyle.italic,
                                               color: isDark
-                                                  ? Colors.white45
+                                                  ? Colors.white54
                                                   : Colors.black45,
                                             ),
                                           ),
