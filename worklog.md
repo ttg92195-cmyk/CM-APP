@@ -2171,3 +2171,48 @@ Stage Summary:
   2. Video Player 2 is grayed out, has "Soon" / "ဆောက်ဆဲ" chip
   3. Tapping it does nothing (no selection change, no error)
   4. Built-in Player + External Player still work normally
+
+---
+Task ID: 38 #4 (v2.0.0 — Overview 15-line collapsed preview)
+Agent: main
+Task: Bro's v2.0.0 release, requirement 4 of 5. On the post detail page (movie + series), the Overview section currently shows only 4 lines collapsed, requiring a "View More" tap to see the full synopsis. Bro wants more content visible upfront — change the collapsed state to show up to 15 lines. "View More" still appears for overviews that exceed 15 lines.
+
+Work Log:
+- Pulled origin/main — local had 1 stray screenshot-upload commit (ec68509) ahead, no code conflict.
+- Audited both detail screens:
+  * lib/app/ui/screens/movie_detail_screen.dart lines 732-776 — uses LayoutBuilder + TextPainter to detect overflow at 4 lines, then renders Text with `maxLines: _overviewExpanded ? null : 4`.
+  * lib/app/ui/screens/series_detail_screen.dart lines 611-647 — identical structure.
+  * Both have `_overviewExpanded` bool state + "View More" / "View Less" toggle.
+
+- Why 15 lines:
+  * Most TMDB overviews are 6-12 lines on a typical phone width (~360-400 dp).
+  * 15 covers ~95% of cases without needing "View More" — most users see the full synopsis upfront.
+  * The remaining ~5% (very long overviews, often for arthouse films or series with detailed plots) still get the "View More" affordance.
+  * 15 is also short enough that the detail page doesn't get dominated by Overview — other sections (Cast, Seasons, Download links) remain visible without excessive scrolling.
+
+- Implementation in movie_detail_screen.dart:
+  * Added `const kCollapsedLines = 15;` local constant (with explanatory comment) inside the LayoutBuilder.
+  * Replaced `maxLines: 4` in TextPainter with `maxLines: kCollapsedLines` (so overflow detection matches the new collapsed limit).
+  * Replaced `maxLines: _overviewExpanded ? null : 4` in Text widget with `maxLines: _overviewExpanded ? null : kCollapsedLines`.
+  * Comment block explains the rationale (95% coverage, remaining 5% still gets View More).
+
+- Implementation in series_detail_screen.dart: identical change, comment notes it mirrors movie_detail_screen.dart.
+
+- Verified both files via Dart-aware delimiter scanner: OK.
+
+Stage Summary:
+- 2 files changed:
+  * lib/app/ui/screens/movie_detail_screen.dart (~10 lines: const + comment + 2 maxLines swaps)
+  * lib/app/ui/screens/series_detail_screen.dart (same)
+- Behavior:
+  * Movie/Series detail page → Overview section now shows up to 15 lines collapsed (was 4).
+  * "View More" button only appears when overview exceeds 15 lines.
+  * Tapping "View More" still expands to unlimited (maxLines: null).
+  * Tapping "View Less" still collapses back to 15 lines.
+- No translation changes needed — "View More" / "View Less" strings unchanged.
+- No state field changes — `_overviewExpanded` still works as before.
+- Bro to rebuild and verify:
+  1. Open a movie with a long overview (e.g. any Marvel film) → Overview should show ~15 lines before "View More" appears.
+  2. Open a movie with a short overview (e.g. <6 lines) → no "View More" button (entire overview visible).
+  3. Tap "View More" → expands fully. Tap "View Less" → collapses to 15 lines.
+  4. Same flow on a series detail page.

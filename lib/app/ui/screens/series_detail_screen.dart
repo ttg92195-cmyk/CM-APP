@@ -614,9 +614,12 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                               text: detail.overview!,
                               style: TextStyle(fontSize: 13, height: 1.6, color: bodyTextColor),
                             );
+                            // Task 38 #4 — collapsed preview shows up to 15
+                            // lines (was 4). Mirrors movie_detail_screen.dart.
+                            const kCollapsedLines = 15;
                             final textPainter = TextPainter(
                               text: textSpan,
-                              maxLines: 4,
+                              maxLines: kCollapsedLines,
                               textDirection: TextDirection.ltr,
                             );
                             textPainter.layout(maxWidth: constraints.maxWidth);
@@ -627,7 +630,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                               children: [
                                 Text(
                                   detail.overview!,
-                                  maxLines: _overviewExpanded ? null : 4,
+                                  maxLines: _overviewExpanded ? null : kCollapsedLines,
                                   overflow: _overviewExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
                                   style: TextStyle(fontSize: 13, height: 1.6, color: bodyTextColor),
                                 ),

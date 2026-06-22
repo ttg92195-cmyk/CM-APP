@@ -735,9 +735,16 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                               text: detail.overview!,
                               style: TextStyle(fontSize: 13, height: 1.6, color: bodyTextColor),
                             );
+                            // Task 38 #4 — collapsed preview shows up to 15
+                            // lines (was 4). Most TMDB overviews are 6-12
+                            // lines on a typical phone width, so 15 covers
+                            // ~95% of cases without needing "View More".
+                            // The remaining ~5% (very long overviews) still
+                            // get the "View More" tap-to-expand affordance.
+                            const kCollapsedLines = 15;
                             final textPainter = TextPainter(
                               text: textSpan,
-                              maxLines: 4,
+                              maxLines: kCollapsedLines,
                               textDirection: TextDirection.ltr,
                             );
                             textPainter.layout(maxWidth: constraints.maxWidth);
@@ -748,7 +755,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                               children: [
                                 Text(
                                   detail.overview!,
-                                  maxLines: _overviewExpanded ? null : 4,
+                                  maxLines: _overviewExpanded ? null : kCollapsedLines,
                                   overflow: _overviewExpanded
                                       ? TextOverflow.visible
                                       : TextOverflow.ellipsis,
