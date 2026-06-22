@@ -28,6 +28,14 @@ class MovieDetail {
   final List<Season> seasons;
   final int? tmdbId;
   final DateTime? createdAt;
+  // Task 38 Req 2: TMDB-enriched fields. All optional — older Firestore
+  // docs that predate Req 2 simply return null/'' via the defensive
+  // parser, so this is fully backward-compatible.
+  final String? tagline;          // e.g. "Hero. Legend. Avenger."
+  final String? trailerUrl;       // YouTube watch URL for the official trailer
+  final String? certification;    // e.g. "PG-13", "R", "TV-MA"
+  final String? status;           // e.g. "Released", "Returning Series", "Ended"
+  final int? voteCount;           // TMDB vote count — rating confidence signal
 
   MovieDetail({
     required this.id,
@@ -56,6 +64,11 @@ class MovieDetail {
     this.seasons = const [],
     this.tmdbId,
     this.createdAt,
+    this.tagline,
+    this.trailerUrl,
+    this.certification,
+    this.status,
+    this.voteCount,
   });
 
   factory MovieDetail.fromMap(Map<String, dynamic> map, {String? docId}) {
@@ -105,6 +118,12 @@ class MovieDetail {
       seasons: _parseSeasons(map['seasons']),
       tmdbId: _parseDetailInt(map['tmdbId']),
       createdAt: _parseDateTimeDetail(map['createdAt']),
+      // Task 38 Req 2: TMDB-enriched fields (defensive — null/empty safe).
+      tagline: _parseDetailNullableString(map['tagline']),
+      trailerUrl: _parseDetailNullableString(map['trailerUrl']),
+      certification: _parseDetailNullableString(map['certification']),
+      status: _parseDetailNullableString(map['status']),
+      voteCount: _parseDetailInt(map['voteCount']),
     );
   }
 
@@ -134,6 +153,14 @@ class MovieDetail {
       'watchLinks': watchLinks.map((x) => x.toMap()).toList(),
       'seasons': seasons.map((x) => x.toMap()).toList(),
       'tmdbId': tmdbId,
+      // Task 38 Req 2: only include the new fields if they have a value,
+      // so we don't pollute old docs with empty-string keys when a
+      // MovieDetail is round-tripped via toMap → fromMap (e.g. edit page).
+      if (tagline != null) 'tagline': tagline,
+      if (trailerUrl != null) 'trailerUrl': trailerUrl,
+      if (certification != null) 'certification': certification,
+      if (status != null) 'status': status,
+      if (voteCount != null) 'voteCount': voteCount,
     };
   }
 
@@ -147,24 +174,34 @@ class MovieDetail {
 class CastMember {
   final String name;
   final String? profilePath;
+  // Task 38 Req 2: character (role) name — e.g. "Tony Stark" for Robert
+  // Downey Jr. Older Firestore docs don't have this; fromMap returns null
+  // for them so the detail page can gracefully omit the subtitle.
+  final String? character;
 
   CastMember({
     required this.name,
     this.profilePath,
+    this.character,
   });
 
   factory CastMember.fromMap(Map<String, dynamic> map) {
     return CastMember(
       name: map['name'] as String? ?? '',
       profilePath: map['profilePath'] as String?,
+      character: (map['character'] as String?)?.isEmpty == true
+          ? null
+          : map['character'] as String?,
     );
   }
 
   Map<String, dynamic> toMap() {
-    return {
+    final map = <String, dynamic>{
       'name': name,
       'profilePath': profilePath,
     };
+    if (character != null && character!.isNotEmpty) map['character'] = character;
+    return map;
   }
 
   String get fullProfileUrl {
@@ -441,6 +478,12 @@ List<CastMember> _parseCastMembers(dynamic value) {
   }
   return [];
 }
+
+// Note: Task 38 Req 2 added `character` to CastMember. The _parseCastMembers
+// helper above is unchanged because it already defers to
+// CastMember.fromMap, which now reads `character` defensively —
+// missing/null/empty all become null on the CastMember instance. Existing
+// docs without `character` continue to parse without any migration.
 
 /// Defensive MovieDownloadLink list parser — never throws.
 /// Same rationale as _parseCastMembers: handles List<Map> (proper),

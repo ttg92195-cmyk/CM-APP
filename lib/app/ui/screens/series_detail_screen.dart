@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/models/movie_detail.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
@@ -315,6 +316,25 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
               onPressed: () => Navigator.pop(context),
             ),
             actions: [
+              // Task 38 Req 2: Trailer icon — opens the YouTube trailer URL
+              // saved from TMDB. Only shown if the field is non-empty.
+              if (detail.trailerUrl != null &&
+                  detail.trailerUrl!.isNotEmpty)
+                IconButton(
+                  icon: Icon(
+                    Icons.play_circle_outline,
+                    color: isDark ? Colors.white : Colors.black54,
+                    size: 24,
+                  ),
+                  tooltip: 'Trailer',
+                  onPressed: () async {
+                    final uri = Uri.parse(detail.trailerUrl!);
+                    if (await canLaunchUrl(uri)) {
+                      await launchUrl(uri,
+                          mode: LaunchMode.externalApplication);
+                    }
+                  },
+                ),
               IconButton(
                 icon: Icon(
                   _isInWatchlist ? Icons.watch_later : Icons.watch_later_outlined,
@@ -396,6 +416,24 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                               ),
+                              // Task 38 Req 2: Tagline (TMDB marketing line).
+                              if (detail.tagline != null &&
+                                  detail.tagline!.trim().isNotEmpty) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  detail.tagline!,
+                                  style: TextStyle(
+                                    color: isDark
+                                        ? Colors.white60
+                                        : Colors.black54,
+                                    fontSize: 12,
+                                    fontStyle: FontStyle.italic,
+                                    height: 1.3,
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
                               const SizedBox(height: 8),
                               // Meta: Year ⭐ Rating Season X 🇺🇸 English
                               // Use Wrap to gracefully handle overflow on narrow screens
@@ -409,6 +447,33 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                                         style: TextStyle(color: metaTextColor, fontSize: 13, fontWeight: FontWeight.w500)),
                                   if (detail.year != null && detail.year!.isNotEmpty)
                                     Text('·', style: TextStyle(color: metaTextColor, fontSize: 13)),
+                                  // Task 38 Req 2: Certification badge
+                                  // (TV age rating, e.g. TV-MA, TV-14).
+                                  if (detail.certification != null &&
+                                      detail.certification!.trim().isNotEmpty) ...[
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 5, vertical: 1),
+                                      decoration: BoxDecoration(
+                                        border: Border.all(
+                                          color: isDark
+                                              ? Colors.white38
+                                              : Colors.black45,
+                                          width: 0.6,
+                                        ),
+                                        borderRadius: BorderRadius.circular(3),
+                                      ),
+                                      child: Text(
+                                        detail.certification!,
+                                        style: TextStyle(
+                                          color: metaTextColor,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                    Text('·', style: TextStyle(color: metaTextColor, fontSize: 13)),
+                                  ],
                                   // Rating: flame icon + rating text packed into a
                                   // single Row so the Wrap's `spacing: 8` doesn't
                                   // push them apart. Previously these were three
@@ -500,6 +565,14 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                         _detailRow('Episodes', '$totalEpisodes', bodyTextColor, metaTextColor),
                       if (detail.categories.isNotEmpty)
                         _detailRow('Genre', detail.categories.join('  '), bodyTextColor, metaTextColor),
+                      // Task 38 Req 2: Status row — e.g. "Returning Series",
+                      // "Ended", "Canceled".
+                      if (detail.status != null &&
+                          detail.status!.trim().isNotEmpty)
+                        _detailRow('Status', detail.status!, bodyTextColor, metaTextColor),
+                      // Task 38 Req 2: Vote count — rating confidence signal.
+                      if (detail.voteCount != null && detail.voteCount! > 0)
+                        _detailRow('Votes', '${detail.voteCount} votes', bodyTextColor, metaTextColor),
                     ],
                   ),
                 ),
@@ -666,7 +739,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                             style: TextStyle(color: bodyTextColor, fontSize: 14, fontWeight: FontWeight.w600)),
                         const SizedBox(height: 8),
                         SizedBox(
-                          height: 120,
+                          height: 140,
                           child: ListView.builder(
                             scrollDirection: Axis.horizontal,
                             clipBehavior: Clip.none,
@@ -742,6 +815,27 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                                           style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: bodyTextColor),
                                         ),
                                       ),
+                                      // Task 38 Req 2: Character subtitle.
+                                      if (cast.character != null &&
+                                          cast.character!.trim().isNotEmpty) ...[
+                                        const SizedBox(height: 2),
+                                        SizedBox(
+                                          width: 76,
+                                          child: Text(
+                                            cast.character!,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(
+                                              fontSize: 9,
+                                              fontStyle: FontStyle.italic,
+                                              color: isDark
+                                                  ? Colors.white45
+                                                  : Colors.black45,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ],
                                   ),
                                 ),

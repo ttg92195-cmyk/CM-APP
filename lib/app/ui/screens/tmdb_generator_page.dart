@@ -729,7 +729,11 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
           final safeUpdate = <String, dynamic>{};
           for (final key in ['title', 'year', 'poster', 'backdrop', 'rating',
               'duration', 'isAdult', 'categories', 'directors', 'casts',
-              'tmdbId', 'country']) {
+              'tmdbId', 'country',
+              // Task 38 Req 2: newly-added fields — included in sync so
+              // existing movies pick up the enriched data on next sync.
+              'tagline', 'trailerUrl', 'certification', 'status',
+              'voteCount']) {
             if (firestoreData.containsKey(key)) {
               safeUpdate[key] = firestoreData[key];
             }
@@ -925,7 +929,10 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
           final safeUpdate = <String, dynamic>{};
           for (final key in ['title', 'year', 'poster', 'backdrop', 'rating',
               'duration', 'isAdult', 'categories', 'directors', 'casts',
-              'tmdbId', 'country', 'status']) {
+              'tmdbId', 'country', 'status',
+              // Task 38 Req 2: newly-added fields — included in sync so
+              // existing series pick up the enriched data on next sync.
+              'tagline', 'trailerUrl', 'certification', 'voteCount']) {
             if (firestoreData.containsKey(key)) {
               safeUpdate[key] = firestoreData[key];
             }
@@ -1464,17 +1471,23 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
       // 5) Build the safeUpdate map — identical key list to batch sync so
       //    the behavior matches exactly. Overview, seasons, downloadLinks,
       //    watchLinks are intentionally excluded.
+      //    Task 38 Req 2: key list now includes the newly-fetched fields
+      //    (tagline, trailerUrl, certification, status, voteCount) so a
+      //    per-card sync picks them up — same as batch sync.
       final safeUpdate = <String, dynamic>{};
       final allowedKeys = isSeries
           ? const [
               'title', 'year', 'poster', 'backdrop', 'rating',
               'duration', 'isAdult', 'categories', 'directors', 'casts',
               'tmdbId', 'country', 'status',
+              'tagline', 'trailerUrl', 'certification', 'voteCount',
             ]
           : const [
               'title', 'year', 'poster', 'backdrop', 'rating',
               'duration', 'isAdult', 'categories', 'directors', 'casts',
               'tmdbId', 'country',
+              'tagline', 'trailerUrl', 'certification', 'status',
+              'voteCount',
             ];
       for (final key in allowedKeys) {
         if (firestoreData.containsKey(key)) {

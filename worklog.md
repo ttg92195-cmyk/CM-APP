@@ -2276,3 +2276,105 @@ Stage Summary:
   3. Dark mode → Downloads tab: same — Card backgrounds should be flat, no red tint.
   4. Light mode → all the same screens: should look unchanged (sanity check that we didn't regress light mode).
   5. Dark mode → Profile page: Cards (VIP card, settings cards) should be flat dark grey, no red tint.
+
+---
+Task ID: 38-req2
+Agent: Main Agent
+Task: Task 38 Req 2 — Verify and fix TMDB Generator data-fetching gaps so TMDB-imported posts pull complete data.
+
+Work Log:
+- Pulled origin/main (already up to date with d4c75c3 = Task 38 Req 1 dark-mode poster fix).
+- Audited tmdb_service.dart to identify what's currently fetched vs what TMDB offers:
+  * append_to_response was `credits` only — no trailers, no age ratings.
+  * mapMovieToFirestore pulled: title, year, poster, backdrop, overview, rating, type, duration, isAdult, categories, directors, casts, tmdbId, country.
+  * mapTVToFirestore pulled the same + status.
+  * extractTopCast saved {name, profilePath} — character (role) name was dropped.
+  * mapMovieToFirestore did NOT handle `genres` directly — callers had to manually patch `genre_ids` from `genres` (the details endpoint returns objects, not ints).
+  * Missing fields: tagline, trailerUrl, certification (PG-13 / TV-MA), status (for movies, parity with TV), voteCount.
+
+ROOT CAUSE / GAPS IDENTIFIED:
+1. append_to_response missing `videos`, `release_dates` (movies), `content_ratings` (TV).
+2. extractTopCast dropped the `character` field.
+3. Movie mapper had no `genres` fallback (only TV mapper did).
+4. Both mappers dropped tagline, trailerUrl, certification, voteCount.
+5. Movie mapper had no `status` (TV had it but movie didn't — parity gap).
+6. Sync allowlists in 3 places (batch movie / batch TV / per-card Task 37) didn't include the new fields.
+
+FIXES APPLIED:
+
+(1) lib/app/core/services/tmdb_service.dart — expanded append_to_response:
+   * getMovieDetails: `credits,videos,release_dates`
+   * getTVDetails: `credits,videos,content_ratings`
+   * Same HTTP round-trip cost as before — TMDB bundles all appended blocks into one response.
+
+(2) lib/app/core/services/tmdb_service.dart — added 3 helper extractors (all total / null-safe):
+   * extractTrailerUrl(videos) — picks first YouTube Trailer, prefers `official: true`. Returns full https://www.youtube.com/watch?v=KEY URL or ''. Avoided `firstWhere(orElse: () => null)` because orElse must return non-null T — used manual loop + `??=` instead.
+   * extractMovieCertification(release_dates) — prefers US, falls back to first country with non-empty rating. Picks the first release entry with a non-empty certification inside each country.
+   * extractTVCertification(content_ratings) — same pattern for TV.
+
+(3) lib/app/core/services/tmdb_service.dart — extractTopCast now saves `character`:
+   * Map now has {name, profilePath, character}.
+   * Empty character saved as '' (CastMember.fromMap converts to null).
+
+(4) lib/app/core/services/tmdb_service.dart — mapMovieToFirestore rewrite:
+   * Added `genres` fallback (parity with TV mapper) — callers no longer need to patch genre_ids from genres. (Existing patches at tmdb_generator_page.dart lines 555-558 / 721-724 are now harmless no-ops.)
+   * Added new fields: tagline, trailerUrl, certification, status, voteCount.
+   * voteCount defensive parsing (int | num | string → int?).
+
+(5) lib/app/core/services/tmdb_service.dart — mapTVToFirestore:
+   * Added new fields: tagline, trailerUrl, certification, voteCount (status was already there).
+
+(6) lib/app/core/models/movie_detail.dart — model updates:
+   * MovieDetail: added tagline, trailerUrl, certification, status, voteCount fields (all optional). Updated constructor, fromMap (defensive parsing — all new fields null-safe so old docs continue to parse), and toMap (only includes new fields if non-null so round-tripping doesn't pollute old docs with empty keys).
+   * CastMember: added `character` field. fromMap converts empty string → null (so character is null when not present). toMap only includes character if non-empty.
+
+(7) lib/app/ui/screens/tmdb_generator_page.dart — updated 3 sync allowlists:
+   * Batch movie sync (line ~730): added 'tagline', 'trailerUrl', 'certification', 'status', 'voteCount'.
+   * Batch TV sync (line ~930): added 'tagline', 'trailerUrl', 'certification', 'voteCount' (status was already there).
+   * Per-card single-post sync (Task 37, line ~1478): added same keys — movie list matches batch movie list, series list matches batch TV list.
+
+(8) lib/app/ui/screens/movie_detail_screen.dart — UI display for new fields:
+   * Added `import 'package:url_launcher/url_launcher.dart';`.
+   * AppBar actions: new Trailer IconButton (play_circle_outline icon) — only shown if detail.trailerUrl is non-empty. Tap launches YouTube URL via LaunchMode.externalApplication.
+   * Title block: tagline rendered as italic muted text below the title (maxLines: 2, ellipsis). Only shown if non-empty.
+   * Meta row (year · rating · duration · country): added certification as a small outlined-chip badge between year and rating. Only shown if non-empty.
+   * Details section: added `_detailRow('Status', ...)` and `_detailRow('Votes', ...)` rows, both conditional on non-empty / > 0.
+   * Cast list: height bumped 120 → 140 to fit the new character subtitle line. Cast.character rendered as italic muted tiny text under cast.name (maxLines: 1, ellipsis). Only shown if non-empty.
+
+(9) lib/app/ui/screens/series_detail_screen.dart — same UI changes as movie_detail_screen.dart, mirrored.
+
+- Verified backward compatibility:
+  * Old Firestore docs without the new fields: MovieDetail.fromMap returns null for them — all UI conditionals skip silently.
+  * Edit/Add Movie/Series pages construct CastMember(name:, profilePath:) — `character` defaults to null, no compile break.
+  * Batch import service doesn't reference `character` directly — treats cast list as opaque Map.
+
+- Ran Dart-aware delimiter scanner on all 5 modified files: OK (all depths = 0 at EOF).
+- Ran translation parity check (verify_translations.py): OK (no translation changes — UI strings are static English labels like "Status", "Votes", "Trailer" used as-is).
+
+Stage Summary:
+- 5 files changed:
+  * lib/app/core/services/tmdb_service.dart (~150 lines added: expanded append_to_response, 3 new helper extractors, both mapper updates, extractTopCast character field, movie-mapper genres fallback)
+  * lib/app/core/models/movie_detail.dart (~25 lines added: 5 new MovieDetail fields, CastMember.character field, defensive parsing in fromMap, conditional inclusion in toMap)
+  * lib/app/ui/screens/tmdb_generator_page.dart (~25 lines added: 3 allowlist updates with new field names)
+  * lib/app/ui/screens/movie_detail_screen.dart (~80 lines added: trailer icon, tagline subtitle, certification chip, status+votes detail rows, character subtitle in cast list, cast list height bump)
+  * lib/app/ui/screens/series_detail_screen.dart (same as movie_detail_screen.dart, mirrored)
+- New Firestore fields (auto-saved on next TMDB import or sync):
+  * tagline (String, e.g. "Hero. Legend. Avenger.")
+  * trailerUrl (String, YouTube watch URL)
+  * certification (String, e.g. "PG-13", "R", "TV-MA")
+  * status (String for movies — was already on series; e.g. "Released", "Returning Series")
+  * voteCount (int, TMDB vote count)
+- New CastMember field: `character` (String, e.g. "Tony Stark").
+- All new fields are backward-compatible — existing docs continue to render with no migration.
+- Bro to rebuild and verify:
+  1. Open TMDB Generator → search any popular movie (e.g. Avengers: Endgame) → tap to preview / import. After import, open the movie detail page:
+     - Tagline appears under title (italic muted).
+     - Certification (e.g. "PG-13") appears as a small chip in the meta row.
+     - Trailer icon appears in the AppBar (tap → YouTube app opens).
+     - Details section has "Status: Released" and "Votes: X votes" rows.
+     - Cast list shows actor name + role name (e.g. "Robert Downey Jr." / "Tony Stark").
+  2. Open a series (e.g. Breaking Bad) — same fields should appear (Status: "Ended", Certification: "TV-MA", etc.).
+  3. Existing movies that haven't been re-synced: detail page should look unchanged (tagline/certification/etc. all null → conditionals skip silently). No regression.
+  4. To get the new fields on existing posts: Bro can either:
+     - Use TMDB Generator → Sync tab → batch sync, OR
+     - Use My Posts tab → per-card sync icon (Task 37) on individual posts.

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/models/movie_detail.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
@@ -360,6 +361,28 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
               onPressed: () => Navigator.pop(context),
             ),
             actions: [
+              // Task 38 Req 2: Trailer icon — opens the YouTube trailer URL
+              // saved from TMDB. Only shown if the field is non-empty (older
+              // docs / non-TMDB movies won't have it). Uses url_launcher's
+              // external-app mode so the user is taken to the YouTube app
+              // (or browser fallback) instead of an in-app webview.
+              if (detail.trailerUrl != null &&
+                  detail.trailerUrl!.isNotEmpty)
+                IconButton(
+                  icon: Icon(
+                    Icons.play_circle_outline,
+                    color: isDark ? Colors.white : Colors.black54,
+                    size: 24,
+                  ),
+                  tooltip: 'Trailer',
+                  onPressed: () async {
+                    final uri = Uri.parse(detail.trailerUrl!);
+                    if (await canLaunchUrl(uri)) {
+                      await launchUrl(uri,
+                          mode: LaunchMode.externalApplication);
+                    }
+                  },
+                ),
               // Watchlist button
               IconButton(
                 icon: Icon(
@@ -461,6 +484,27 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                               ),
+                              // Task 38 Req 2: Tagline — short marketing line
+                              // from TMDB (e.g. "The world's greatest villain
+                              // meets his match."). Shown italic + muted under
+                              // the title. Older docs without tagline just skip.
+                              if (detail.tagline != null &&
+                                  detail.tagline!.trim().isNotEmpty) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  detail.tagline!,
+                                  style: TextStyle(
+                                    color: isDark
+                                        ? Colors.white60
+                                        : Colors.black54,
+                                    fontSize: 12,
+                                    fontStyle: FontStyle.italic,
+                                    height: 1.3,
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
                               const SizedBox(height: 8),
                               // MetaData: Year ⭐ Rating Duration 🇺🇸 English
                               // Use Wrap to gracefully handle overflow on narrow screens
@@ -478,6 +522,41 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                                             fontWeight: FontWeight.w500)),
                                   if (detail.year != null &&
                                       detail.year!.isNotEmpty)
+                                    Text('·',
+                                        style: TextStyle(
+                                            color: metaTextColor,
+                                            fontSize: 13)),
+                                  // Task 38 Req 2: Certification badge —
+                                  // TMDB age rating (e.g. PG-13, R, TV-MA).
+                                  // Rendered as a tiny outlined chip so it
+                                  // reads as a discrete badge rather than
+                                  // inline text. Older docs without
+                                  // certification are skipped silently.
+                                  if (detail.certification != null &&
+                                      detail.certification!.trim().isNotEmpty)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 5, vertical: 1),
+                                      decoration: BoxDecoration(
+                                        border: Border.all(
+                                          color: isDark
+                                              ? Colors.white38
+                                              : Colors.black45,
+                                          width: 0.6,
+                                        ),
+                                        borderRadius: BorderRadius.circular(3),
+                                      ),
+                                      child: Text(
+                                        detail.certification!,
+                                        style: TextStyle(
+                                          color: metaTextColor,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  if (detail.certification != null &&
+                                      detail.certification!.trim().isNotEmpty)
                                     Text('·',
                                         style: TextStyle(
                                             color: metaTextColor,
@@ -605,6 +684,17 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                         _detailRow('Duration', _formatDuration(detail.duration), bodyTextColor, metaTextColor),
                       if (detail.directors.isNotEmpty)
                         _detailRow('Director', detail.directors.join(', '), bodyTextColor, metaTextColor),
+                      // Task 38 Req 2: Status row — only shown when non-empty.
+                      // For movies: "Released", "Rumored", "Post Production".
+                      // For series: "Returning Series", "Ended", "Canceled".
+                      // Older docs without status are skipped silently.
+                      if (detail.status != null &&
+                          detail.status!.trim().isNotEmpty)
+                        _detailRow('Status', detail.status!, bodyTextColor, metaTextColor),
+                      // Task 38 Req 2: Vote count — "X votes" on TMDB.
+                      // Helps the user gauge how reliable the rating is.
+                      if (detail.voteCount != null && detail.voteCount! > 0)
+                        _detailRow('Votes', '${detail.voteCount} votes', bodyTextColor, metaTextColor),
                     ],
                   ),
                 ),
@@ -802,7 +892,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                                 fontWeight: FontWeight.w600)),
                         const SizedBox(height: 8),
                         SizedBox(
-                          height: 120,
+                          height: 140,
                           child: ListView.builder(
                             scrollDirection: Axis.horizontal,
                             clipBehavior: Clip.none,
@@ -881,6 +971,30 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                                               color: bodyTextColor),
                                         ),
                                       ),
+                                      // Task 38 Req 2: Character (role) name
+                                      // shown as a tiny muted subtitle under
+                                      // the actor name. Older docs without
+                                      // `character` skip silently.
+                                      if (cast.character != null &&
+                                          cast.character!.trim().isNotEmpty) ...[
+                                        const SizedBox(height: 2),
+                                        SizedBox(
+                                          width: 76,
+                                          child: Text(
+                                            cast.character!,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(
+                                              fontSize: 9,
+                                              fontStyle: FontStyle.italic,
+                                              color: isDark
+                                                  ? Colors.white45
+                                                  : Colors.black45,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ],
                                   ),
                                 ),

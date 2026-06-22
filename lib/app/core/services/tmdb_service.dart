@@ -143,20 +143,38 @@ class TmdbService {
 
   // ==================== DETAILS ====================
 
-  /// Get full movie details with credits
+  // ===========================================================================
+  // Task 38 Req 2 — Expanded append_to_response for complete data fetching
+  // ===========================================================================
+  // Previously we only appended `credits` to the details endpoint. That left
+  // several fields the detail page wants to display (trailers, age rating,
+  // etc.) unavailable. We now append:
+  //
+  //   credits          — cast + crew (already used)
+  //   videos           — trailers, teasers, clips (YouTube keys)
+  //   release_dates    — theatrical age ratings per country (movie)
+  //   content_ratings  — TV age ratings per country (series)
+  //
+  // All three are bundled into the SAME HTTP round-trip — TMDB's
+  // append_to_response lets us fetch them in one call instead of three.
+  // Rate-limit cost: 0 extra requests. Network cost: ~3x bigger payload
+  // (~10-15 KB vs ~5 KB per detail). Acceptable for the value.
+  // ===========================================================================
+
+  /// Get full movie details with credits, videos, and release dates.
   Future<Map<String, dynamic>> getMovieDetails(int tmdbId) async {
     final response = await _get(
       '/movie/$tmdbId',
-      queryParams: {'append_to_response': 'credits'},
+      queryParams: const {'append_to_response': 'credits,videos,release_dates'},
     );
     return response.data as Map<String, dynamic>;
   }
 
-  /// Get full TV details with credits
+  /// Get full TV details with credits, videos, and content ratings.
   Future<Map<String, dynamic>> getTVDetails(int tmdbId) async {
     final response = await _get(
       '/tv/$tmdbId',
-      queryParams: {'append_to_response': 'credits'},
+      queryParams: const {'append_to_response': 'credits,videos,content_ratings'},
     );
     return response.data as Map<String, dynamic>;
   }
@@ -248,8 +266,14 @@ class TmdbService {
         .toList();
   }
 
-  /// Extract all cast members from credits (no limit)
+  /// Extract all cast members from credits (no limit).
   /// Use [count] to optionally cap the list; defaults to 0 meaning unlimited.
+  ///
+  /// Task 38 Req 2: Now also extracts `character` (the role the actor played,
+  /// e.g. "Tony Stark") — TMDB returns this alongside `name` (the actor's
+  /// real name). The detail page shows both: actor name as the headline,
+  /// character name as the subtitle. Without `character` saved, the detail
+  /// page would have to either omit it or fetch it on-demand per visit.
   static List<Map<String, String>> extractTopCast(Map<String, dynamic>? credits, {int count = 0}) {
     if (credits == null) return [];
     final cast = credits['cast'] as List?;
@@ -264,17 +288,141 @@ class TmdbService {
               'profilePath': person['profile_path'] != null
                   ? getPosterUrl(person['profile_path'].toString())
                   : '',
+              'character': person['character']?.toString() ?? '',
             })
         .toList();
   }
 
-  /// Map TMDB movie data to Firestore schema
+  // ===========================================================================
+  // Task 38 Req 2 — Helper extractors for the newly-appended TMDB fields.
+  // All are total (never throw); bad/missing data yields a sensible default.
+  // ===========================================================================
+
+  /// Extract the best YouTube trailer URL from a TMDB `videos` block.
+  ///
+  /// TMDB returns `videos.results` as a list of objects with `site`, `type`,
+  /// `key`, and `official` fields. We pick the FIRST YouTube trailer
+  /// (type='Trailer', site='YouTube'), preferring official entries when
+  /// available. Returns the full watch URL (e.g.
+  /// 'https://www.youtube.com/watch?v=XXXXXXX') or '' if none found.
+  static String extractTrailerUrl(Map<String, dynamic>? videosBlock) {
+    if (videosBlock == null) return '';
+    final results = videosBlock['results'] as List?;
+    if (results == null || results.isEmpty) return '';
+
+    final candidates = results.whereType<Map<String, dynamic>>().where(
+      (v) =>
+          v['site']?.toString() == 'YouTube' &&
+          v['type']?.toString() == 'Trailer' &&
+          (v['key']?.toString() ?? '').isNotEmpty,
+    ).toList();
+
+    if (candidates.isEmpty) return '';
+
+    // Prefer an official trailer; otherwise fall back to the first match.
+    // (We avoid `firstWhere` with orElse: () => null because firstWhere
+    // requires the orElse to return the same non-null element type.)
+    Map<String, dynamic>? chosen;
+    for (final v in candidates) {
+      if (v['official'] == true) {
+        chosen = v;
+        break;
+      }
+    }
+    chosen ??= candidates.first;
+
+    final key = chosen['key']?.toString() ?? '';
+    if (key.isEmpty) return '';
+    return 'https://www.youtube.com/watch?v=$key';
+  }
+
+  /// Extract US age-rating certification from a TMDB `release_dates` block
+  /// (movies). Returns the certification string (e.g. 'PG-13', 'R') or ''
+  /// if none found. We pick the US entry's first non-empty release with a
+  /// certification; if US is missing we fall back to the first country with
+  /// any non-empty certification so the field isn't blank for non-US films.
+  static String extractMovieCertification(Map<String, dynamic>? releaseDatesBlock) {
+    if (releaseDatesBlock == null) return '';
+    final results = releaseDatesBlock['results'] as List?;
+    if (results == null || results.isEmpty) return '';
+
+    String pickFromCountry(Map<String, dynamic> countryEntry) {
+      final releaseList = countryEntry['release_dates'] as List?;
+      if (releaseList == null) return '';
+      for (final r in releaseList) {
+        if (r is Map<String, dynamic>) {
+          final cert = r['certification']?.toString() ?? '';
+          if (cert.isNotEmpty) return cert;
+        }
+      }
+      return '';
+    }
+
+    // Try US first.
+    for (final entry in results) {
+      if (entry is Map<String, dynamic> && entry['iso_3166_1']?.toString() == 'US') {
+        final cert = pickFromCountry(entry);
+        if (cert.isNotEmpty) return cert;
+      }
+    }
+    // Fall back to first country with any non-empty certification.
+    for (final entry in results) {
+      if (entry is Map<String, dynamic>) {
+        final cert = pickFromCountry(entry);
+        if (cert.isNotEmpty) return cert;
+      }
+    }
+    return '';
+  }
+
+  /// Extract US age-rating from a TMDB `content_ratings` block (TV series).
+  /// Same logic as movie version: prefer US, fall back to first non-empty.
+  static String extractTVCertification(Map<String, dynamic>? contentRatingsBlock) {
+    if (contentRatingsBlock == null) return '';
+    final results = contentRatingsBlock['results'] as List?;
+    if (results == null || results.isEmpty) return '';
+
+    for (final entry in results) {
+      if (entry is Map<String, dynamic> && entry['iso_3166_1']?.toString() == 'US') {
+        final rating = entry['rating']?.toString() ?? '';
+        if (rating.isNotEmpty) return rating;
+      }
+    }
+    for (final entry in results) {
+      if (entry is Map<String, dynamic>) {
+        final rating = entry['rating']?.toString() ?? '';
+        if (rating.isNotEmpty) return rating;
+      }
+    }
+    return '';
+  }
+
+  /// Map TMDB movie data to Firestore schema.
+  ///
+  /// Task 38 Req 2: Now also extracts tagline, trailerUrl, certification
+  /// (US release_dates rating), status (parity with TV mapper), and
+  /// voteCount. Also handles the `genres` field directly (the details
+  /// endpoint returns full genre objects, not genre_ids) so callers don't
+  /// have to manually patch `genre_ids` from `genres` anymore.
   static Map<String, dynamic> mapMovieToFirestore(
     Map<String, dynamic> tmdbMovie,
     Map<int, String> genreMap,
   ) {
+    // Genre handling: details endpoint returns `genres` (full objects with
+    // id + name); discover/search returns `genre_ids` (just ints). Try
+    // genre_ids first; if absent, fall back to genres (mirrors TV mapper).
     final genreIds = tmdbMovie['genre_ids'] as List<dynamic>? ?? [];
-    final genreNames = mapGenreIdsToNames(genreIds, genreMap);
+    List<String> genreNames;
+    if (genreIds.isEmpty && tmdbMovie['genres'] != null) {
+      final genresList = tmdbMovie['genres'] as List<dynamic>? ?? [];
+      genreNames = genresList
+          .whereType<Map<String, dynamic>>()
+          .map((g) => g['name']?.toString() ?? '')
+          .where((name) => name.isNotEmpty)
+          .toList();
+    } else {
+      genreNames = mapGenreIdsToNames(genreIds, genreMap);
+    }
 
     final credits = tmdbMovie['credits'] as Map<String, dynamic>?;
     final directors = extractDirectors(credits);
@@ -288,10 +436,24 @@ class TmdbService {
         ? originCountry.first.toString()
         : null;
 
-    // Extract duration from runtime (available in movie details API)
-    // Store as integer (minutes) — UI will format as "95 min"
     final runtime = tmdbMovie['runtime'] as int?;
     final duration = (runtime != null && runtime > 0) ? runtime : null;
+
+    // Task 38 Req 2: newly-extracted fields.
+    final tagline = tmdbMovie['tagline']?.toString() ?? '';
+    final trailerUrl = extractTrailerUrl(
+      tmdbMovie['videos'] as Map<String, dynamic>?,
+    );
+    final certification = extractMovieCertification(
+      tmdbMovie['release_dates'] as Map<String, dynamic>?,
+    );
+    final status = tmdbMovie['status']?.toString() ?? '';
+    final voteCountRaw = tmdbMovie['vote_count'];
+    final int? voteCount = voteCountRaw is int
+        ? voteCountRaw
+        : voteCountRaw is num
+            ? voteCountRaw.toInt()
+            : int.tryParse(voteCountRaw?.toString() ?? '');
 
     return {
       'title': tmdbMovie['title'] ?? tmdbMovie['name'] ?? '',
@@ -312,6 +474,12 @@ class TmdbService {
       'seasons': <Map<String, dynamic>>[],
       'tmdbId': tmdbMovie['id'],
       'country': country,
+      // Task 38 Req 2: newly-added fields (all optional, default to '' / null).
+      'tagline': tagline,
+      'trailerUrl': trailerUrl,
+      'certification': certification,
+      'status': status,
+      'voteCount': voteCount,
     };
   }
 
@@ -385,6 +553,21 @@ class TmdbService {
     // Extract series status from TMDB (e.g. "Returning Series", "Ended", "Canceled")
     final status = tmdbTV['status']?.toString() ?? '';
 
+    // Task 38 Req 2: newly-extracted fields (parity with movie mapper).
+    final tagline = tmdbTV['tagline']?.toString() ?? '';
+    final trailerUrl = extractTrailerUrl(
+      tmdbTV['videos'] as Map<String, dynamic>?,
+    );
+    final certification = extractTVCertification(
+      tmdbTV['content_ratings'] as Map<String, dynamic>?,
+    );
+    final voteCountRaw = tmdbTV['vote_count'];
+    final int? voteCount = voteCountRaw is int
+        ? voteCountRaw
+        : voteCountRaw is num
+            ? voteCountRaw.toInt()
+            : int.tryParse(voteCountRaw?.toString() ?? '');
+
     return {
       'title': tmdbTV['name'] ?? tmdbTV['title'] ?? '',
       'slug': '', // Will be auto-generated by FirestoreContentService
@@ -405,6 +588,11 @@ class TmdbService {
       'tmdbId': tmdbTV['id'],
       'country': country,
       'status': status,
+      // Task 38 Req 2: newly-added fields.
+      'tagline': tagline,
+      'trailerUrl': trailerUrl,
+      'certification': certification,
+      'voteCount': voteCount,
     };
   }
 }
