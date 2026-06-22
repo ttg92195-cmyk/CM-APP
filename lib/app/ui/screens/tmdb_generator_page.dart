@@ -4,6 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cm_movies/app/core/services/tmdb_service.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
+import 'package:cm_movies/app/ui/components/no_toolbar_on_single_tap_text_field.dart';
 
 class TmdbGeneratorPage extends StatefulWidget {
   const TmdbGeneratorPage({super.key});
@@ -992,7 +993,7 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Search TMDB'),
-        content: TextField(
+        content: NoToolbarOnSingleTapTextField(
           controller: _searchController,
           autofocus: true,
           decoration: InputDecoration(
@@ -1577,7 +1578,7 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
                   Row(
                     children: [
                       Expanded(
-                        child: TextField(
+                        child: NoToolbarOnSingleTapTextField(
                           controller: _searchController,
                           decoration: InputDecoration(
                             hintText: 'Search by title...',

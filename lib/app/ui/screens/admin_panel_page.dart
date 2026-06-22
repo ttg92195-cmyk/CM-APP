@@ -14,6 +14,7 @@ import 'package:cm_movies/app/ui/screens/edit_movie_page.dart';
 import 'package:cm_movies/app/ui/screens/admin_notification_page.dart';
 import 'package:cm_movies/app/ui/screens/admin_users_page.dart';
 import 'package:cm_movies/app/ui/screens/batch_import_page.dart';
+import 'package:cm_movies/app/ui/components/no_toolbar_on_single_tap_text_field.dart';
 
 class AdminPanelPage extends StatefulWidget {
   const AdminPanelPage({super.key});
@@ -749,7 +750,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
         // Search bar
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-          child: TextField(
+          child: NoToolbarOnSingleTapTextField(
             controller: _searchController,
             onChanged: _filterPosts,
             decoration: InputDecoration(

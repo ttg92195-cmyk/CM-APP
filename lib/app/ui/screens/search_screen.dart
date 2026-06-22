@@ -8,6 +8,7 @@ import 'package:cm_movies/app/core/models/tag_and_genres.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/core/services/search_history_service.dart';
 import 'package:cm_movies/app/ui/components/movie_card.dart';
+import 'package:cm_movies/app/ui/components/no_toolbar_on_single_tap_text_field.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
 import 'package:cm_movies/app/ui/screens/series_detail_screen.dart';
 
@@ -736,11 +737,12 @@ class _SearchScreenState extends State<SearchScreen> {
                   const SizedBox(width: 4),
                   // Search field
                   Expanded(
-                    child: TextField(
+                    child: NoToolbarOnSingleTapTextField(
                       controller: _searchController,
-                      // Use default Flutter behavior: double-tap to select word +
-                      // show Cut/Copy/Paste toolbar. This works repeatably — every
-                      // double-tap re-shows the toolbar.
+                      // Task 29 — single-tap hides any lingering selection
+                      // so the Cut/Copy/Paste toolbar doesn't pop up.
+                      // Double-tap still selects word + shows toolbar
+                      // (handled by Flutter internally).
                       decoration: InputDecoration(
                         hintText: appConfig.translate('search_hint'),
                         prefixIcon: const Icon(Icons.search, size: 22),
