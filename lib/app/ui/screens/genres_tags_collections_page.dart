@@ -51,34 +51,33 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
 
   Future<void> _loadData() async {
     try {
-      final stopwatch = Stopwatch()..start();
       List<TagAndGenres> genres = [];
       List<TagAndGenres> tags = [];
       List<TagAndGenres> collections = [];
 
-      try {
-        genres = await _contentService.getGenres();
-      } catch (e) {
-        debugPrint('Error loading genres: $e');
-      }
+      // PARALLEL FETCH — previously sequential (genres → tags → collections),
+      // adding 3 × query latency on slow networks. Now all three fire in
+      // parallel; total wait ≈ slowest query instead of sum of all three.
+      // (Task 36 #2 — see movies_page.dart for the artificial-skeleton-floor
+      // removal rationale; that pattern was also removed here.)
+      final results = await Future.wait([
+        _contentService.getGenres().catchError((e) {
+          debugPrint('Error loading genres: $e');
+          return <TagAndGenres>[];
+        }),
+        _contentService.getTags().catchError((e) {
+          debugPrint('Error loading tags: $e');
+          return <TagAndGenres>[];
+        }),
+        _contentService.getCollections().catchError((e) {
+          debugPrint('Error loading collections: $e');
+          return <TagAndGenres>[];
+        }),
+      ]);
 
-      try {
-        tags = await _contentService.getTags();
-      } catch (e) {
-        debugPrint('Error loading tags: $e');
-      }
-
-      try {
-        collections = await _contentService.getCollections();
-      } catch (e) {
-        debugPrint('Error loading collections: $e');
-      }
-
-      // Ensure loading shows for at least 500ms so it doesn't flash too fast
-      final elapsed = stopwatch.elapsedMilliseconds;
-      if (elapsed < 500) {
-        await Future.delayed(Duration(milliseconds: 500 - elapsed));
-      }
+      genres = results[0] as List<TagAndGenres>;
+      tags = results[1] as List<TagAndGenres>;
+      collections = results[2] as List<TagAndGenres>;
 
       if (mounted) {
         setState(() {
@@ -470,7 +469,6 @@ class _FilterResultPageState extends State<FilterResultPage> {
       _seenIds.clear();
     });
     try {
-      final stopwatch = Stopwatch()..start();
       Map<String, dynamic> result;
       if (widget.genreName != null) {
         result = await _contentService.getMoviesByGenre(widget.genreName!, limit: 20); // PAGINATION: 20/page
@@ -500,12 +498,8 @@ class _FilterResultPageState extends State<FilterResultPage> {
           filtered = allMovies;
         }
 
-        // Ensure skeleton shows for at least 600ms so it doesn't flash too fast
-        final elapsed = stopwatch.elapsedMilliseconds;
-        if (elapsed < 600) {
-          await Future.delayed(Duration(milliseconds: 600 - elapsed));
-        }
-
+        // NOTE: previously had an artificial 600ms skeleton floor here.
+        // Removed in Task 36 #2 — see movies_page.dart for the rationale.
         setState(() {
           _movies = allMovies;
           _filteredMovies = filtered;

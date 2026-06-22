@@ -73,14 +73,10 @@ class _SeriesPageState extends State<SeriesPage> {
   Future<void> _loadSeries() async {
     setState(() => _isLoading = true);
     try {
-      final stopwatch = Stopwatch()..start();
       // PAGINATION: 20 per page (see movies_page.dart for the rationale).
+      // NOTE: previously had an artificial 600ms skeleton floor here.
+      // Removed in Task 36 #2 — see movies_page.dart for the rationale.
       final result = await _contentService.getSeries(limit: 20);
-      // Ensure skeleton shows for at least 600ms so it doesn't flash too fast
-      final elapsed = stopwatch.elapsedMilliseconds;
-      if (elapsed < 600) {
-        await Future.delayed(Duration(milliseconds: 600 - elapsed));
-      }
       if (mounted) {
         final seriesList = result['movies'] as List<Movie>;
         for (final m in seriesList) {
