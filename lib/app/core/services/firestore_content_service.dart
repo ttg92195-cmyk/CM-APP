@@ -1720,7 +1720,7 @@ class FirestoreContentService {
     // used to be written verbatim, then crash Movie.fromMap later. Now
     // we coerce to List<String> or remove the field entirely so the
     // new doc has clean data from the start.
-    for (final listField in ['categories', 'directors', 'casts', 'tags']) {
+    for (final listField in ['categories', 'directors', 'tags']) {
       if (data.containsKey(listField)) {
         final coerced = _coerceToStringList(data[listField]);
         if (coerced == null) {
@@ -1728,6 +1728,20 @@ class FirestoreContentService {
         } else {
           data[listField] = coerced;
         }
+      }
+    }
+
+    // Task 31 ("An Error Occurred" bug): `casts` needs the SAME special
+    // handling here as in _buildSafeUpdateMap — coerce to a proper
+    // List<Map<String, dynamic>> in CastMember shape so reading it back
+    // via MovieDetail.fromMap doesn't throw. See _coerceToCastMaps for
+    // the full rationale.
+    if (data.containsKey('casts')) {
+      final coerced = _coerceToCastMaps(data['casts']);
+      if (coerced == null) {
+        data.remove('casts');
+      } else {
+        data['casts'] = coerced;
       }
     }
 
@@ -1755,8 +1769,26 @@ class FirestoreContentService {
 
   /// Build a safe update map from TMDB data that only contains
   /// fields that should be updated from TMDB, preserving user-edited fields.
+  //
+  // Task 31 ("Search can't find re-imported movie" bug): `search_keywords`
+  // was missing from this list. When a Batch Import JSON file updated an
+  // existing movie with a NEW title, `title` and `title_lowercase` got
+  // overwritten (because they were already in this list), but
+  // `search_keywords` was NOT updated — so it stayed as the OLD title's
+  // tokens. The Home Search uses `search_keywords arrayContains` (Strategy 2)
+  // as one of its main query strategies; with stale tokens, searches for the
+  // new title found nothing via Strategy 2, and the client-side filter
+  // `title.contains(query)` then filtered out Strategy 1's prefix matches
+  // (because the new title's words didn't appear in the stale search_keywords
+  // list, and the early-exit merge confused things). Net effect: re-imported
+  // movies with new titles were unsearchable.
+  //
+  // FIX: add `search_keywords` to the list so it's regenerated alongside
+  // `title` / `title_lowercase` when the title changes. The value is
+  // computed below from `newData['title']`.
   static const _tmdbUpdateFields = [
-    'title', 'title_lowercase', 'year', 'poster', 'backdrop', 'overview', 'rating',
+    'title', 'title_lowercase', 'search_keywords',
+    'year', 'poster', 'backdrop', 'overview', 'rating',
     'duration', 'type', 'isAdult', 'categories', 'directors',
     'casts', 'tmdbId', 'country', 'status',
   ];
@@ -1792,8 +1824,32 @@ class FirestoreContentService {
         // `Movie.fromMap` and made the Admin Panel All Posts tab appear
         // empty. This coercion is the WRITE-SIDE fix — bad-type values
         // are either coerced to a proper list or skipped entirely.
-        if (field == 'categories' || field == 'directors' || field == 'casts') {
+        if (field == 'categories' || field == 'directors') {
           final coerced = _coerceToStringList(value);
+          if (coerced == null) continue; // skip — can't coerce safely
+          result[field] = coerced;
+          continue;
+        }
+
+        // Task 31 ("An Error Occurred" bug): `casts` is special. It's
+        // stored in Firestore as a List<Map<String, dynamic>> (each Map
+        // has 'name' and 'profilePath' keys, per CastMember model). But
+        // JSON Batch Import files often send it as:
+        //   - List<String>:   ["Actor A", "Actor B"]
+        //   - String:         "Actor A"
+        //   - List<Map>:       [{name: "Actor A", ...}]
+        //
+        // The previous code ran `_coerceToStringList` on it, producing
+        // a List<String>. That was WRITTEN to Firestore successfully,
+        // but then `MovieDetail.fromMap` blew up trying to cast each
+        // String to Map<String, dynamic> for CastMember — and the detail
+        // page showed "An Error Occurred".
+        //
+        // FIX: coerce `casts` to a proper List<Map<String, dynamic>>
+        // where each Map is `{name: <string>}`. The defensive
+        // MovieDetail.fromMap (Task 31) handles reading this back.
+        if (field == 'casts') {
+          final coerced = _coerceToCastMaps(value);
           if (coerced == null) continue; // skip — can't coerce safely
           result[field] = coerced;
           continue;
@@ -1802,6 +1858,21 @@ class FirestoreContentService {
         result[field] = value;
       }
     }
+
+    // Task 31 ("Search can't find re-imported movie" bug): if the title is
+    // being updated, regenerate `search_keywords` from the NEW title so the
+    // Home Search's `arrayContains` strategy stays in sync with the new
+    // title. The previous version only added `search_keywords` to the field
+    // list above — but JSON Batch Import files never include a
+    // `search_keywords` field (it's an internally-computed field), so the
+    // loop above skipped it. We synthesize it here from `title` instead.
+    if (result.containsKey('title') && result['title'] is String) {
+      final title = result['title'] as String;
+      if (title.trim().isNotEmpty) {
+        result['search_keywords'] = _generateSearchKeywords(title);
+      }
+    }
+
     return result;
   }
 
@@ -1845,6 +1916,64 @@ class FirestoreContentService {
     if (value is String) {
       final trimmed = value.trim();
       return trimmed.isEmpty ? null : [trimmed];
+    }
+    // int, bool, Map, etc. — don't write anything
+    return null;
+  }
+
+  /// Coerce [value] to a List<Map<String, dynamic>> in CastMember shape,
+  /// or return null if it can't be coerced safely. Companion to
+  /// [_coerceToStringList] — used for the `casts` field.
+  ///
+  /// Task 31 ("An Error Occurred" bug): JSON Batch Import files often
+  /// send `casts` as a List<String> (e.g., `["Actor A", "Actor B"]`)
+  /// or as a plain String (e.g., `"Actor A"`). The previous code ran
+  /// `_coerceToStringList` on it, producing a List<String> written to
+  /// Firestore. But `MovieDetail.fromMap` expected `casts` to be a
+  /// List<Map<String, dynamic>> (each Map has 'name'/'profilePath'
+  /// keys for CastMember). The type mismatch threw inside
+  /// `CastMember.fromMap(x as Map<String, dynamic>)` and the detail
+  /// page showed "An Error Occurred".
+  ///
+  /// This coercion produces a proper List<Map<String, dynamic>> where
+  /// each Map is shaped like `{name: <string>, profilePath: null}`.
+  /// Existing CastMember Maps in the input are preserved as-is (so
+  /// TMDB's real cast data with profile paths is kept intact).
+  ///
+  /// Rules:
+  ///   - null                              → null (skip)
+  ///   - List<Map<String, dynamic>>        → returned as-is (proper CastMember shape)
+  ///   - List<String>                      → [{name: s, profilePath: null}, ...]
+  ///   - List with mixed types             → each element coerced to a Map
+  ///   - String (non-empty)                → [{name: value, profilePath: null}]
+  ///   - String (empty) / other types      → null (skip)
+  List<Map<String, dynamic>>? _coerceToCastMaps(dynamic value) {
+    if (value == null) return null;
+    if (value is List) {
+      final result = <Map<String, dynamic>>[];
+      for (final e in value) {
+        if (e == null) continue;
+        if (e is Map<String, dynamic>) {
+          // Already a proper CastMember map — preserve as-is.
+          result.add(e);
+        } else if (e is Map) {
+          // Loose Map — copy to Map<String, dynamic>.
+          final m = <String, dynamic>{};
+          e.forEach((k, v) => m[k.toString()] = v);
+          result.add(m);
+        } else {
+          // String, int, etc. — wrap as a CastMember-shaped map.
+          final name = e.toString().trim();
+          if (name.isNotEmpty) {
+            result.add({'name': name, 'profilePath': null});
+          }
+        }
+      }
+      return result.isEmpty ? null : result;
+    }
+    if (value is String) {
+      final trimmed = value.trim();
+      return trimmed.isEmpty ? null : [{'name': trimmed, 'profilePath': null}];
     }
     // int, bool, Map, etc. — don't write anything
     return null;
