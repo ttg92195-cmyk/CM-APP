@@ -23,6 +23,22 @@ class MovieCard extends StatefulWidget {
 class _MovieCardState extends State<MovieCard> {
   double? _watchProgress; // 0.0 to 1.0, null = not watched
 
+  // STATIC CACHE of SharedPreferences instance across ALL MovieCard
+  // instances. Without this, every card calls
+  // `SharedPreferences.getInstance()` independently — and although
+  // getInstance() returns a cached Future after the first call, each
+  // call still schedules a microtask on the event loop. With 100+
+  // cards on a Movies/Series grid, that's 100+ microtasks queued
+  // before any card can read its watch progress, delaying the
+  // progress bar from appearing and adding to first-screen jank.
+  //
+  // By caching the resolved instance in a static field, only the
+  // FIRST card ever awaits getInstance(); subsequent cards skip the
+  // await entirely and go straight to the synchronous getInt() calls.
+  // This is safe because SharedPreferences is a process-wide singleton
+  // and the underlying map is in-memory after init.
+  static SharedPreferences? _prefsCache;
+
   @override
   void initState() {
     super.initState();
@@ -30,7 +46,10 @@ class _MovieCardState extends State<MovieCard> {
   }
 
   Future<void> _loadWatchProgress() async {
-    final prefs = await SharedPreferences.getInstance();
+    // Reuse the cached instance if available; otherwise await the
+    // first init. Subsequent cards in the same grid build will hit
+    // the cache and skip the await.
+    final prefs = _prefsCache ??= await SharedPreferences.getInstance();
     final posMs = prefs.getInt('watch_pos_${widget.movie.id}');
     final durMs = prefs.getInt('watch_dur_${widget.movie.id}');
     if (posMs != null && durMs != null && posMs > 5000 && durMs > 0) {
