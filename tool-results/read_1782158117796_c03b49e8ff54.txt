@@ -1,0 +1,964 @@
+     1→import 'dart:async';
+     2→import 'dart:io';
+     3→import 'dart:ui';
+     4→import 'package:flutter/foundation.dart';
+     5→import 'package:flutter/material.dart';
+     6→import 'package:flutter/services.dart';
+     7→import 'package:provider/provider.dart';
+     8→import 'package:firebase_core/firebase_core.dart';
+     9→import 'package:cloud_firestore/cloud_firestore.dart';
+    10→import 'package:firebase_app_check/firebase_app_check.dart';
+    11→import 'package:flutter_dotenv/flutter_dotenv.dart';
+    12→import 'package:media_kit/media_kit.dart';
+    13→import 'package:url_launcher/url_launcher.dart';
+    14→import 'package:connectivity_plus/connectivity_plus.dart';
+    15→import 'package:cm_movies/more_libs/setting/app_config.dart';
+    16→import 'package:cm_movies/app/ui/home/home_page.dart';
+    17→import 'package:cm_movies/app/core/services/download_manager_service.dart';
+    18→import 'package:cm_movies/app/core/services/fcm_notification_service.dart';
+    19→import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
+    20→import 'package:cm_movies/app/ui/screens/login_page.dart';
+    21→import 'firebase_options.dart';
+    22→// Task 32: flutter_localizations — gives us GlobalMaterialLocalizations,
+    23→// GlobalWidgetsLocalizations, GlobalCupertinoLocalizations for automatic
+    24→// locale-aware date/number formatting (DatePicker, TimePicker, etc.).
+    25→import 'package:flutter_localizations/flutter_localizations.dart';
+    26→// Task 33: Debug overflow detector — captures RenderFlex overflow errors
+    27→// in dev mode and surfaces them via debugPrint + SnackBar. No-op in release.
+    28→import 'package:cm_movies/app/core/services/debug_overflow_detector.dart';
+    29→
+    30→// Task 33: Global scaffold-messenger key so the DebugOverflowDetector can
+    31→// show SnackBars from outside the widget tree (it has no BuildContext).
+    32→final GlobalKey<ScaffoldMessengerState> scaffoldMessengerKey =
+    33→    GlobalKey<ScaffoldMessengerState>();
+    34→
+    35→// Netflix-style Red accent color
+    36→const Color kNetflixRed = Color(0xFFE50914);
+    37→const Color kNetflixDarkRed = Color(0xFFB81D24);
+    38→const Color kDarkBg = Color(0xFF121212);
+    39→const Color kDarkSurface = Color(0xFF121212);
+    40→const Color kDarkCard = Color(0xFF1E1E1E);
+    41→
+    42→void main() async {
+    43→  WidgetsFlutterBinding.ensureInitialized();
+    44→
+    45→  // Task 33: Install the dev-only overflow detector BEFORE installing the
+    46→  // global FlutterError.onError handler below. The detector saves the
+    47→  // previously-installed handler (here: the one we set on line ~48) and
+    48→  // forwards to it, so we get dedup + SnackBar + log layer ON TOP of the
+    49→  // existing log-and-dont-crash behavior. In release builds, install() is
+    50→  // a silent no-op (see debug_overflow_detector.dart).
+    51→  DebugOverflowDetector.instance.install(
+    52→    scaffoldMessengerKey: scaffoldMessengerKey,
+    53→  );
+    54→
+    55→  // FIX: Global error handlers to prevent unhandled exceptions from crashing the app.
+    56→  // This is critical for the video player — media_kit's native engine can throw
+    57→  // errors that would otherwise kill the app process.
+    58→  FlutterError.onError = (FlutterErrorDetails details) {
+    59→    // Log the error but don't crash
+    60→    FlutterError.presentError(details);
+    61→    debugPrint('FlutterError: ${details.exceptionAsString()}');
+    62→    if (details.stack != null) {
+    63→      debugPrint('Stack: ${details.stack}');
+    64→    }
+    65→    // Don't rethrow — keep the app alive
+    66→  };
+    67→
+    68→  // Catch any unhandled platform errors (e.g., from plugins)
+    69→  PlatformDispatcher.instance.onError = (error, stack) {
+    70→    debugPrint('Platform error: $error');
+    71→    debugPrint('Stack: $stack');
+    72→    return true; // Return true to prevent crash
+    73→  };
+    74→
+    75→  runZonedGuarded(() async {
+    76→    // Initialize media_kit (libmpv/VLC engine) for video playback
+    77→    MediaKit.ensureInitialized();
+    78→
+    79→    // Load environment variables before Firebase init
+    80→    try {
+    81→      await dotenv.load(fileName: '.env');
+    82→    } catch (_) {
+    83→      debugPrint('Warning: .env file not found. Firebase config may be missing.');
+    84→    }
+    85→
+    86→    // Initialize Firebase with error handling
+    87→    try {
+    88→      await Firebase.initializeApp(
+    89→        options: DefaultFirebaseOptions.currentPlatform,
+    90→      );
+    91→
+    92→      // Enable Firestore offline persistence to reduce Firebase reads
+    93→      FirebaseFirestore.instance.settings = const Settings(
+    94→        persistenceEnabled: true,
+    95→        cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+    96→      );
+    97→
+    98→      // Initialize OneSignal push notifications (free, no Cloud Functions needed)
+    99→      try {
+   100→        await FcmNotificationService().initialize();
+   101→      } catch (e) {
+   102→        debugPrint('OneSignal initialization error: $e');
+   103→      }
+   104→    } catch (e) {
+   105→      debugPrint('Firebase initialization error: $e');
+   106→    }
+   107→
+   108→    // Initialize Firebase App Check with Play Integrity (production) + Debug fallback.
+   109→    try {
+   110→      await FirebaseAppCheck.instance.activate(
+   111→        androidProvider: AndroidProvider.playIntegrity,
+   112→        appleProvider: AppleProvider.deviceCheck,
+   113→      );
+   114→      debugPrint('App Check activated: Play Integrity mode (production)');
+   115→    } catch (e) {
+   116→      debugPrint('App Check Play Integrity failed, trying debug fallback: $e');
+   117→      try {
+   118→        await FirebaseAppCheck.instance.activate(
+   119→          androidProvider: AndroidProvider.debug,
+   120→        );
+   121→        debugPrint('App Check activated: Debug mode (fallback)');
+   122→      } catch (e2) {
+   123→        debugPrint('App Check activation error: $e2');
+   124→      }
+   125→    }
+   126→
+   127→    SystemChrome.setSystemUIOverlayStyle(
+   128→      const SystemUiOverlayStyle(
+   129→        statusBarColor: Colors.transparent,
+   130→        statusBarIconBrightness: Brightness.dark,
+   131→        statusBarBrightness: Brightness.light,
+   132→      ),
+   133→    );
+   134→    SystemChrome.setPreferredOrientations([
+   135→      DeviceOrientation.portraitUp,
+   136→      DeviceOrientation.portraitDown,
+   137→    ]);
+   138→    runApp(
+   139→      ChangeNotifierProvider(
+   140→        create: (_) => AppConfig(),
+   141→        child: const CMMoviesApp(),
+   142→      ),
+   143→    );
+   144→  }, (error, stackTrace) {
+   145→    // Catch any unhandled async errors — prevent app crash
+   146→    debugPrint('Unhandled async error: $error');
+   147→    debugPrint('Stack trace: $stackTrace');
+   148→    // Don't rethrow — keep the app alive
+   149→  });
+   150→}
+   151→
+   152→class CMMoviesApp extends StatefulWidget {
+   153→  const CMMoviesApp({super.key});
+   154→
+   155→  @override
+   156→  State<CMMoviesApp> createState() => _CMMoviesAppState();
+   157→}
+   158→
+   159→class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
+   160→  // Splash: minimum display time before dismissing
+   161→  bool _minSplashElapsed = false;
+   162→
+   163→  // Feature 1: Internet connection state
+   164→  bool _hasInternet = true;
+   165→  bool _checkingInternet = false;
+   166→
+   167→  // Real-time connectivity monitor
+   168→  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+   169→
+   170→  // Feature 2: Force update state
+   171→  bool _forceUpdate = false;
+   172→  bool _forceUpdateDialogShown = false;
+   173→  String _latestVersion = '';
+   174→
+   175→  @override
+   176→  void initState() {
+   177→    super.initState();
+   178→    WidgetsBinding.instance.addObserver(this);
+   179→    // Start minimum splash delay (3 seconds)
+   180→    Future.delayed(const Duration(seconds: 3), () {
+   181→      if (mounted) {
+   182→        setState(() => _minSplashElapsed = true);
+   183→        // After splash, check internet and updates
+   184→        _checkInternet();
+   185→      }
+   186→    });
+   187→
+   188→    // Real-time internet monitoring: listen to connectivity changes
+   189→    _connectivitySubscription = Connectivity().onConnectivityChanged.listen(
+   190→      (List<ConnectivityResult> results) {
+   191→        _onConnectivityChanged(results);
+   192→      },
+   193→    );
+   194→  }
+   195→
+   196→  @override
+   197→  void dispose() {
+   198→    WidgetsBinding.instance.removeObserver(this);
+   199→    _connectivitySubscription?.cancel();
+   200→    super.dispose();
+   201→  }
+   202→
+   203→  /// Handle connectivity changes in real-time
+   204→  /// Shows "No Internet" screen immediately when connection is lost,
+   205→  /// and auto-refreshes when connection is restored
+   206→  void _onConnectivityChanged(List<ConnectivityResult> results) {
+   207→    final hasConnection = results.any((r) => r != ConnectivityResult.none);
+   208→
+   209→    if (!hasConnection && _hasInternet) {
+   210→      // Internet just went down — show No Internet screen
+   211→      if (mounted) {
+   212→        setState(() => _hasInternet = false);
+   213→      }
+   214→    } else if (hasConnection && !_hasInternet) {
+   215→      // Internet just came back — auto-refresh
+   216→      if (mounted) {
+   217→        setState(() {
+   218→          _hasInternet = true;
+   219→          _checkingInternet = false;
+   220→        });
+   221→        // Check for updates now that we have internet
+   222→        _checkForUpdate();
+   223→      }
+   224→    }
+   225→  }
+   226→
+   227→  /// Whether splash screen should still be shown.
+   228→  /// True if auth is still loading OR minimum splash time hasn't elapsed.
+   229→  bool get _showSplash => !_minSplashElapsed;
+   230→
+   231→  // Feature 1: Check internet connection using DNS lookup
+   232→  Future<void> _checkInternet() async {
+   233→    if (_checkingInternet) return;
+   234→    setState(() => _checkingInternet = true);
+   235→    try {
+   236→      final result = await InternetAddress.lookup('google.com');
+   237→      final hasConnection = result.isNotEmpty && result[0].rawAddress.isNotEmpty;
+   238→      if (mounted) {
+   239→        setState(() {
+   240→          _hasInternet = hasConnection;
+   241→          _checkingInternet = false;
+   242→        });
+   243→        // If we have internet, check for force update
+   244→        if (hasConnection) {
+   245→          _checkForUpdate();
+   246→        }
+   247→      }
+   248→    } catch (_) {
+   249→      if (mounted) {
+   250→        setState(() {
+   251→          _hasInternet = false;
+   252→          _checkingInternet = false;
+   253→        });
+   254→      }
+   255→    }
+   256→  }
+   257→
+   258→  // Feature 2: Check for force update from Firestore config
+   259→  Future<void> _checkForUpdate() async {
+   260→    try {
+   261→      final doc = await FirebaseFirestore.instance
+   262→          .collection('config')
+   263→          .doc('app_version')
+   264→          .get();
+   265→      if (!doc.exists) return;
+   266→      final data = doc.data()!;
+   267→      _latestVersion = data['latestVersion'] as String? ?? '';
+   268→      final forceUpdate = data['forceUpdate'] as bool? ?? false;
+   269→
+   270→      if (_latestVersion.isNotEmpty && forceUpdate) {
+   271→        const currentVersion = '1.9.0';
+   272→        if (_isNewerVersion(_latestVersion, currentVersion)) {
+   273→          if (mounted) {
+   274→            setState(() => _forceUpdate = true);
+   275→          }
+   276→        }
+   277→      }
+   278→    } catch (e) {
+   279→      debugPrint('Version check error: $e');
+   280→    }
+   281→  }
+   282→
+   283→  // Feature 2: Compare version strings (e.g. "2.0.0" > "1.9.0")
+   284→  bool _isNewerVersion(String latest, String current) {
+   285→    try {
+   286→      final latestParts = latest.split('.').map(int.parse).toList();
+   287→      final currentParts = current.split('.').map(int.parse).toList();
+   288→      for (int i = 0; i < 3; i++) {
+   289→        final l = i < latestParts.length ? latestParts[i] : 0;
+   290→        final c = i < currentParts.length ? currentParts[i] : 0;
+   291→        if (l > c) return true;
+   292→        if (l < c) return false;
+   293→      }
+   294→      return false;
+   295→    } catch (e) {
+   296→      debugPrint('Version comparison error: $e');
+   297→      return false;
+   298→    }
+   299→  }
+   300→
+   301→  // Feature 2: Show non-dismissible force update dialog
+   302→  void _showForceUpdateDialog() {
+   303→    showDialog(
+   304→      context: navigatorKey.currentContext ?? context,
+   305→      barrierDismissible: false,
+   306→      builder: (ctx) => PopScope(
+   307→        canPop: false,
+   308→        child: AlertDialog(
+   309→          backgroundColor: kDarkCard,
+   310→          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+   311→          title: Row(
+   312→            children: [
+   313→              const Icon(Icons.system_update, color: kNetflixRed, size: 28),
+   314→              const SizedBox(width: 12),
+   315→              Text(
+   316→                'Update Required',
+   317→                style: TextStyle(
+   318→                  color: Colors.white,
+   319→                  fontSize: 20,
+   320→                  fontWeight: FontWeight.bold,
+   321→                ),
+   322→              ),
+   323→            ],
+   324→          ),
+   325→          content: Text(
+   326→            'A new version ($_latestVersion) is available. Please update to continue using the app.',
+   327→            style: const TextStyle(color: Colors.white70, fontSize: 15),
+   328→          ),
+   329→          actions: [
+   330→            SizedBox(
+   331→              width: double.infinity,
+   332→              child: ElevatedButton(
+   333→                style: ElevatedButton.styleFrom(
+   334→                  backgroundColor: kNetflixRed,
+   335→                  foregroundColor: Colors.white,
+   336→                  padding: const EdgeInsets.symmetric(vertical: 14),
+   337→                  shape: RoundedRectangleBorder(
+   338→                    borderRadius: BorderRadius.circular(12),
+   339→                  ),
+   340→                ),
+   341→                onPressed: () async {
+   342→                  // Try to open Play Store, fallback to a message
+   343→                  final uri = Uri.parse(
+   344→                    'https://play.google.com/store/apps/details?id=com.cm.movies',
+   345→                  );
+   346→                  if (await canLaunchUrl(uri)) {
+   347→                    await launchUrl(uri, mode: LaunchMode.externalApplication);
+   348→                  } else {
+   349→                    if (ctx.mounted) {
+   350→                      ScaffoldMessenger.of(ctx).showSnackBar(
+   351→                        const SnackBar(
+   352→                          content: Text('Please update the app manually.'),
+   353→                          backgroundColor: kNetflixRed,
+   354→                        ),
+   355→                      );
+   356→                    }
+   357→                  }
+   358→                },
+   359→                child: const Text(
+   360→                  'Update',
+   361→                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+   362→                ),
+   363→              ),
+   364→            ),
+   365→          ],
+   366→        ),
+   367→      ),
+   368→    );
+   369→  }
+   370→
+   371→  // Feature 1: Build "No Internet" dark page
+   372→  Widget _buildNoInternetPage() {
+   373→    return Scaffold(
+   374→      backgroundColor: kDarkBg,
+   375→      body: Center(
+   376→        child: Padding(
+   377→          padding: const EdgeInsets.symmetric(horizontal: 40),
+   378→          child: Column(
+   379→            mainAxisAlignment: MainAxisAlignment.center,
+   380→            children: [
+   381→              Container(
+   382→                padding: const EdgeInsets.all(24),
+   383→                decoration: BoxDecoration(
+   384→                  shape: BoxShape.circle,
+   385→                  color: kNetflixRed.withOpacity(0.15),
+   386→                ),
+   387→                child: const Icon(
+   388→                  Icons.wifi_off_rounded,
+   389→                  size: 64,
+   390→                  color: kNetflixRed,
+   391→                ),
+   392→              ),
+   393→              const SizedBox(height: 28),
+   394→              const Text(
+   395→                'No Internet Connection',
+   396→                style: TextStyle(
+   397→                  color: Colors.white,
+   398→                  fontSize: 22,
+   399→                  fontWeight: FontWeight.bold,
+   400→                ),
+   401→                textAlign: TextAlign.center,
+   402→              ),
+   403→              const SizedBox(height: 12),
+   404→              const Text(
+   405→                'Please check your internet connection and try again.',
+   406→                style: TextStyle(
+   407→                  color: Colors.white54,
+   408→                  fontSize: 15,
+   409→                ),
+   410→                textAlign: TextAlign.center,
+   411→              ),
+   412→              const SizedBox(height: 36),
+   413→              SizedBox(
+   414→                width: double.infinity,
+   415→                child: ElevatedButton(
+   416→                  style: ElevatedButton.styleFrom(
+   417→                    backgroundColor: kNetflixRed,
+   418→                    foregroundColor: Colors.white,
+   419→                    padding: const EdgeInsets.symmetric(vertical: 16),
+   420→                    shape: RoundedRectangleBorder(
+   421→                      borderRadius: BorderRadius.circular(12),
+   422→                    ),
+   423→                  ),
+   424→                  onPressed: _checkingInternet ? null : () => _checkInternet(),
+   425→                  child: _checkingInternet
+   426→                      ? const SizedBox(
+   427→                          width: 20,
+   428→                          height: 20,
+   429→                          child: CircularProgressIndicator(
+   430→                            strokeWidth: 2,
+   431→                            color: Colors.white,
+   432→                          ),
+   433→                        )
+   434→                      : const Text(
+   435→                          'Retry',
+   436→                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+   437→                        ),
+   438→                ),
+   439→              ),
+   440→            ],
+   441→          ),
+   442→        ),
+   443→      ),
+   444→    );
+   445→  }
+   446→
+   447→  // L3: Track app lifecycle for session timeout
+   448→  @override
+   449→  void didChangeAppLifecycleState(AppLifecycleState state) {
+   450→    if (state == AppLifecycleState.resumed) {
+   451→      try {
+   452→        // Recover orphaned downloads (stuck in "downloading" after app was in background)
+   453→        DownloadManagerService.instance.recoverOrphanedDownloads();
+   454→
+   455→        // App came back to foreground — check session timeout
+   456→        final appConfig = Provider.of<AppConfig>(context, listen: false);
+   457→        if (appConfig.isLoggedIn && appConfig.checkSessionTimeout()) {
+   458→          // Session timed out while app was in background
+   459→          // Only show SnackBar if still mounted (prevents crash)
+   460→          if (mounted) {
+   461→            ScaffoldMessenger.of(context).showSnackBar(
+   462→              const SnackBar(
+   463→                content: Text('Session expired due to inactivity. Please login again.'),
+   464→                backgroundColor: Colors.orange,
+   465→                duration: Duration(seconds: 4),
+   466→              ),
+   467→            );
+   468→          }
+   469→        } else {
+   470→          appConfig.recordActivity();
+   471→        }
+   472→      } catch (e) {
+   473→        debugPrint('App resume lifecycle error: $e');
+   474→        // Don't crash — just continue normally
+   475→      }
+   476→    }
+   477→  }
+   478→
+   479→  @override
+   480→  Widget build(BuildContext context) {
+   481→    final appConfig = Provider.of<AppConfig>(context);
+   482→
+   483→    // Feature 2: If force update required, show dialog after frame builds
+   484→    if (_forceUpdate && !_forceUpdateDialogShown) {
+   485→      _forceUpdateDialogShown = true;
+   486→      WidgetsBinding.instance.addPostFrameCallback((_) {
+   487→        _showForceUpdateDialog();
+   488→      });
+   489→    }
+   490→
+   491→    // IMPORTANT: We use a Listener (NOT GestureDetector) at the root so that
+   492→    // activity tracking observes pointer events WITHOUT participating in the
+   493→    // gesture arena. A GestureDetector with both onTap + onPanDown at the
+   494→    // root would force the arena to disambiguate tap-vs-pan on every touch,
+   495→    // which competes with the internal drag recognizer used by EditableText's
+   496→    // text-selection handles — causing the "selection handle drag lock" bug
+   497→    // (handles visible but cannot be dragged to extend/reduce selection) on
+   498→    // every TextField / TextFormField / SelectableText in the entire app.
+   499→    //
+   500→    // Listener simply observes raw pointer events; it never claims gestures,
+   501→    // so selection handles, scrolls, taps, and all other interactions work
+   502→    // normally while we still get an activity tick on every user touch.
+   503→    return Listener(
+   504→      // L3: Record activity on any user pointer-down to keep session alive.
+   505→      // Every user interaction (tap, drag, scroll, selection-handle drag,
+   506→      // long-press, etc.) starts with a pointer-down event, so this single
+   507→      // callback covers all interaction types without interfering with them.
+   508→      onPointerDown: (_) => appConfig.recordActivity(),
+   509→      onPointerMove: (_) => appConfig.recordActivity(),
+   510→      child: MaterialApp(
+   511→        title: 'KMM',
+   512→        debugShowCheckedModeBanner: false,
+   513→        navigatorKey: navigatorKey,
+   514→        // Task 33: scaffoldMessengerKey so DebugOverflowDetector can show
+   515→        // SnackBars from outside the widget tree (it has no BuildContext).
+   516→        scaffoldMessengerKey: scaffoldMessengerKey,
+   517→        theme: _buildLightTheme(),
+   518→        darkTheme: _buildDarkTheme(),
+   519→        themeMode: appConfig.themeMode,
+   520→        // Task 32: Localization — wire up flutter_localizations so that
+   521→        // Material/Cupertino widgets (DatePicker, AlertDialog buttons, etc.)
+   522→        // are translated automatically based on the user's language choice.
+   523→        // The app's own translations are still loaded from assets/lang/*.json
+   524→        // via LocalizationService, but these delegates fill in the platform
+   525→        // widgets we don't translate ourselves.
+   526→        localizationsDelegates: const [
+   527→          GlobalMaterialLocalizations.delegate,
+   528→          GlobalWidgetsLocalizations.delegate,
+   529→          GlobalCupertinoLocalizations.delegate,
+   530→        ],
+   531→        supportedLocales: const [
+   532→          Locale('en'),
+   533→          Locale('my'),
+   534→        ],
+   535→        locale: Locale(appConfig.languageCode),
+   536→        // Named routes for notification tap navigation
+   537→        routes: {
+   538→          '/movie-detail': (context) {
+   539→            final slug = ModalRoute.of(context)?.settings.arguments as String? ?? '';
+   540→            return MovieDetailScreen(slug: slug);
+   541→          },
+   542→        },
+   543→        // Auth gate: show LoginPage if not logged in, HomePage if logged in
+   544→        // This ensures Firestore reads only happen after authentication
+   545→        // Splash is shown until both: auth loads AND minimum 3s elapsed
+   546→        // Feature 1: No internet page shown when !_hasInternet
+   547→        home: !_hasInternet
+   548→            ? _buildNoInternetPage()
+   549→            : (_showSplash || appConfig.isLoadingAuth)
+   550→                ? _buildSplashScreen()
+   551→                : appConfig.isLoggedIn
+   552→                    ? const HomePage()
+   553→                    : const LoginPage(),
+   554→      ),
+   555→    );
+   556→  }
+   557→
+   558→  Widget _buildSplashScreen() {
+   559→    // Adaptive splash: follows the app's theme mode (dark/light)
+   560→    final appConfig = Provider.of<AppConfig>(context);
+   561→    final isDark = appConfig.themeMode == ThemeMode.dark;
+   562→
+   563→    final bgColor = isDark ? const Color(0xFF121212) : Colors.white;
+   564→    final textColor = isDark ? Colors.white : const Color(0xFF212121);
+   565→    final iconBgColor = const Color(0xFFE50914).withOpacity(isDark ? 0.2 : 0.15);
+   566→
+   567→    return Theme(
+   568→      data: (isDark ? ThemeData.dark(useMaterial3: true) : ThemeData.light(useMaterial3: true)).copyWith(
+   569→        scaffoldBackgroundColor: bgColor,
+   570→      ),
+   571→      child: Scaffold(
+   572→        backgroundColor: bgColor,
+   573→        body: Center(
+   574→          child: Column(
+   575→            mainAxisAlignment: MainAxisAlignment.center,
+   576→            children: [
+   577→              Container(
+   578→                padding: const EdgeInsets.all(20),
+   579→                decoration: BoxDecoration(
+   580→                  shape: BoxShape.circle,
+   581→                  color: iconBgColor,
+   582→                ),
+   583→                child: const Icon(
+   584→                  Icons.play_circle_fill,
+   585→                  size: 60,
+   586→                  color: Color(0xFFE50914),
+   587→                ),
+   588→              ),
+   589→              const SizedBox(height: 20),
+   590→              Text(
+   591→                'KMM',
+   592→                style: TextStyle(
+   593→                  color: textColor,
+   594→                  fontSize: 28,
+   595→                  fontWeight: FontWeight.bold,
+   596→                ),
+   597→              ),
+   598→              const SizedBox(height: 16),
+   599→              const CircularProgressIndicator(
+   600→                color: Color(0xFFE50914),
+   601→              ),
+   602→            ],
+   603→          ),
+   604→        ),
+   605→      ),
+   606→    );
+   607→  }
+   608→
+   609→  ThemeData _buildDarkTheme() {
+   610→    final base = ThemeData.dark(useMaterial3: true);
+   611→    return base.copyWith(
+   612→      // Task 32: Myanmar-aware text theme.
+   613→      //
+   614→      // Bro's UI/UX concern: Myanmar text is taller than English and uses
+   615→      // combining marks (stacked diacritics) that often get clipped when
+   616→      // line-height is too tight. Two mitigations here:
+   617→      //
+   618→      // 1. fontFamilyFallback: ['Noto Sans Myanmar', 'Padauk']
+   619→      //    On Android, both fonts are typically pre-installed at the system
+   620→      //    level (Noto Sans Myanmar ships with every Android 7+ device via
+   621→      //    the system font stack). On devices that don't have them, Flutter
+   622→      //    falls back to Roboto, which still has Myanmar glyph coverage via
+   623→      //    its bundled Noto fallback.
+   624→      //
+   625→      // 2. height: 1.3 (line-height multiplier)
+   626→      //    Gives Myanmar stacked diacritics breathing room. For English
+   627→      //    text this is slightly loose but doesn't look weird — it's a
+   628→      //    safe default that works for both scripts.
+   629→      //
+   630→      // 3. fontSize base untouched — Material 3 defaults are fine.
+   631→      //    We rely on maxLines + overflow rules in individual widgets to
+   632→      //    handle text-overflow (Phase 2 work, separate task).
+   633→      textTheme: base.textTheme.copyWith(
+   634→        bodyLarge: base.textTheme.bodyLarge?.copyWith(
+   635→          height: 1.3,
+   636→          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+   637→        ),
+   638→        bodyMedium: base.textTheme.bodyMedium?.copyWith(
+   639→          height: 1.3,
+   640→          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+   641→        ),
+   642→        bodySmall: base.textTheme.bodySmall?.copyWith(
+   643→          height: 1.3,
+   644→          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+   645→        ),
+   646→        titleLarge: base.textTheme.titleLarge?.copyWith(
+   647→          height: 1.3,
+   648→          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+   649→        ),
+   650→        titleMedium: base.textTheme.titleMedium?.copyWith(
+   651→          height: 1.3,
+   652→          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+   653→        ),
+   654→        titleSmall: base.textTheme.titleSmall?.copyWith(
+   655→          height: 1.3,
+   656→          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+   657→        ),
+   658→        labelLarge: base.textTheme.labelLarge?.copyWith(
+   659→          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+   660→        ),
+   661→        labelMedium: base.textTheme.labelMedium?.copyWith(
+   662→          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+   663→        ),
+   664→        labelSmall: base.textTheme.labelSmall?.copyWith(
+   665→          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+   666→        ),
+   667→      ),
+   668→      colorScheme: ColorScheme.fromSeed(
+   669→        seedColor: kNetflixRed,
+   670→        brightness: Brightness.dark,
+   671→        primary: kNetflixRed,
+   672→        onPrimary: Colors.white,
+   673→        secondary: kNetflixDarkRed,
+   674→        onSecondary: Colors.white,
+   675→        surface: kDarkSurface,
+   676→        onSurface: Colors.white,
+   677→        surfaceContainerHighest: const Color(0xFF1A1A2E),
+   678→        error: Colors.redAccent,
+   679→        onError: Colors.white,
+   680→        outline: Colors.white24,
+   681→        outlineVariant: Colors.white12,
+   682→        primaryContainer: const Color(0xFF4A0E14),
+   683→        onPrimaryContainer: Colors.red.shade200,
+   684→        secondaryContainer: const Color(0xFF3A0A10),
+   685→        onSecondaryContainer: Colors.red.shade200,
+   686→      ),
+   687→      scaffoldBackgroundColor: kDarkBg,
+   688→      appBarTheme: const AppBarTheme(
+   689→        backgroundColor: kDarkSurface,
+   690→        elevation: 0,
+   691→        scrolledUnderElevation: 0,
+   692→        surfaceTintColor: Colors.transparent,
+   693→        centerTitle: true,
+   694→        titleTextStyle: TextStyle(
+   695→          color: Colors.white,
+   696→          fontSize: 20,
+   697→          fontWeight: FontWeight.bold,
+   698→        ),
+   699→        iconTheme: IconThemeData(color: Colors.white),
+   700→      ),
+   701→      cardTheme: CardTheme(
+   702→        color: kDarkCard,
+   703→        elevation: 2,
+   704→        shape: RoundedRectangleBorder(
+   705→          borderRadius: BorderRadius.circular(12),
+   706→        ),
+   707→      ),
+   708→      navigationBarTheme: NavigationBarThemeData(
+   709→        backgroundColor: kDarkSurface,
+   710→        indicatorColor: kNetflixRed.withOpacity(0.15),
+   711→      ),
+   712→      chipTheme: ChipThemeData(
+   713→        backgroundColor: const Color(0xFF2A2A2A),
+   714→        labelStyle: const TextStyle(color: Colors.white70, fontSize: 12),
+   715→        shape: RoundedRectangleBorder(
+   716→          borderRadius: BorderRadius.circular(8),
+   717→        ),
+   718→      ),
+   719→      tabBarTheme: const TabBarTheme(
+   720→        labelColor: kNetflixRed,
+   721→        unselectedLabelColor: Colors.grey,
+   722→        indicatorColor: kNetflixRed,
+   723→      ),
+   724→      bottomSheetTheme: const BottomSheetThemeData(
+   725→        backgroundColor: kDarkCard,
+   726→      ),
+   727→      dialogTheme: const DialogTheme(
+   728→        backgroundColor: kDarkCard,
+   729→      ),
+   730→      switchTheme: SwitchThemeData(
+   731→        thumbColor: WidgetStateProperty.resolveWith((states) {
+   732→          if (states.contains(WidgetState.selected)) {
+   733→            return kNetflixRed;
+   734→          }
+   735→          return Colors.grey;
+   736→        }),
+   737→        trackColor: WidgetStateProperty.resolveWith((states) {
+   738→          if (states.contains(WidgetState.selected)) {
+   739→            return kNetflixRed.withOpacity(0.4);
+   740→          }
+   741→          return Colors.grey.withOpacity(0.3);
+   742→        }),
+   743→      ),
+   744→      floatingActionButtonTheme: FloatingActionButtonThemeData(
+   745→        backgroundColor: kNetflixRed.withOpacity(0.15),
+   746→        foregroundColor: kNetflixRed,
+   747→      ),
+   748→      elevatedButtonTheme: ElevatedButtonThemeData(
+   749→        style: ElevatedButton.styleFrom(
+   750→          backgroundColor: kNetflixRed,
+   751→          foregroundColor: Colors.white,
+   752→          shape: RoundedRectangleBorder(
+   753→            borderRadius: BorderRadius.circular(12),
+   754→          ),
+   755→        ),
+   756→      ),
+   757→      outlinedButtonTheme: OutlinedButtonThemeData(
+   758→        style: OutlinedButton.styleFrom(
+   759→          foregroundColor: kNetflixRed,
+   760→          side: const BorderSide(color: kNetflixRed),
+   761→          shape: RoundedRectangleBorder(
+   762→            borderRadius: BorderRadius.circular(12),
+   763→          ),
+   764→        ),
+   765→      ),
+   766→      textButtonTheme: TextButtonThemeData(
+   767→        style: TextButton.styleFrom(
+   768→          foregroundColor: kNetflixRed,
+   769→        ),
+   770→      ),
+   771→      inputDecorationTheme: InputDecorationTheme(
+   772→        filled: true,
+   773→        fillColor: const Color(0xFF1A1A2E),
+   774→        border: OutlineInputBorder(
+   775→          borderRadius: BorderRadius.circular(12),
+   776→          borderSide: BorderSide(color: kNetflixRed.withOpacity(0.3)),
+   777→        ),
+   778→        enabledBorder: OutlineInputBorder(
+   779→          borderRadius: BorderRadius.circular(12),
+   780→          borderSide: BorderSide(color: Colors.white24),
+   781→        ),
+   782→        focusedBorder: OutlineInputBorder(
+   783→          borderRadius: BorderRadius.circular(12),
+   784→          borderSide: const BorderSide(color: kNetflixRed, width: 1.5),
+   785→        ),
+   786→        labelStyle: const TextStyle(color: Colors.white70),
+   787→      ),
+   788→      dividerTheme: DividerThemeData(
+   789→        color: Colors.white12,
+   790→      ),
+   791→      listTileTheme: const ListTileThemeData(
+   792→        textColor: Colors.white,
+   793→        iconColor: Colors.white70,
+   794→      ),
+   795→    );
+   796→  }
+   797→
+   798→  ThemeData _buildLightTheme() {
+   799→    final base = ThemeData.light(useMaterial3: true);
+   800→    return base.copyWith(
+   801→      // Task 32: Myanmar-aware text theme (mirror of dark theme).
+   802→      // See _buildDarkTheme for the full rationale.
+   803→      textTheme: base.textTheme.copyWith(
+   804→        bodyLarge: base.textTheme.bodyLarge?.copyWith(
+   805→          height: 1.3,
+   806→          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+   807→        ),
+   808→        bodyMedium: base.textTheme.bodyMedium?.copyWith(
+   809→          height: 1.3,
+   810→          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+   811→        ),
+   812→        bodySmall: base.textTheme.bodySmall?.copyWith(
+   813→          height: 1.3,
+   814→          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+   815→        ),
+   816→        titleLarge: base.textTheme.titleLarge?.copyWith(
+   817→          height: 1.3,
+   818→          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+   819→        ),
+   820→        titleMedium: base.textTheme.titleMedium?.copyWith(
+   821→          height: 1.3,
+   822→          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+   823→        ),
+   824→        titleSmall: base.textTheme.titleSmall?.copyWith(
+   825→          height: 1.3,
+   826→          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+   827→        ),
+   828→        labelLarge: base.textTheme.labelLarge?.copyWith(
+   829→          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+   830→        ),
+   831→        labelMedium: base.textTheme.labelMedium?.copyWith(
+   832→          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+   833→        ),
+   834→        labelSmall: base.textTheme.labelSmall?.copyWith(
+   835→          fontFamilyFallback: const ['Noto Sans Myanmar', 'Padauk'],
+   836→        ),
+   837→      ),
+   838→      colorScheme: ColorScheme.fromSeed(
+   839→        seedColor: kNetflixRed,
+   840→        brightness: Brightness.light,
+   841→        primary: kNetflixRed,
+   842→        onPrimary: Colors.white,
+   843→        secondary: kNetflixDarkRed,
+   844→        onSecondary: Colors.white,
+   845→        surface: Colors.white,
+   846→        onSurface: Colors.black87,
+   847→        surfaceContainerHighest: Colors.grey.shade100,
+   848→        error: Colors.redAccent,
+   849→        onError: Colors.white,
+   850→        outline: Colors.grey.shade400,
+   851→        outlineVariant: Colors.grey.shade300,
+   852→        primaryContainer: const Color(0xFFFFDAD6),
+   853→        onPrimaryContainer: const Color(0xFF410001),
+   854→        secondaryContainer: const Color(0xFFFFDAD6),
+   855→        onSecondaryContainer: const Color(0xFF410001),
+   856→      ),
+   857→      scaffoldBackgroundColor: const Color(0xFFF5F5F5),
+   858→      appBarTheme: const AppBarTheme(
+   859→        backgroundColor: Colors.white,
+   860→        elevation: 0,
+   861→        scrolledUnderElevation: 0,
+   862→        surfaceTintColor: Colors.transparent,
+   863→        centerTitle: true,
+   864→        titleTextStyle: TextStyle(
+   865→          color: Colors.black87,
+   866→          fontSize: 20,
+   867→          fontWeight: FontWeight.bold,
+   868→        ),
+   869→        iconTheme: IconThemeData(color: Colors.black87),
+   870→      ),
+   871→      cardTheme: CardTheme(
+   872→        color: Colors.white,
+   873→        elevation: 2,
+   874→        shape: RoundedRectangleBorder(
+   875→          borderRadius: BorderRadius.circular(12),
+   876→        ),
+   877→      ),
+   878→      navigationBarTheme: NavigationBarThemeData(
+   879→        backgroundColor: Colors.white,
+   880→        indicatorColor: kNetflixRed.withOpacity(0.12),
+   881→      ),
+   882→      chipTheme: ChipThemeData(
+   883→        backgroundColor: Colors.grey.shade200,
+   884→        labelStyle: const TextStyle(color: Colors.black87, fontSize: 12),
+   885→        shape: RoundedRectangleBorder(
+   886→          borderRadius: BorderRadius.circular(8),
+   887→        ),
+   888→      ),
+   889→      tabBarTheme: const TabBarTheme(
+   890→        labelColor: kNetflixRed,
+   891→        unselectedLabelColor: Colors.grey,
+   892→        indicatorColor: kNetflixRed,
+   893→      ),
+   894→      bottomSheetTheme: const BottomSheetThemeData(
+   895→        backgroundColor: Colors.white,
+   896→      ),
+   897→      dialogTheme: const DialogTheme(
+   898→        backgroundColor: Colors.white,
+   899→      ),
+   900→      switchTheme: SwitchThemeData(
+   901→        thumbColor: WidgetStateProperty.resolveWith((states) {
+   902→          if (states.contains(WidgetState.selected)) {
+   903→            return kNetflixRed;
+   904→          }
+   905→          return Colors.grey;
+   906→        }),
+   907→        trackColor: WidgetStateProperty.resolveWith((states) {
+   908→          if (states.contains(WidgetState.selected)) {
+   909→            return kNetflixRed.withOpacity(0.4);
+   910→          }
+   911→          return Colors.grey.withOpacity(0.3);
+   912→        }),
+   913→      ),
+   914→      elevatedButtonTheme: ElevatedButtonThemeData(
+   915→        style: ElevatedButton.styleFrom(
+   916→          backgroundColor: kNetflixRed,
+   917→          foregroundColor: Colors.white,
+   918→          shape: RoundedRectangleBorder(
+   919→            borderRadius: BorderRadius.circular(12),
+   920→          ),
+   921→        ),
+   922→      ),
+   923→      outlinedButtonTheme: OutlinedButtonThemeData(
+   924→        style: OutlinedButton.styleFrom(
+   925→          foregroundColor: kNetflixRed,
+   926→          side: const BorderSide(color: kNetflixRed),
+   927→          shape: RoundedRectangleBorder(
+   928→            borderRadius: BorderRadius.circular(12),
+   929→          ),
+   930→        ),
+   931→      ),
+   932→      textButtonTheme: TextButtonThemeData(
+   933→        style: TextButton.styleFrom(
+   934→          foregroundColor: kNetflixRed,
+   935→        ),
+   936→      ),
+   937→      inputDecorationTheme: InputDecorationTheme(
+   938→        filled: true,
+   939→        fillColor: Colors.grey.shade100,
+   940→        border: OutlineInputBorder(
+   941→          borderRadius: BorderRadius.circular(12),
+   942→          borderSide: BorderSide(color: Colors.grey.shade300),
+   943→        ),
+   944→        enabledBorder: OutlineInputBorder(
+   945→          borderRadius: BorderRadius.circular(12),
+   946→          borderSide: BorderSide(color: Colors.grey.shade300),
+   947→        ),
+   948→        focusedBorder: OutlineInputBorder(
+   949→          borderRadius: BorderRadius.circular(12),
+   950→          borderSide: const BorderSide(color: kNetflixRed, width: 1.5),
+   951→        ),
+   952→        labelStyle: TextStyle(color: Colors.grey.shade700),
+   953→      ),
+   954→      dividerTheme: DividerThemeData(
+   955→        color: Colors.grey.shade200,
+   956→      ),
+   957→      listTileTheme: const ListTileThemeData(
+   958→        textColor: Colors.black87,
+   959→        iconColor: Colors.black54,
+   960→      ),
+   961→    );
+   962→  }
+   963→}
+   964→
