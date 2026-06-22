@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/ui/components/movie_card.dart';
+import 'package:cm_movies/app/ui/components/safe_text.dart';
 
 class TrendingMovieComponent extends StatelessWidget {
   final String title;
@@ -36,8 +37,9 @@ class TrendingMovieComponent extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Expanded(
-                child: Text(
+                child: SafeText(
                   title,
+                  maxLines: 1,
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.bold,
                   ),
@@ -47,8 +49,9 @@ class TrendingMovieComponent extends StatelessWidget {
                 TextButton.icon(
                   onPressed: onMore,
                   icon: const Icon(Icons.arrow_forward, size: 16),
-                  label: Text(
+                  label: SafeText(
                     appConfig.translate('more'),
+                    maxLines: 1,
                     style: const TextStyle(fontSize: 12),
                   ),
                   style: TextButton.styleFrom(

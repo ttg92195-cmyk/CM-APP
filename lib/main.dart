@@ -23,6 +23,14 @@ import 'firebase_options.dart';
 // GlobalWidgetsLocalizations, GlobalCupertinoLocalizations for automatic
 // locale-aware date/number formatting (DatePicker, TimePicker, etc.).
 import 'package:flutter_localizations/flutter_localizations.dart';
+// Task 33: Debug overflow detector — captures RenderFlex overflow errors
+// in dev mode and surfaces them via debugPrint + SnackBar. No-op in release.
+import 'package:cm_movies/app/core/services/debug_overflow_detector.dart';
+
+// Task 33: Global scaffold-messenger key so the DebugOverflowDetector can
+// show SnackBars from outside the widget tree (it has no BuildContext).
+final GlobalKey<ScaffoldMessengerState> scaffoldMessengerKey =
+    GlobalKey<ScaffoldMessengerState>();
 
 // Netflix-style Red accent color
 const Color kNetflixRed = Color(0xFFE50914);
@@ -33,6 +41,16 @@ const Color kDarkCard = Color(0xFF1E1E1E);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Task 33: Install the dev-only overflow detector BEFORE installing the
+  // global FlutterError.onError handler below. The detector saves the
+  // previously-installed handler (here: the one we set on line ~48) and
+  // forwards to it, so we get dedup + SnackBar + log layer ON TOP of the
+  // existing log-and-dont-crash behavior. In release builds, install() is
+  // a silent no-op (see debug_overflow_detector.dart).
+  DebugOverflowDetector.instance.install(
+    scaffoldMessengerKey: scaffoldMessengerKey,
+  );
 
   // FIX: Global error handlers to prevent unhandled exceptions from crashing the app.
   // This is critical for the video player — media_kit's native engine can throw
@@ -493,6 +511,9 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
         title: 'KMM',
         debugShowCheckedModeBanner: false,
         navigatorKey: navigatorKey,
+        // Task 33: scaffoldMessengerKey so DebugOverflowDetector can show
+        // SnackBars from outside the widget tree (it has no BuildContext).
+        scaffoldMessengerKey: scaffoldMessengerKey,
         theme: _buildLightTheme(),
         darkTheme: _buildDarkTheme(),
         themeMode: appConfig.themeMode,
