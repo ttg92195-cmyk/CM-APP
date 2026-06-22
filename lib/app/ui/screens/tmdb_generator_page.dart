@@ -2,9 +2,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/services/tmdb_service.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
+import 'package:cm_movies/app/ui/components/movie_card.dart';
 import 'package:cm_movies/app/ui/components/no_toolbar_on_single_tap_text_field.dart';
+import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
+import 'package:cm_movies/app/ui/screens/series_detail_screen.dart';
 
 class TmdbGeneratorPage extends StatefulWidget {
   const TmdbGeneratorPage({super.key});
@@ -84,6 +88,27 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
   int _endedSeries = 0;
   bool _isStatsLoading = false;
 
+  // ==================== MY POSTS TAB STATE (Task 30, Number 2) ====================
+  // Shows the movies/series already in Firestore (i.e. "the admin's posts"),
+  // with a search filter and per-card trash-icon delete. Mirrors the UI of
+  // BatchPostsScreen but uses cursor-based pagination via getAllPosts()
+  // instead of getMoviesByIds() (because here we want ALL posts, not a
+  // fixed list from a batch).
+  List<Movie> _myPosts = [];
+  List<Movie> _myPostsFiltered = [];
+  bool _myPostsIsLoading = false;
+  bool _myPostsIsLoadingMore = false;
+  bool _myPostsHasMore = true;
+  DocumentSnapshot? _myPostsLastDoc;
+  String _myPostsSearchQuery = '';
+  final TextEditingController _myPostsSearchController =
+      TextEditingController();
+  Timer? _myPostsDebounce;
+  // Set to true after the first successful load so we don't keep reloading
+  // every time the user taps into the tab. Pull-to-refresh / refresh button
+  // will reset this and force a fresh load.
+  bool _myPostsLoadedOnce = false;
+
   // Year list
   static const List<String> _yearOptions = [
     '2025', '2024', '2023', '2022', '2021', '2020',
@@ -122,7 +147,10 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    // Task 30 (Number 2): 3 tabs — Import, Sync From TMDB, My Posts.
+    _tabController = TabController(length: 3, vsync: this);
+    // Lazy-load My Posts tab on first visit — see _onTabChanged.
+    _tabController.addListener(_onTabChanged);
     _loadGenres();
     // Single combined query — see _loadMoviesSnapshot() doc for why.
     _loadMoviesSnapshot();
@@ -132,7 +160,21 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
   void dispose() {
     _tabController.dispose();
     _searchController.dispose();
+    _myPostsSearchController.dispose();
+    _myPostsDebounce?.cancel();
     super.dispose();
+  }
+
+  /// Task 30 (Number 2) — lazy-load "My Posts" tab on first visit, so
+  /// opening the screen doesn't trigger an extra Firestore query every
+  /// time. The user might only ever use Import + Sync, never My Posts.
+  void _onTabChanged() {
+    // _tabController.indexIsChanging fires twice per change (start + end);
+    // only act on the final stable index to avoid double loads.
+    if (_tabController.indexIsChanging) return;
+    if (_tabController.index == 2 && !_myPostsLoadedOnce && !_myPostsIsLoading) {
+      _loadMyPosts(isRefresh: true);
+    }
   }
 
   // ==================== DATA LOADING ====================
@@ -1047,6 +1089,12 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
                 icon: Icon(Icons.sync, size: 18),
                 text: 'Sync From TMDB',
               ),
+              // Task 30 (Number 2): "My Posts" tab — view + delete already-
+              // imported movies/series. Trash icon overlay on each card.
+              Tab(
+                icon: Icon(Icons.video_library, size: 18),
+                text: 'My Posts',
+              ),
             ],
             indicatorColor: const Color(0xFFE50914),
             labelColor: const Color(0xFFE50914),
@@ -1100,6 +1148,8 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
                       _buildImportTab(isDark),
                       // Tab 2: Sync Dashboard
                       _buildSyncDashboardTab(isDark),
+                      // Tab 3 (Task 30, Number 2): My Posts — view + delete.
+                      _buildMyPostsTab(isDark),
                     ],
                   ),
       ),
@@ -1114,6 +1164,414 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
         _buildFilterSection(isDark),
         _buildActionBar(isDark),
         Expanded(child: _buildResultsGrid(isDark)),
+      ],
+    );
+  }
+
+  // ==================== MY POSTS TAB (Task 30, Number 2) ====================
+  //
+  // Shows every movie/series already in Firestore, in updatedAt-desc order.
+  // Layout mirrors BatchPostsScreen (3-col grid, childAspectRatio 0.53) so
+  // the visual is consistent with the Batch Import → View Created Posts grid
+  // — Bro already knows that UX. Differences vs. BatchPostsScreen:
+  //   - Uses cursor-based pagination (getAllPosts) instead of getMoviesByIds,
+  //     because here we want EVERY post, not a fixed list from a batch.
+  //   - "Load more" infinite scroll at the bottom (no fixed count).
+  //   - Pull-to-refresh via RefreshIndicator.
+  //   - Search is client-side, same as BatchPostsScreen.
+
+  Future<void> _loadMyPosts({bool isRefresh = false}) async {
+    if (_myPostsIsLoading) return;
+    if (isRefresh) {
+      // Reset state for a fresh load.
+      setState(() {
+        _myPostsIsLoading = true;
+        _myPosts = [];
+        _myPostsFiltered = [];
+        _myPostsHasMore = true;
+        _myPostsLastDoc = null;
+        _myPostsLoadedOnce = true;
+      });
+    } else {
+      if (!_myPostsHasMore || _myPostsIsLoadingMore) return;
+      setState(() => _myPostsIsLoadingMore = true);
+    }
+
+    try {
+      final result = await _contentService.getAllPosts(
+        limit: 30,
+        startAfter: isRefresh ? null : _myPostsLastDoc,
+      );
+      final newMovies = (result['movies'] as List).cast<Movie>();
+      final hasMore = result['hasMore'] as bool;
+      final lastDoc = result['lastDoc'] as DocumentSnapshot?;
+
+      if (mounted) {
+        setState(() {
+          if (isRefresh) {
+            _myPosts = newMovies;
+          } else {
+            // De-dup by doc ID — if the user added/edited a movie since the
+            // last page loaded, it might appear at the top of the next page
+            // AND in our existing list (because updatedAt bumped). Filter
+            // those out so the grid doesn't show duplicates.
+            final seenIds = _myPosts.map((m) => m.id).toSet();
+            _myPosts.addAll(
+              newMovies.where((m) => !seenIds.contains(m.id)),
+            );
+          }
+          _myPostsHasMore = hasMore;
+          _myPostsLastDoc = lastDoc;
+          _myPostsIsLoading = false;
+          _myPostsIsLoadingMore = false;
+          _applyMyPostsFilter();
+        });
+      }
+    } catch (e) {
+      debugPrint('MyPosts _loadMyPosts failed: $e');
+      if (mounted) {
+        setState(() {
+          _myPostsIsLoading = false;
+          _myPostsIsLoadingMore = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to load posts: $e'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  /// Apply the current search query to [_myPosts], populating
+  /// [_myPostsFiltered]. Called on every load + every search keystroke.
+  void _applyMyPostsFilter() {
+    final q = _myPostsSearchQuery.trim().toLowerCase();
+    if (q.isEmpty) {
+      _myPostsFiltered = List.of(_myPosts);
+    } else {
+      _myPostsFiltered = _myPosts
+          .where((m) => m.title.toLowerCase().contains(q))
+          .toList();
+    }
+  }
+
+  /// Delete a single post from Firestore, then remove it from both
+  /// [_myPosts] and [_myPostsFiltered]. Mirrors the delete flow in
+  /// BatchPostsScreen so the UX is identical across the two screens.
+  Future<void> _deleteMyPost(Movie movie) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Post'),
+        content: Text(
+          'Delete "${movie.title}"?\n\n'
+          'This permanently removes the post from Firestore. '
+          'This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await _contentService.deleteMovie(movie.id);
+      if (mounted) {
+        setState(() {
+          _myPosts.removeWhere((m) => m.id == movie.id);
+          _myPostsFiltered.removeWhere((m) => m.id == movie.id);
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Deleted "${movie.title}"'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('MyPosts _deleteMyPost failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to delete "${movie.title}": $e'),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    }
+  }
+
+  void _navigateToDetailFromMyPosts(Movie movie) {
+    final isSeries = movie.type == 'series';
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => isSeries
+            ? SeriesDetailScreen(slug: movie.slug)
+            : MovieDetailScreen(slug: movie.slug),
+      ),
+    ).then((_) {
+      // Refresh on return — the user might have edited/deleted the
+      // movie from inside the detail screen.
+      if (mounted) _loadMyPosts(isRefresh: true);
+    });
+  }
+
+  void _onMyPostsSearchChanged(String value) {
+    _myPostsDebounce?.cancel();
+    _myPostsDebounce = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        setState(() {
+          _myPostsSearchQuery = value;
+          _applyMyPostsFilter();
+        });
+      }
+    });
+  }
+
+  /// Build the "My Posts" tab body. Structure mirrors BatchPostsScreen:
+  /// AppBar-style header row (count + refresh), search bar, hint row,
+  /// then the 3-col grid with trash-icon overlay on each card.
+  Widget _buildMyPostsTab(bool isDark) {
+    final theme = Theme.of(context);
+    return Column(
+      children: [
+        // Header row — count + refresh button.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+          child: Row(
+            children: [
+              const Icon(Icons.video_library,
+                  color: Color(0xFFE50914), size: 18),
+              const SizedBox(width: 8),
+              Text(
+                _myPostsSearchQuery.trim().isEmpty
+                    ? 'My Posts (${_myPosts.length}'
+                        '${_myPostsHasMore ? '+' : ''})'
+                    : 'My Posts (${_myPostsFiltered.length}/${_myPosts.length})',
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              if (_myPostsIsLoading || _myPostsIsLoadingMore)
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Color(0xFFE50914),
+                  ),
+                )
+              else
+                IconButton(
+                  icon: const Icon(Icons.refresh, size: 20),
+                  onPressed: () => _loadMyPosts(isRefresh: true),
+                  tooltip: 'Refresh posts',
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                      minWidth: 32, minHeight: 32),
+                ),
+            ],
+          ),
+        ),
+
+        // Search bar — client-side filter on title.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+          child: NoToolbarOnSingleTapTextField(
+            controller: _myPostsSearchController,
+            onChanged: _onMyPostsSearchChanged,
+            decoration: InputDecoration(
+              hintText: 'Search by title...',
+              prefixIcon: const Icon(Icons.search, size: 20),
+              suffixIcon: _myPostsSearchController.text.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear, size: 20),
+                      onPressed: () {
+                        _myPostsSearchController.clear();
+                        _onMyPostsSearchChanged('');
+                      },
+                    )
+                  : null,
+              isDense: true,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(
+                  color: isDark ? Colors.white12 : Colors.black12,
+                ),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(
+                  color: isDark ? Colors.white12 : Colors.black12,
+                ),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: Color(0xFFE50914)),
+              ),
+            ),
+          ),
+        ),
+
+        // Trash-icon hint.
+        if (_myPostsFiltered.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline,
+                    size: 14,
+                    color: theme.colorScheme.onSurface.withOpacity(0.5)),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Tap the trash icon on a card to delete that post.',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: theme.colorScheme.onSurface.withOpacity(0.5),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+        // Grid of movie cards with delete overlay.
+        Expanded(
+          child: _myPostsIsLoading && _myPosts.isEmpty
+              ? const Center(child: CircularProgressIndicator())
+              : _myPostsFiltered.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            _myPostsSearchQuery.trim().isEmpty
+                                ? Icons.video_library_outlined
+                                : Icons.search_off,
+                            size: 56,
+                            color: theme.colorScheme.onSurface
+                                .withOpacity(0.3),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            _myPostsSearchQuery.trim().isEmpty
+                                ? 'No posts yet. Import some from the Import tab.'
+                                : 'No posts match your search.',
+                            style: TextStyle(
+                              color: theme.colorScheme.onSurface
+                                  .withOpacity(0.5),
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                          if (_myPostsSearchQuery.trim().isEmpty) ...[
+                            const SizedBox(height: 12),
+                            ElevatedButton.icon(
+                              onPressed: () {
+                                _tabController.animateTo(0);
+                              },
+                              icon: const Icon(Icons.cloud_download,
+                                  size: 16),
+                              label: const Text('Go to Import'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFE50914),
+                                foregroundColor: Colors.white,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    )
+                  : NotificationListener<ScrollNotification>(
+                      onNotification: (notification) {
+                        // Infinite scroll: when we get within 200px of the
+                        // bottom AND there's more data AND we're not already
+                        // loading more, load the next page.
+                        if (notification is ScrollUpdateNotification &&
+                            _myPostsHasMore &&
+                            !_myPostsIsLoadingMore &&
+                            !_myPostsIsLoading &&
+                            notification.metrics.pixels >
+                                notification.metrics.maxScrollExtent - 200) {
+                          _loadMyPosts();
+                        }
+                        return false;
+                      },
+                      child: GridView.builder(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 6),
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 3,
+                          childAspectRatio: 0.53,
+                          crossAxisSpacing: 6,
+                          mainAxisSpacing: 6,
+                        ),
+                        itemCount: _myPostsFiltered.length +
+                            (_myPostsIsLoadingMore ? 6 : 0),
+                        itemBuilder: (context, index) {
+                          if (index >= _myPostsFiltered.length) {
+                            return const Center(
+                                child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                            ));
+                          }
+                          final movie = _myPostsFiltered[index];
+                          return Stack(
+                            children: [
+                              MovieCard(
+                                movie: movie,
+                                onTap: () =>
+                                    _navigateToDetailFromMyPosts(movie),
+                              ),
+                              // Trash-icon delete button — top-right corner.
+                              // Mirrors BatchPostsScreen styling exactly.
+                              Positioned(
+                                top: 4,
+                                right: 4,
+                                child: GestureDetector(
+                                  onTap: () => _deleteMyPost(movie),
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withOpacity(0.7),
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: Colors.red.shade300,
+                                        width: 1.5,
+                                      ),
+                                    ),
+                                    padding: const EdgeInsets.all(6),
+                                    child: const Icon(
+                                      Icons.delete_outline,
+                                      color: Colors.white,
+                                      size: 16,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+        ),
       ],
     );
   }
