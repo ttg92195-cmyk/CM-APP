@@ -219,8 +219,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     try {
       final results = await Future.wait([
         _contentService.getBannerConfig().catchError((e) => <String>[]),
-        _contentService.getTrendingMovies().catchError((_) => <Movie>[]),
-        _contentService.getTrendingTvShows().catchError((_) => <Movie>[]),
+        _contentService.getTrendingMovies(limit: _homeLimit).catchError((_) => <Movie>[]),
+        _contentService.getTrendingTvShows(limit: _homeLimit).catchError((_) => <Movie>[]),
         _contentService.getMovies(limit: _homeLimit).catchError((_) => <Map<String, dynamic>>{}),
         _contentService.getSeries(limit: _homeLimit).catchError((_) => <Map<String, dynamic>>{}),
       ]);
@@ -328,8 +328,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           debugPrint('Home: getBannerConfig failed, hiding banner: $e');
           return <String>[];
         }),
-        _contentService.getTrendingMovies().catchError((_) => <Movie>[]),
-        _contentService.getTrendingTvShows().catchError((_) => <Movie>[]),
+        _contentService.getTrendingMovies(limit: _homeLimit).catchError((_) => <Movie>[]),
+        _contentService.getTrendingTvShows(limit: _homeLimit).catchError((_) => <Movie>[]),
         _contentService.getMovies(limit: _homeLimit).catchError((_) => <Map<String, dynamic>>{}),
         _contentService.getSeries(limit: _homeLimit).catchError((_) => <Map<String, dynamic>>{}),
       ]);

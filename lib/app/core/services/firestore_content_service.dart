@@ -484,13 +484,20 @@ class FirestoreContentService {
   }
 
   /// Get trending movies
-  Future<List<Movie>> getTrendingMovies() async {
+  ///
+  /// `limit` controls the page size. Home screen passes 10 (it only
+  /// shows 10 in the horizontal list — fetching 50 was wasting 5x
+  /// Firestore reads + 5x document download bandwidth on every Home
+  /// load). Category page and detail screens use the default 50 so
+  /// users can scroll through more trending items when they tap
+  /// "More" or open "Related Movies".
+  Future<List<Movie>> getTrendingMovies({int limit = 50}) async {
     try {
       final snapshot = await _moviesRef
           .where('type', isEqualTo: 'movie')
           .where('isTrending', isEqualTo: true)
           .orderBy('createdAt', descending: true)
-          .limit(50)
+          .limit(limit)
           .get();
 
       return snapshot.docs
@@ -506,7 +513,7 @@ class FirestoreContentService {
         final snapshot = await _moviesRef
             .where('type', isEqualTo: 'movie')
             .where('isTrending', isEqualTo: true)
-            .limit(50)
+            .limit(limit)
             .get();
 
         final movies = snapshot.docs
@@ -526,13 +533,15 @@ class FirestoreContentService {
   }
 
   /// Get trending TV shows
-  Future<List<Movie>> getTrendingTvShows() async {
+  ///
+  /// See [getTrendingMovies] for the `limit` parameter rationale.
+  Future<List<Movie>> getTrendingTvShows({int limit = 50}) async {
     try {
       final snapshot = await _moviesRef
           .where('type', isEqualTo: 'series')
           .where('isTrending', isEqualTo: true)
           .orderBy('createdAt', descending: true)
-          .limit(50)
+          .limit(limit)
           .get();
 
       return snapshot.docs
@@ -548,7 +557,7 @@ class FirestoreContentService {
         final snapshot = await _moviesRef
             .where('type', isEqualTo: 'series')
             .where('isTrending', isEqualTo: true)
-            .limit(50)
+            .limit(limit)
             .get();
 
         final movies = snapshot.docs
