@@ -38,7 +38,7 @@ class HelpSupportPage extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '${appConfig.translate("app_version")}: 1.9.0',
+                    '${appConfig.translate("app_version")}: 2.0.0',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurface.withOpacity(0.5),
                     ),
@@ -185,7 +185,7 @@ class HelpSupportPage extends StatelessWidget {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'We typically respond within 24–48 hours. Please include your app version (1.9.0), device model, and a detailed description of the issue when contacting us so we can assist you more efficiently.',
+                    'We typically respond within 24–48 hours. Please include your app version (2.0.0), device model, and a detailed description of the issue when contacting us so we can assist you more efficiently.',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurface.withOpacity(0.7),
                       height: 1.6,
@@ -216,7 +216,7 @@ class HelpSupportPage extends StatelessWidget {
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      '${appConfig.translate("app_version")}: 1.9.0 • Build 2026.03',
+                      '${appConfig.translate("app_version")}: 2.0.0 • Build 2026.06',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurface.withOpacity(0.5),
                       ),

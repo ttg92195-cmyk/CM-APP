@@ -48,7 +48,7 @@ class AboutKmmPage extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              '${appConfig.translate("version")} 1.9.0',
+              '${appConfig.translate("version")} 2.0.0',
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurface.withOpacity(0.6),
               ),
@@ -181,9 +181,9 @@ class AboutKmmPage extends StatelessWidget {
               ),
               child: Column(
                 children: [
-                  _buildInfoRow(theme, '${appConfig.translate("version")}', '1.9.0'),
+                  _buildInfoRow(theme, '${appConfig.translate("version")}', '2.0.0'),
                   const SizedBox(height: 8),
-                  _buildInfoRow(theme, 'Build', '2026.03'),
+                  _buildInfoRow(theme, 'Build', '2026.06'),
                   const SizedBox(height: 8),
                   _buildInfoRow(theme, 'Platform', 'Android / iOS'),
                   const SizedBox(height: 8),

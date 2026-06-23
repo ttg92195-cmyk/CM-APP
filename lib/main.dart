@@ -268,7 +268,7 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
       final forceUpdate = data['forceUpdate'] as bool? ?? false;
 
       if (_latestVersion.isNotEmpty && forceUpdate) {
-        const currentVersion = '1.9.0';
+        const currentVersion = '2.0.0';
         if (_isNewerVersion(_latestVersion, currentVersion)) {
           if (mounted) {
             setState(() => _forceUpdate = true);

@@ -859,7 +859,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 icon: Icons.info_outline,
                 iconColor: _cAbout,
                 title: appConfig.translate('about_cm_movies'),
-                subtitle: '${appConfig.translate("version")}: 1.9.0',
+                subtitle: '${appConfig.translate("version")}: 2.0.0',
                 onTap: () => Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => const AboutKmmPage()),

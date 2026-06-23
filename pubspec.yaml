@@ -1,6 +1,6 @@
 name: cm_movies
 description: CM Movies App
-version: 1.9.0+15
+version: 2.0.0+16
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
