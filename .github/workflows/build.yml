@@ -86,8 +86,26 @@ jobs:
       # History: this step used to only write 5 Firebase keys, missing
       # TMDB_API_KEY + OneSignal. Every CI-built APK shipped without
       # TMDB_API_KEY → HTTP 401 on every TMDB call. Fixed Task 38 follow-up.
+      #
+      # Task 41 (2026-06-23): added `if [ ! -f .env ] || [ ! -s .env ]`
+      # guard. A previous auto-commit (0c51c4c) accidentally overwrote
+      # the committed .env with a single-line DATABASE_URL, wiping all
+      # 8 real keys. Without this guard, CI silently built broken APKs
+      # that 401'd on every TMDB call. The guard refuses to run if .env
+      # is missing or empty, surfaces a clear error, and points to the
+      # last known-good commit so the next dev can `git checkout` it.
       - name: Create .env file
         run: |
+          if [ ! -f .env ] || [ ! -s .env ]; then
+            echo "FATAL: .env file is missing or empty."
+            echo "Most likely an auto-commit wiped it (see commit 0c51c4c"
+            echo "for an example of this regression)."
+            echo ""
+            echo "To restore, run from a clean checkout:"
+            echo "  git show 3e8ece2:.env > .env"
+            echo "Then commit and push."
+            exit 1
+          fi
           # Firebase (existing — keep appending without guard to preserve
           # current behavior; Firebase secrets are known to be configured).
           echo "FIREBASE_API_KEY=${{ secrets.FIREBASE_API_KEY }}" >> .env
