@@ -2638,3 +2638,43 @@ Stage Summary:
 - User should rebuild and test: open Movies/Series tab with 50+ items,
   scroll fast — posters should populate quickly without blank cells
   that never fill in.
+
+---
+Task ID: 41 (.env wiped by auto-commit, CI build failing)
+Agent: Main Agent
+Task: CI build failed at verify_env.py — TMDB_API_KEY, ONE_SIGNAL_APP_ID, ONE_SIGNAL_REST_API_KEY all MISSING from .env.
+
+Work Log:
+- Pulled origin/main (0d14beb — benign worklog update).
+- Read scripts/verify_env.py (98 lines) — checks 8 required keys.
+- Read .github/workflows/build.yml (124 lines) — appends GitHub
+  secrets on top of committed .env (last-occurrence-wins).
+- Read local .env — only contained `DATABASE_URL=file:...`. All 8
+  required keys missing.
+- git log -- .env showed commit 0c51c4c (auto-commit by another AI
+  that bulk-changed file modes 100644 → 100755) had accidentally
+  overwritten the committed .env with a single-line DATABASE_URL,
+  regressing the Task 38 follow-up (3e8ece2) that had restored all
+  8 keys.
+- Verified 3e8ece2:.env contains all 8 keys (Firebase x5 + TMDB +
+  OneSignal x2).
+- The other AI's diagnosis was 'add these as GitHub Secrets'. That
+  would also work but is unnecessary — the repo already uses a
+  committed .env pattern. Simpler fix: restore the file.
+
+Fix applied:
+  1. .env: restored all 8 keys from commit 3e8ece2.
+  2. .github/workflows/build.yml: added guard at top of 'Create .env
+     file' step — refuses to run if .env is missing or empty,
+     surfaces clear error pointing to last known-good commit.
+
+- Verified locally: scripts/verify_env.py passes (8/8 keys present).
+- Validated build.yml YAML syntax with python3 yaml.safe_load. OK.
+- Committed as 2032d76, pushed to origin/main.
+
+Stage Summary:
+- .env restored with all 8 keys.
+- CI now refuses to silently build a broken APK if .env is wiped
+  again — surfaces a clear error with restore instructions.
+- User should re-trigger CI build (push another commit, or manually
+  re-run the workflow) to verify the fix.
