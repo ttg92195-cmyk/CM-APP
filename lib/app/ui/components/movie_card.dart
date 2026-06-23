@@ -23,6 +23,16 @@ class MovieCard extends StatefulWidget {
 class _MovieCardState extends State<MovieCard> {
   double? _watchProgress; // 0.0 to 1.0, null = not watched
 
+  // Task 40 — poster load retry counter.
+  // cached_network_image does NOT auto-retry on transient failures
+  // (TMDB 429 rate-limit, brief 502, flaky mobile-data handoffs).
+  // Once errorWidget fires, it stays fired forever — even after the
+  // network recovers. We track a per-card attempt count and let the
+  // user tap the error placeholder to retry (and also auto-retry once
+  // the first time, since most TMDB failures are transient).
+  int _posterRetryCount = 0;
+  static const int _maxAutoRetries = 1;
+
   // STATIC CACHE of SharedPreferences instance across ALL MovieCard
   // instances. Without this, every card calls
   // `SharedPreferences.getInstance()` independently — and although
@@ -65,6 +75,18 @@ class _MovieCardState extends State<MovieCard> {
     // We'll show percentage-based position
     final percent = (_watchProgress! * 100).round();
     return '$percent%';
+  }
+
+  // Task 40 — image URL with cache-busting retry suffix.
+  // On retry, append `?retry=N` (or `&retry=N` if URL already has a
+  // query string) so that CachedNetworkImage's URL-keyed in-memory
+  // cache treats it as a new request. Combined with the cacheKey bump
+  // (which handles the on-disk cache), this guarantees a fresh fetch
+  // from the network on each retry attempt.
+  String get _posterImageUrl {
+    if (_posterRetryCount == 0) return widget.movie.fullPosterUrl;
+    final sep = widget.movie.fullPosterUrl.contains('?') ? '&' : '?';
+    return '${widget.movie.fullPosterUrl}${sep}retry=$_posterRetryCount';
   }
 
   @override
@@ -113,25 +135,78 @@ class _MovieCardState extends State<MovieCard> {
                       aspectRatio: 2 / 3,
                       child: widget.movie.fullPosterUrl.isNotEmpty
                           ? CachedNetworkImage(
-                              imageUrl: widget.movie.fullPosterUrl,
+                              // Task 40 — append a cache-busting query param
+                              // on retry so cached_network_image doesn't
+                              // reuse the previously-failed cached entry.
+                              // Without this, the "retry" would just read
+                              // the same broken cache file and instantly
+                              // fail again. The `_posterRetryCount` is
+                              // also used by `cacheKey` below to force a
+                              // fresh fetch from network.
+                              imageUrl: _posterImageUrl,
                               cacheManager: PosterCacheManager.instance,
-                              cacheKey: widget.movie.id, // stable key per movie
+                              // Task 40 — cacheKey combines movie.id +
+                              // retry count. When the user (or auto-retry)
+                              // bumps the count, cacheKey changes, the
+                              // cache manager treats it as a miss, and
+                              // a fresh network fetch happens. Stable
+                              // across rebuilds as long as retry count
+                              // doesn't change.
+                              cacheKey: '${widget.movie.id}_r$_posterRetryCount',
                               fit: BoxFit.cover,
-                              fadeInDuration: const Duration(milliseconds: 200),
+                              // Task 40 — decode the poster at a smaller
+                              // resolution in memory. A typical phone
+                              // shows ~3 columns of posters at ~120-160px
+                              // wide each; TMDB's original posters are
+                              // 500-1000px wide. Decoding at full
+                              // resolution wastes memory (each poster
+                              // ~500KB-1MB in decoded form) and slows
+                              // down the grid on devices with limited
+                              // RAM — leading to posters appearing
+                              // "stuck" or never loading when many are
+                              // visible at once. memCacheWidth=400 keeps
+                              // decoded size ~200KB per poster while
+                              // remaining visually crisp on phones.
+                              memCacheWidth: 400,
+                              fadeInDuration: const Duration(milliseconds: 150),
+                              // Task 40 — quieter placeholder. The old
+                              // spinner was visually noisy in a 3-col
+                              // grid (12+ spinners spinning at once is
+                              // distracting). A flat skeleton-colored
+                              // Container matches the MovieCardSkeleton
+                              // shimmer look and feels less anxious.
                               placeholder: (context, url) => Container(
                                 color: theme.colorScheme.surfaceContainerHighest,
-                                child: const Center(
-                                  child: CircularProgressIndicator(strokeWidth: 2),
-                                ),
                               ),
-                              errorWidget: (context, url, error) => Container(
-                                color: theme.colorScheme.surfaceContainerHighest,
-                                child: Icon(
-                                  Icons.movie,
-                                  color: theme.colorScheme.onSurface.withOpacity(0.5),
-                                  size: 40,
-                                ),
-                              ),
+                              errorWidget: (context, url, error) {
+                                // Task 40 — auto-retry once on first
+                                // failure (covers transient TMDB 429 /
+                                // mobile-data handoff), then surface a
+                                // tappable retry icon for subsequent
+                                // failures. We use addPostFrameCallback
+                                // to avoid calling setState during build.
+                                if (_posterRetryCount < _maxAutoRetries) {
+                                  _posterRetryCount++;
+                                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                                    if (mounted) setState(() {});
+                                  });
+                                }
+                                return GestureDetector(
+                                  onTap: () {
+                                    setState(() {
+                                      _posterRetryCount++;
+                                    });
+                                  },
+                                  child: Container(
+                                    color: theme.colorScheme.surfaceContainerHighest,
+                                    child: Icon(
+                                      Icons.refresh,
+                                      color: theme.colorScheme.onSurface.withOpacity(0.5),
+                                      size: 32,
+                                    ),
+                                  ),
+                                );
+                              },
                             )
                           : Container(
                               color: theme.colorScheme.surfaceContainerHighest,
