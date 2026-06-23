@@ -743,6 +743,19 @@ class FirestoreContentService {
         }
         query = query.limit(limit);
 
+        // Task 39 — fallback path MUST honor startAfterDocument too,
+        // otherwise pagination silently breaks when the composite index
+        // (categories, type, createdAt) isn't deployed yet: the fallback
+        // would return page 1 again on every _loadMore call, dedup would
+        // strip all 20 docs (already in _seenIds), and the grid would be
+        // stuck at 20 items forever while the auto-load safety net spins
+        // in an infinite loop. Without orderBy, Firestore returns docs in
+        // document-ID order; startAfterDocument(lastDoc) advances the
+        // cursor by doc ID, which is consistent and deterministic.
+        if (startAfter != null) {
+          query = query.startAfterDocument(startAfter);
+        }
+
         final snapshot = await query.get();
         final movies = snapshot.docs
             .map((doc) => Movie.fromMap(
@@ -815,6 +828,12 @@ class FirestoreContentService {
           query = query.where('type', isEqualTo: typeFilter);
         }
         query = query.limit(limit);
+
+        // Task 39 — fallback path MUST honor startAfterDocument too.
+        // See getMoviesByGenre fallback above for the full rationale.
+        if (startAfter != null) {
+          query = query.startAfterDocument(startAfter);
+        }
 
         final snapshot = await query.get();
         final movies = snapshot.docs
@@ -1418,6 +1437,12 @@ class FirestoreContentService {
           query = query.where('type', isEqualTo: typeFilter);
         }
         query = query.limit(limit);
+
+        // Task 39 — fallback path MUST honor startAfterDocument too.
+        // See getMoviesByGenre fallback above for the full rationale.
+        if (startAfter != null) {
+          query = query.startAfterDocument(startAfter);
+        }
 
         final snapshot = await query.get();
         final movies = snapshot.docs

@@ -584,7 +584,16 @@ class _FilterResultPageState extends State<FilterResultPage> {
         setState(() {
           _movies.addAll(dedupedMovies);
           _filteredMovies.addAll(filtered);
-          _hasMore = result['hasMore'] as bool && newMovies.isNotEmpty;
+          // Task 39 — stop paginating when dedup returns 0 items, which
+          // happens when Firestore returned a page of docs we've already
+          // seen (e.g., the fallback path returned page 1 again before
+          // the startAfterDocument fix was deployed, or the genre has
+          // fewer than `limit` total docs and Firestore returned the
+          // same set with a slightly different doc-ID order). Without
+          // this guard, the auto-load safety net would spin forever
+          // calling _loadMore → 0 new docs → _hasMore stays true →
+          // another _loadMore → ad infinitum (and burn Firestore reads).
+          _hasMore = (result['hasMore'] as bool) && dedupedMovies.isNotEmpty;
           _lastDoc = result['lastDoc'] as DocumentSnapshot?;
           _isLoadingMore = false;
         });
