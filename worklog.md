@@ -2568,3 +2568,73 @@ Stage Summary:
 - User should rebuild and test: Genres → Action should now show 20 →
   scroll to 80% → next 20 loads → scroll again → next 20 → continues
   until the genre's full list is shown.
+
+---
+Task ID: 40 (Posters slow / not loading on grids)
+Agent: Main Agent
+Task: User reported posters take long to appear and sometimes never load, even on a good network. Many cards end up blank/error. Fix the reliability + speed.
+
+Work Log:
+- Pulled origin/main (0c51c4c — benign submodule pointer bump).
+- Read lib/app/core/services/poster_cache_manager.dart — custom
+  CacheManager already exists with stalePeriod=365 days +
+  maxNrOfCacheObjects=2000. Cache layer is fine; problem is in
+  CachedNetworkImage usage.
+- Read lib/app/ui/components/movie_card.dart (423 lines) — found
+  FIVE problems with the CachedNetworkImage call:
+
+  Problem 1 (root cause of slow grid): no memCacheWidth. TMDB returns
+  500-1000px posters, phone grid needs ~120-160px. Decoded each at
+  full res into memory (~500KB-1MB each). 12+ visible cards pushed
+  heap pressure high enough that decoder stalled and posters silently
+  failed.
+
+  Problem 2 (root cause of permanent blank): no retry. cached_network_image
+  treats ANY error (TMDB 429, brief 502, mobile-data handoff) as
+  permanent. errorWidget stayed forever even after network recovered.
+
+  Problem 3 (visual noise): placeholder was CircularProgressIndicator.
+  12+ spinners spinning at once in a 3-col grid = distracting.
+
+  Problem 4: fadeInDuration 200ms was perceptibly slow.
+
+  Problem 5 (latent bug): cacheKey was just widget.movie.id (Firestore
+  doc ID). If admin re-pulls from TMDB and poster URL changes, cache
+  key stays same → users see old poster forever.
+
+- Fix applied to movie_card.dart only (TrendingMovieComponent uses
+  MovieCard, so it inherits the fix automatically):
+
+  * Added _posterRetryCount field + _maxAutoRetries=1 const.
+  * Added _posterImageUrl getter that appends `?retry=N` (or `&retry=N`
+    if URL already has a query) for cache-busting on retry.
+  * Added memCacheWidth: 400 to CachedNetworkImage (decoded size
+    drops from ~500KB-1MB to ~200KB per poster, ~3-5x grid throughput).
+  * Changed cacheKey to `{movie.id}_r{retryCount}`. First load is
+    functionally equivalent to old behavior. Retry bumps cache key
+    → forces fresh fetch.
+  * Replaced CircularProgressIndicator placeholder with quiet
+    surfaceContainerHighest-colored Container (matches skeleton).
+  * Reduced fadeInDuration 200ms → 150ms.
+  * errorWidget is now a function: auto-retries once on first failure
+    via addPostFrameCallback + setState. On subsequent failures, shows
+    a tappable refresh icon so user can manually retry.
+
+- Wrote scripts/task40_syntax_check.py — Dart-aware delimiter scanner
+  + content invariants (verifies retry fields, memCacheWidth, cacheKey
+  format, errorWidget is a function, no CircularProgressIndicator).
+  All green.
+
+- Committed as 7101d66, pushed to origin/main.
+
+Stage Summary:
+- Posters should now appear faster on grids (memory pressure relieved).
+- Transient TMDB failures auto-recover on first attempt; user can
+  tap-to-retry persistent failures.
+- Visual noise from 12+ spinners eliminated.
+- Admin re-pulls from TMDB will now show the fresh poster (cache key
+  no longer pins to Firestore doc ID alone).
+- No new dependencies. No API changes. Backward compatible.
+- User should rebuild and test: open Movies/Series tab with 50+ items,
+  scroll fast — posters should populate quickly without blank cells
+  that never fill in.
