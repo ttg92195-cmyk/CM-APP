@@ -2801,3 +2801,101 @@ Stage Summary:
   current post (and any other posts featuring the same actor).
 - Task 42#2 (extra spacing below Casts + You May Also Like showing
   unrelated posts) still pending.
+
+---
+Task ID: 42#2 (Casts extra spacing + You May Also Like unrelated posts)
+Agent: Main Agent
+Task: (a) Extra spacing below "Casts" text in Post detail. (b) "You May Also Like" section shows unrelated posts — should show related/similar movies.
+
+Work Log:
+- Pulled origin/main (5ccaf8c — Task 42#1 worklog update).
+- Located Casts section in both movie_detail_screen.dart (line 908-1033)
+  and series_detail_screen.dart (line 753-870). Same structure in both:
+    Padding(horizontal: 16) → Column → [
+      Text('Casts'),
+      SizedBox(height: 8),
+      SizedBox(height: 140) → ListView.builder(horizontal) → [
+        Column → [avatar 68x68, gap 6, name 2-line, char gap 2, char 1-line]
+      ]
+    ]
+- Computed actual cast item content height:
+    avatar 68 + gap 6 + name 2-line ~28 + char gap 2 + char 1-line ~12 = 116px max
+- SizedBox was 140 → ~24px empty space below each cast row (the extra
+  spacing user saw).
+
+Fix A applied (Casts spacing):
+- SizedBox height: 140 → 116 in both files.
+- Added explanatory comment showing the math.
+- 116px fits the tallest case (with character subtitle) without clipping;
+  items without character leave ~14px (acceptable, much less than 24px).
+
+- Located _loadRelatedMovies in movie_detail_screen.dart (lines 110-149)
+  and _loadRelatedSeries in series_detail_screen.dart (lines 110-149).
+  Both had identical pattern:
+    1. getMoviesByGenre(detail.categories.first, limit: 11) — FIRST category only
+    2. If < 10 results, getMoviesByTagSimple(detail.tags.first, limit: 11)
+    3. If still empty → getTrendingMovies / getTrendingTvShows (UNRELATED)
+  Plus: did NOT pass typeFilter, so movies leaked into series detail and
+  vice versa.
+
+Root cause of "unrelated posts" complaint:
+- The trending fallback (step 3) was the smoking gun. When the genre
+  query returned < 10 results (common for niche genres) or 0 results
+  (older posts with no categories), the section filled up with trending
+  posts — which have NO relationship to the current movie beyond
+  isTrending=true. User correctly perceived them as "new" not "related".
+- Secondary issue: no typeFilter meant a movie detail page could show
+  series in "You May Also Like" (and vice versa), compounding the
+  "unrelated" feeling.
+
+Fix B applied (_loadRelatedMovies / _loadRelatedSeries rewritten):
+- Query movies/series by EACH category (capped at 3) with typeFilter
+  ('movie' for movie detail, 'series' for series detail) so wrong-type
+  doesn't leak in.
+- Query by EACH tag (capped at 2) for additional candidates.
+- Score each candidate by # of shared categories (+2 per shared category).
+  Tags aren't scored because the Movie model doesn't expose them.
+- Sort by score desc, then createdAt desc as tiebreaker.
+- Take top 10.
+- NO trending fallback — if 0 related found, the section is hidden
+  by the existing `if (_relatedMovies.isNotEmpty)` guard (cleaner than
+  showing unrelated posts).
+- debugPrint logs candidates count + top score for future diagnosis.
+- Each per-category and per-tag query wrapped in try/catch so a single
+  failure (e.g. missing composite index) doesn't abort the whole load.
+
+Verification:
+- Wrote scripts/task42_2_syntax_check.py — uses the same single-pass
+  tokenizer as task42_1_syntax_check.py (handles all string literal
+  forms + comments without one corrupting the other).
+- 22 invariants checked across both files:
+  * delimiter balance
+  * Casts SizedBox height is 116 (in CAST SECTION)
+  * _loadRelated* function present
+  * caps categories at 3 (.take(3))
+  * passes typeFilter 'movie' / 'series'
+  * NO trending fallback
+  * computes category-overlap score
+  * sorts by score desc then createdAt desc
+  * takes top 10
+  * calls getMoviesByGenre
+  * calls getMoviesByTagSimple
+  All 22 green.
+- Committed as b7bba0d, pushed to origin/main.
+
+Stage Summary:
+- Casts section no longer has the extra ~24px of empty space below
+  each cast row.
+- "You May Also Like" now shows movies/series that share categories
+  with the current post (same-type only), scored by overlap and
+  sorted so the most-related appear first.
+- When no related posts can be found (rare: post has no categories
+  AND no tags), the section is hidden rather than showing unrelated
+  trending posts.
+- Bro can rebuild and verify: open a movie with multiple categories
+  → "You May Also Like" should now show movies that share at least
+  one genre, with multi-genre-overlap movies first. Series detail
+  should show only series, not movies.
+- Task 42#3 (trailer icon) was already completed in commit 399c464
+  by a prior session. All 3 of the user's reported issues are now
+  addressed.
