@@ -1,0 +1,2002 @@
+     1→import 'package:flutter/foundation.dart';
+     2→import 'package:cloud_firestore/cloud_firestore.dart';
+     3→import 'package:firebase_auth/firebase_auth.dart';
+     4→import 'package:cm_movies/app/core/models/movie.dart';
+     5→import 'package:cm_movies/app/core/models/movie_detail.dart';
+     6→import 'package:cm_movies/app/core/models/tag_and_genres.dart';
+     7→
+     8→class FirestoreContentService {
+     9→  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+    10→
+    11→  // Collection references
+    12→  CollectionReference get _moviesRef => _firestore.collection('movies');
+    13→  CollectionReference get _genresRef => _firestore.collection('genres');
+    14→  CollectionReference get _tagsRef => _firestore.collection('tags');
+    15→  CollectionReference get _collectionsRef => _firestore.collection('collections');
+    16→
+    17→  // ==================== READ OPERATIONS ====================
+    18→
+    19→  /// Find a movie document by tmdbId — returns the first match or null
+    20→  Future<DocumentSnapshot?> findByTmdbId(dynamic tmdbId) async {
+    21→    if (tmdbId == null) return null;
+    22→    try {
+    23→      final snapshot = await _moviesRef
+    24→          .where('tmdbId', isEqualTo: tmdbId)
+    25→          .limit(1)
+    26→          .get();
+    27→      return snapshot.docs.isNotEmpty ? snapshot.docs.first : null;
+    28→    } catch (e) {
+    29→      debugPrint('findByTmdbId failed: $e');
+    30→      return null;
+    31→    }
+    32→  }
+    33→
+    34→  /// Get movies with cursor-based pagination
+    35→  Future<Map<String, dynamic>> getMovies({
+    36→    int limit = 50,
+    37→    DocumentSnapshot? startAfter,
+    38→  }) async {
+    39→    // === PRIMARY: orderBy('updatedAt', descending) — admin edits bump to top ===
+    40→    // Requires composite index (type ASC, updatedAt DESC). Declared in
+    41→    // firestore.indexes.json. If the index isn't deployed yet (e.g., Bro
+    42→    // hasn't run `firebase deploy --only firestore:indexes`), this query
+    43→    // throws and we fall through to the SECONDARY path below.
+    44→    try {
+    45→      Query query = _moviesRef
+    46→          .where('type', isEqualTo: 'movie')
+    47→          .orderBy('updatedAt', descending: true)
+    48→          .limit(limit);
+    49→
+    50→      if (startAfter != null) {
+    51→        query = query.startAfterDocument(startAfter);
+    52→      }
+    53→
+    54→      final snapshot = await query.get();
+    55→      final movies = snapshot.docs
+    56→          .map((doc) => Movie.fromMap(
+    57→                doc.data() as Map<String, dynamic>,
+    58→                docId: doc.id,
+    59→              ))
+    60→          .toList();
+    61→
+    62→      return {
+    63→        'movies': movies,
+    64→        'hasMore': snapshot.docs.length >= limit,
+    65→        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+    66→      };
+    67→    } catch (e) {
+    68→      debugPrint('getMovies: primary orderBy(updatedAt) failed: $e — trying createdAt fallback');
+    69→    }
+    70→
+    71→    // === SECONDARY: orderBy('createdAt', descending) ===
+    72→    // Uses the EXISTING composite index (type ASC, createdAt DESC) declared
+    73→    // in firestore.indexes.json. New movies (created via TMDB Generator /
+    74→    // Admin Panel / Batch Import) all have createdAt set to server
+    75→    // timestamp at creation time, so this puts newly-added movies at the
+    76→    // top of the list — fixing Bro's 'TMDB Generator new movie doesn't
+    77→    // appear at top of Home' bug.
+    78→    //
+    79→    // Trade-off vs primary: admin EDITS won't bump a movie to the top
+    80→    // (createdAt is preserved on update, only updatedAt changes). That's
+    81→    // an acceptable degradation when the updatedAt index isn't deployed
+    82→    // yet — better than showing a stale random sample.
+    83→    try {
+    84→      Query query = _moviesRef
+    85→          .where('type', isEqualTo: 'movie')
+    86→          .orderBy('createdAt', descending: true)
+    87→          .limit(limit);
+    88→
+    89→      if (startAfter != null) {
+    90→        query = query.startAfterDocument(startAfter);
+    91→      }
+    92→
+    93→      final snapshot = await query.get();
+    94→      final movies = snapshot.docs
+    95→          .map((doc) => Movie.fromMap(
+    96→                doc.data() as Map<String, dynamic>,
+    97→                docId: doc.id,
+    98→              ))
+    99→          .toList();
+   100→
+   101→      return {
+   102→        'movies': movies,
+   103→        'hasMore': snapshot.docs.length >= limit,
+   104→        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+   105→      };
+   106→    } catch (e) {
+   107→      debugPrint('getMovies: secondary orderBy(createdAt) also failed: $e — falling back to no-orderBy');
+   108→    }
+   109→
+   110→    // === TERTIARY: no orderBy — last-resort for legacy docs missing both
+   111→    //     timestamps. Fetches by document ID order (essentially arbitrary)
+   112→    //     and sorts client-side. With small `limit` (e.g., Home's 10),
+   113→    //     this returns a non-representative sample — new movies likely
+   114→    //     missing. Acceptable only when primary and secondary both fail.
+   115→    try {
+   116→      Query query = _moviesRef
+   117→          .where('type', isEqualTo: 'movie')
+   118→          .limit(limit);
+   119→
+   120→      if (startAfter != null) {
+   121→        query = query.startAfterDocument(startAfter);
+   122→      }
+   123→
+   124→      final snapshot = await query.get();
+   125→      final movies = snapshot.docs
+   126→          .map((doc) => Movie.fromMap(
+   127→                doc.data() as Map<String, dynamic>,
+   128→                docId: doc.id,
+   129→              ))
+   130→          .toList();
+   131→
+   132→      // Sort client-side by updatedAt (falls back to createdAt if updatedAt missing)
+   133→      movies.sort((a, b) {
+   134→        final aDate = b.updatedAt ?? b.createdAt ?? DateTime(2000);
+   135→        final bDate = a.updatedAt ?? a.createdAt ?? DateTime(2000);
+   136→        return aDate.compareTo(bDate);
+   137→      });
+   138→
+   139→      return {
+   140→        'movies': movies,
+   141→        'hasMore': snapshot.docs.length >= limit,
+   142→        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+   143→      };
+   144→    } catch (e2) {
+   145→      debugPrint('getMovies: no-orderBy fallback also failed: $e2');
+   146→      return {
+   147→        'movies': <Movie>[],
+   148→        'hasMore': false,
+   149→        'lastDoc': null,
+   150→      };
+   151→    }
+   152→  }
+   153→
+   154→  /// Get series with cursor-based pagination
+   155→  Future<Map<String, dynamic>> getSeries({
+   156→    int limit = 50,
+   157→    DocumentSnapshot? startAfter,
+   158→  }) async {
+   159→    // === PRIMARY: orderBy('updatedAt', descending) — admin edits bump to top ===
+   160→    // See getMovies() for the rationale behind the 3-tier fallback strategy.
+   161→    try {
+   162→      Query query = _moviesRef
+   163→          .where('type', isEqualTo: 'series')
+   164→          .orderBy('updatedAt', descending: true)
+   165→          .limit(limit);
+   166→
+   167→      if (startAfter != null) {
+   168→        query = query.startAfterDocument(startAfter);
+   169→      }
+   170→
+   171→      final snapshot = await query.get();
+   172→      final series = snapshot.docs
+   173→          .map((doc) => Movie.fromMap(
+   174→                doc.data() as Map<String, dynamic>,
+   175→                docId: doc.id,
+   176→              ))
+   177→          .toList();
+   178→
+   179→      return {
+   180→        'movies': series,
+   181→        'hasMore': snapshot.docs.length >= limit,
+   182→        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+   183→      };
+   184→    } catch (e) {
+   185→      debugPrint('getSeries: primary orderBy(updatedAt) failed: $e — trying createdAt fallback');
+   186→    }
+   187→
+   188→    // === SECONDARY: orderBy('createdAt', descending) ===
+   189→    // Uses the EXISTING composite index (type ASC, createdAt DESC). New
+   190→    // series appear at the top of the list. See getMovies() for full
+   191→    // explanation of the trade-off vs primary.
+   192→    try {
+   193→      Query query = _moviesRef
+   194→          .where('type', isEqualTo: 'series')
+   195→          .orderBy('createdAt', descending: true)
+   196→          .limit(limit);
+   197→
+   198→      if (startAfter != null) {
+   199→        query = query.startAfterDocument(startAfter);
+   200→      }
+   201→
+   202→      final snapshot = await query.get();
+   203→      final series = snapshot.docs
+   204→          .map((doc) => Movie.fromMap(
+   205→                doc.data() as Map<String, dynamic>,
+   206→                docId: doc.id,
+   207→              ))
+   208→          .toList();
+   209→
+   210→      return {
+   211→        'movies': series,
+   212→        'hasMore': snapshot.docs.length >= limit,
+   213→        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+   214→      };
+   215→    } catch (e) {
+   216→      debugPrint('getSeries: secondary orderBy(createdAt) also failed: $e — falling back to no-orderBy');
+   217→    }
+   218→
+   219→    // === TERTIARY: no orderBy — last-resort for legacy docs missing both
+   220→    //     timestamps. See getMovies() for full explanation.
+   221→    try {
+   222→      Query query = _moviesRef
+   223→          .where('type', isEqualTo: 'series')
+   224→          .limit(limit);
+   225→
+   226→      if (startAfter != null) {
+   227→        query = query.startAfterDocument(startAfter);
+   228→      }
+   229→
+   230→      final snapshot = await query.get();
+   231→      final series = snapshot.docs
+   232→          .map((doc) => Movie.fromMap(
+   233→                doc.data() as Map<String, dynamic>,
+   234→                docId: doc.id,
+   235→              ))
+   236→          .toList();
+   237→
+   238→      // Sort client-side by updatedAt (falls back to createdAt if updatedAt missing)
+   239→      series.sort((a, b) {
+   240→        final aDate = b.updatedAt ?? b.createdAt ?? DateTime(2000);
+   241→        final bDate = a.updatedAt ?? a.createdAt ?? DateTime(2000);
+   242→        return aDate.compareTo(bDate);
+   243→      });
+   244→
+   245→      return {
+   246→        'movies': series,
+   247→        'hasMore': snapshot.docs.length >= limit,
+   248→        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+   249→      };
+   250→    } catch (e2) {
+   251→      debugPrint('getSeries: no-orderBy fallback also failed: $e2');
+   252→      return {
+   253→        'movies': <Movie>[],
+   254→        'hasMore': false,
+   255→        'lastDoc': null,
+   256→      };
+   257→    }
+   258→  }
+   259→
+   260→  /// Get all movies and series (for admin panel).
+   261→  ///
+   262→  /// Robustness strategy mirrors getMovies() / getSeries():
+   263→  ///   1. PRIMARY  — orderBy('updatedAt', descending). This is the same field
+   264→  ///      Home uses, so movies that appear on Home will appear here too.
+   265→  ///   2. FALLBACK — If primary throws (e.g., missing index) OR returns 0
+   266→  ///      docs (e.g., legacy movies that have neither 'updatedAt' nor
+   267→  ///      'createdAt' because they were created via an older code path),
+   268→  ///      retry without orderBy and sort client-side. This guarantees that
+   269→  ///      the Admin Panel NEVER shows an empty list when movies exist.
+   270→  ///
+   271→  /// Background: a previous regression caused the Admin Panel → All tab to
+   272→  /// appear empty even though Home showed 1068 movies. Root cause was that
+   273→  /// this method used orderBy('createdAt') with no fallback, so any movie
+   274→  /// missing the 'createdAt' field was silently excluded from the query
+   275→  /// result. Search still worked because searchAllPosts() orders by
+   276→  /// 'title_lowercase' (a different field that those movies did have).
+   277→  /// This fix aligns getAllPosts() with getMovies() so the three code paths
+   278→  /// no longer disagree on which movies "exist".
+   279→  Future<Map<String, dynamic>> getAllPosts({
+   280→    int limit = 50,
+   281→    DocumentSnapshot? startAfter,
+   282→  }) async {
+   283→    // === PRIMARY: orderBy('updatedAt') — same field Home uses ===
+   284→    try {
+   285→      Query query = _moviesRef
+   286→          .orderBy('updatedAt', descending: true)
+   287→          .limit(limit);
+   288→
+   289→      if (startAfter != null) {
+   290→        query = query.startAfterDocument(startAfter);
+   291→      }
+   292→
+   293→      final snapshot = await query.get();
+   294→      final movies = snapshot.docs
+   295→          .map((doc) => Movie.fromMap(
+   296→                doc.data() as Map<String, dynamic>,
+   297→                docId: doc.id,
+   298→              ))
+   299→          .toList();
+   300→
+   301→      // If we got at least one movie, or we got fewer than `limit` (meaning
+   302→      // we've reached the end of the collection), this is a trustworthy
+   303→      // result — return it.
+   304→      if (movies.isNotEmpty || snapshot.docs.length < limit) {
+   305→        return {
+   306→          'movies': movies,
+   307→          'hasMore': snapshot.docs.length >= limit,
+   308→          'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+   309→        };
+   310→      }
+   311→
+   312→      // movies is empty AND snapshot.docs.length >= limit — suspicious.
+   313→      // This shouldn't normally happen, but if it does (e.g., all docs in
+   314→      // this page were skipped by Movie.fromMap throwing — unlikely), fall
+   315→      // through to the no-orderBy fallback below so we don't return empty.
+   316→      debugPrint('getAllPosts: primary returned 0 movies but limit=$limit — falling through to no-orderBy fallback');
+   317→    } catch (e) {
+   318→      // Most likely cause: missing composite index (shouldn't happen here
+   319→      // since we have no `where` clause, but the catch is cheap insurance).
+   320→      debugPrint('getAllPosts: primary orderBy(updatedAt) failed: $e — falling back to no-orderBy query');
+   321→    }
+   322→
+   323→    // === FALLBACK: no orderBy — fetch by document ID order, sort client-side ===
+   324→    // This handles the case where movies exist but lack 'updatedAt' (e.g.,
+   325→    // legacy imports). Without orderBy, Firestore returns docs in document
+   326→    // ID order, which is stable enough for cursor-based pagination to work.
+   327→    try {
+   328→      Query query = _moviesRef.limit(limit);
+   329→
+   330→      if (startAfter != null) {
+   331→        query = query.startAfterDocument(startAfter);
+   332→      }
+   333→
+   334→      final snapshot = await query.get();
+   335→      final movies = snapshot.docs
+   336→          .map((doc) => Movie.fromMap(
+   337→                doc.data() as Map<String, dynamic>,
+   338→                docId: doc.id,
+   339→              ))
+   340→          .toList();
+   341→
+   342→      // Sort client-side by updatedAt (falls back to createdAt if missing).
+   343→      // Movies with neither field sort to the bottom (DateTime(2000)).
+   344→      movies.sort((a, b) {
+   345→        final aDate = b.updatedAt ?? b.createdAt ?? DateTime(2000);
+   346→        final bDate = a.updatedAt ?? a.createdAt ?? DateTime(2000);
+   347→        return aDate.compareTo(bDate);
+   348→      });
+   349→
+   350→      return {
+   351→        'movies': movies,
+   352→        'hasMore': snapshot.docs.length >= limit,
+   353→        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+   354→      };
+   355→    } catch (e2) {
+   356→      debugPrint('getAllPosts: no-orderBy fallback also failed: $e2');
+   357→      return {
+   358→        'movies': <Movie>[],
+   359→        'hasMore': false,
+   360→        'lastDoc': null,
+   361→      };
+   362→    }
+   363→  }
+   364→
+   365→  /// Get the REAL total counts of movies/series in Firestore (for Admin Panel
+   366→  /// tab labels). Uses Firestore's AggregateQuery.count() which is billed as
+   367→  /// a single document read regardless of collection size — cheap and fast.
+   368→  ///
+   369→  /// Returns a map with keys:
+   370→  ///   - 'all'    : total count of documents in the movies collection
+   371→  ///   - 'movies' : count where type == 'movie'
+   372→  ///   - 'series' : count where type == 'series'
+   373→  ///
+   374→  /// If any of the count queries fail (e.g., permission denied), the value
+   375→  /// is returned as 0 — the caller can fall back to the page-loaded count.
+   376→  Future<Map<String, int>> getTotalPostCounts() async {
+   377→    try {
+   378→      final allCount = await _moviesRef.count().get();
+   379→      final moviesCount = await _moviesRef
+   380→          .where('type', isEqualTo: 'movie')
+   381→          .count()
+   382→          .get();
+   383→      final seriesCount = await _moviesRef
+   384→          .where('type', isEqualTo: 'series')
+   385→          .count()
+   386→          .get();
+   387→      return {
+   388→        'all': allCount.count ?? 0,
+   389→        'movies': moviesCount.count ?? 0,
+   390→        'series': seriesCount.count ?? 0,
+   391→      };
+   392→    } catch (e) {
+   393→      debugPrint('getTotalPostCounts failed: $e');
+   394→      return {'all': 0, 'movies': 0, 'series': 0};
+   395→    }
+   396→  }
+   397→
+   398→  /// Search all posts (for admin panel)
+   399→  /// Uses 'title_lowercase' field for case-insensitive prefix search
+   400→  /// with substring fallback for short queries (1-2 chars) so that
+   401→  /// single-character searches like "o" still return matches.
+   402→  Future<List<Movie>> searchAllPosts(String keyword) async {
+   403→    if (keyword.trim().isEmpty) return [];
+   404→
+   405→    final lowerKeyword = keyword.toLowerCase().trim();
+   406→    final upperKeyword = lowerKeyword + '\uf8ff';
+   407→
+   408→    try {
+   409→      // Primary: search on 'title_lowercase' field (case-insensitive prefix match)
+   410→      final snapshot = await _moviesRef
+   411→          .where('title_lowercase', isGreaterThanOrEqualTo: lowerKeyword)
+   412→          .where('title_lowercase', isLessThanOrEqualTo: upperKeyword)
+   413→          .orderBy('title_lowercase')
+   414→          .limit(50)
+   415→          .get();
+   416→
+   417→      final prefixResults = snapshot.docs
+   418→          .map((doc) => Movie.fromMap(
+   419→                doc.data() as Map<String, dynamic>,
+   420→                docId: doc.id,
+   421→              ))
+   422→          .toList();
+   423→
+   424→      // SUBSTRING FALLBACK for short queries (<=2 chars).
+   425→      // Same rationale as _searchWithKeyword Strategy 1.5 — see comment there.
+   426→      //
+   427→      // Always fires for short queries (length <= 2) regardless of whether
+   428→      // the prefix search returned matches. This catches titles like
+   429→      // "Spider-Man" or "Thor" when the user types "o" — these don't START
+   430→      // with "o" so prefix search misses them, but they CONTAIN "o" so the
+   431→      // substring fallback finds them. The previous version only fired this
+   432→      // fallback when prefixResults was empty, which meant single-letter
+   433→      // searches like "o" only returned movies starting with "o" (Ocean's,
+   434→      // Once Upon a Time, etc.) — Bro reported this exact bug on the Admin
+   435→      // Panel Tab too. Task 25.
+   436→      if (lowerKeyword.length <= 2) {
+   437→        try {
+   438→          final subSnapshot = await _moviesRef.limit(200).get();
+   439→          final subResults = subSnapshot.docs
+   440→              .map((doc) => Movie.fromMap(
+   441→                    doc.data() as Map<String, dynamic>,
+   442→                    docId: doc.id,
+   443→                  ))
+   444→              .where((m) => m.titleLowercase.contains(lowerKeyword))
+   445→              .toList();
+   446→          // Merge prefix + substring, dedup by ID.
+   447→          final seenIds = <String>{};
+   448→          final merged = <Movie>[];
+   449→          for (final m in [...prefixResults, ...subResults]) {
+   450→            if (!seenIds.contains(m.id)) {
+   451→              seenIds.add(m.id);
+   452→              merged.add(m);
+   453→            }
+   454→          }
+   455→          return merged;
+   456→        } catch (_) {
+   457→          return prefixResults;
+   458→        }
+   459→      }
+   460→
+   461→      return prefixResults;
+   462→    } catch (e) {
+   463→      // Fallback: if title_lowercase index doesn't exist, try old 'title' field
+   464→      debugPrint('searchAllPosts with title_lowercase failed, trying fallback: $e');
+   465→      try {
+   466→        final snapshot = await _moviesRef
+   467→            .where('title', isGreaterThanOrEqualTo: lowerKeyword)
+   468→            .where('title', isLessThanOrEqualTo: upperKeyword)
+   469→            .orderBy('title')
+   470→            .limit(50)
+   471→            .get();
+   472→
+   473→        return snapshot.docs
+   474→            .map((doc) => Movie.fromMap(
+   475→                  doc.data() as Map<String, dynamic>,
+   476→                  docId: doc.id,
+   477→                ))
+   478→            .toList();
+   479→      } catch (e2) {
+   480→        debugPrint('searchAllPosts fallback also failed: $e2');
+   481→        return [];
+   482→      }
+   483→    }
+   484→  }
+   485→
+   486→  /// Get trending movies
+   487→  ///
+   488→  /// `limit` controls the page size. Home screen passes 10 (it only
+   489→  /// shows 10 in the horizontal list — fetching 50 was wasting 5x
+   490→  /// Firestore reads + 5x document download bandwidth on every Home
+   491→  /// load). Category page and detail screens use the default 50 so
+   492→  /// users can scroll through more trending items when they tap
+   493→  /// "More" or open "Related Movies".
+   494→  Future<List<Movie>> getTrendingMovies({int limit = 50}) async {
+   495→    try {
+   496→      final snapshot = await _moviesRef
+   497→          .where('type', isEqualTo: 'movie')
+   498→          .where('isTrending', isEqualTo: true)
+   499→          .orderBy('createdAt', descending: true)
+   500→          .limit(limit)
+   501→          .get();
+   502→
+   503→      return snapshot.docs
+   504→          .map((doc) => Movie.fromMap(
+   505→                doc.data() as Map<String, dynamic>,
+   506→                docId: doc.id,
+   507→              ))
+   508→          .toList();
+   509→    } catch (e) {
+   510→      // Fallback: if composite index doesn't exist, try simpler query
+   511→      debugPrint('getTrendingMovies with orderBy failed, trying fallback: $e');
+   512→      try {
+   513→        final snapshot = await _moviesRef
+   514→            .where('type', isEqualTo: 'movie')
+   515→            .where('isTrending', isEqualTo: true)
+   516→            .limit(limit)
+   517→            .get();
+   518→
+   519→        final movies = snapshot.docs
+   520→            .map((doc) => Movie.fromMap(
+   521→                  doc.data() as Map<String, dynamic>,
+   522→                  docId: doc.id,
+   523→                ))
+   524→            .toList();
+   525→        movies.sort((a, b) => (b.createdAt ?? DateTime(2000))
+   526→            .compareTo(a.createdAt ?? DateTime(2000)));
+   527→        return movies;
+   528→      } catch (e2) {
+   529→        debugPrint('getTrendingMovies fallback also failed: $e2');
+   530→        return [];
+   531→      }
+   532→    }
+   533→  }
+   534→
+   535→  /// Get trending TV shows
+   536→  ///
+   537→  /// See [getTrendingMovies] for the `limit` parameter rationale.
+   538→  Future<List<Movie>> getTrendingTvShows({int limit = 50}) async {
+   539→    try {
+   540→      final snapshot = await _moviesRef
+   541→          .where('type', isEqualTo: 'series')
+   542→          .where('isTrending', isEqualTo: true)
+   543→          .orderBy('createdAt', descending: true)
+   544→          .limit(limit)
+   545→          .get();
+   546→
+   547→      return snapshot.docs
+   548→          .map((doc) => Movie.fromMap(
+   549→                doc.data() as Map<String, dynamic>,
+   550→                docId: doc.id,
+   551→              ))
+   552→          .toList();
+   553→    } catch (e) {
+   554→      // Fallback: if composite index doesn't exist, try simpler query
+   555→      debugPrint('getTrendingTvShows with orderBy failed, trying fallback: $e');
+   556→      try {
+   557→        final snapshot = await _moviesRef
+   558→            .where('type', isEqualTo: 'series')
+   559→            .where('isTrending', isEqualTo: true)
+   560→            .limit(limit)
+   561→            .get();
+   562→
+   563→        final movies = snapshot.docs
+   564→            .map((doc) => Movie.fromMap(
+   565→                  doc.data() as Map<String, dynamic>,
+   566→                  docId: doc.id,
+   567→                ))
+   568→            .toList();
+   569→        movies.sort((a, b) => (b.createdAt ?? DateTime(2000))
+   570→            .compareTo(a.createdAt ?? DateTime(2000)));
+   571→        return movies;
+   572→      } catch (e2) {
+   573→        debugPrint('getTrendingTvShows fallback also failed: $e2');
+   574→        return [];
+   575→      }
+   576→    }
+   577→  }
+   578→
+   579→  /// Get movie detail by slug
+   580→  /// Prefers the most recently updated document when duplicates exist.
+   581→  Future<MovieDetail?> getMovieBySlug(String slug) async {
+   582→    try {
+   583→      // Try with orderBy first (requires composite index: slug + updatedAt)
+   584→      final snapshot = await _moviesRef
+   585→          .where('slug', isEqualTo: slug)
+   586→          .orderBy('updatedAt', descending: true)
+   587→          .limit(1)
+   588→          .get();
+   589→
+   590→      if (snapshot.docs.isNotEmpty) {
+   591→        final doc = snapshot.docs.first;
+   592→        return MovieDetail.fromMap(
+   593→          doc.data() as Map<String, dynamic>,
+   594→          docId: doc.id,
+   595→        );
+   596→      }
+   597→    } catch (e) {
+   598→      // Fallback: if composite index doesn't exist, fetch all and pick best
+   599→      debugPrint('getMovieBySlug with orderBy failed, trying fallback: $e');
+   600→    }
+   601→
+   602→    // Fallback: fetch all matching and pick the most complete one
+   603→    final snapshot = await _moviesRef
+   604→        .where('slug', isEqualTo: slug)
+   605→        .limit(10)
+   606→        .get();
+   607→
+   608→    if (snapshot.docs.isEmpty) return null;
+   609→
+   610→    // Pick the document with the most data (poster, backdrop, rating, etc.)
+   611→    DocumentSnapshot? bestDoc;
+   612→    int bestScore = -1;
+   613→
+   614→    for (final doc in snapshot.docs) {
+   615→      final data = doc.data() as Map<String, dynamic>;
+   616→      int score = 0;
+   617→      // Score based on how many fields have actual data
+   618→      if (data['poster'] != null) score += 3;
+   619→      if (data['backdrop'] != null) score += 3;
+   620→      if (data['rating'] != null) score += 2;
+   621→      if (data['duration'] != null) score += 2;
+   622→      if (data['resolution'] != null) score += 1;
+   623→      if (data['overview'] != null) score += 1;
+   624→      if ((data['categories'] as List?)?.isNotEmpty == true) score += 2;
+   625→      if ((data['tags'] as List?)?.isNotEmpty == true) score += 1;
+   626→      if (data['updatedAt'] != null) score += 5; // Prefer recently updated
+   627→      if (score > bestScore) {
+   628→        bestScore = score;
+   629→        bestDoc = doc;
+   630→      }
+   631→    }
+   632→
+   633→    if (bestDoc == null) return null;
+   634→
+   635→    return MovieDetail.fromMap(
+   636→      bestDoc.data() as Map<String, dynamic>,
+   637→      docId: bestDoc.id,
+   638→    );
+   639→  }
+   640→
+   641→  /// Get movie detail by ID
+   642→  Future<MovieDetail?> getMovieById(String id) async {
+   643→    final doc = await _moviesRef.doc(id).get();
+   644→    if (!doc.exists) return null;
+   645→
+   646→    return MovieDetail.fromMap(
+   647→      doc.data() as Map<String, dynamic>,
+   648→      docId: doc.id,
+   649→    );
+   650→  }
+   651→
+   652→  /// Batch-fetch latest Movie data for a list of movie IDs.
+   653→  ///
+   654→  /// Used by Bookmark/Recent pages to refresh stale cached ratings:
+   655→  /// when a user bookmarks a movie, the Movie object is snapshotted to
+   656→  /// Firestore/local storage at that moment. If the admin later edits
+   657→  /// the rating (or any field), the cached copy stays stale. This method
+   658→  /// re-fetches the latest Movie data in a single Firestore call (using
+   659→  /// 'in' query — up to 30 IDs per call, Firestore limit) so the UI can
+   660→  /// display the current rating instead of the cached "N/A".
+   661→  ///
+   662→  /// Returns a Map<movieId, Movie> for O(1) lookup. Movies that no
+   663→  /// longer exist are silently skipped (their IDs won't appear in the
+   664→  /// returned map).
+   665→  ///
+   666→  /// Cost: 1 read per movie ID, batched into 1 query per 30 IDs.
+   667→  /// For typical bookmark/recent lists (10-50 items), this is 1-2 queries.
+   668→  Future<Map<String, Movie>> getMoviesByIds(List<String> ids) async {
+   669→    if (ids.isEmpty) return {};
+   670→    final result = <String, Movie>{};
+   671→    // Firestore 'in' query supports max 30 values per call.
+   672→    final chunks = <List<String>>[];
+   673→    for (var i = 0; i < ids.length; i += 30) {
+   674→      chunks.add(ids.sublist(i, (i + 30).clamp(0, ids.length)));
+   675→    }
+   676→    try {
+   677→      final futures = chunks.map((chunk) async {
+   678→        final snap = await _moviesRef.where(FieldPath.documentId, whereIn: chunk).get();
+   679→        for (final doc in snap.docs) {
+   680→          final movie = Movie.fromMap(doc.data() as Map<String, dynamic>, docId: doc.id);
+   681→          result[movie.id] = movie;
+   682→        }
+   683→      });
+   684→      await Future.wait(futures);
+   685→    } catch (e) {
+   686→      debugPrint('getMoviesByIds failed: $e');
+   687→    }
+   688→    return result;
+   689→  }
+   690→
+   691→  /// Get movies by genre name
+   692→  Future<Map<String, dynamic>> getMoviesByGenre(
+   693→    String genreName, {
+   694→    int limit = 50,
+   695→    DocumentSnapshot? startAfter,
+   696→    String? typeFilter,
+   697→  }) async {
+   698→    // Task 38 Req 5 — server-side type filter for Genres tab pagination.
+   699→    // Without this, the 20-doc page contains mixed movie+series docs, the
+   700→    // client-side filter (in FilterResultPage) discards the wrong-type ones,
+   701→    // and the visible grid is shorter than the viewport — so the scroll
+   702→    // trigger never fires and infinite scroll silently dies at 20 docs.
+   703→    // See genres_tags_collections_page.dart for the matching call sites.
+   704→    try {
+   705→      Query query = _moviesRef
+   706→          .where('categories', arrayContains: genreName);
+   707→      if (typeFilter != null) {
+   708→        query = query.where('type', isEqualTo: typeFilter);
+   709→      }
+   710→      query = query
+   711→          .orderBy('createdAt', descending: true)
+   712→          .limit(limit);
+   713→
+   714→      if (startAfter != null) {
+   715→        query = query.startAfterDocument(startAfter);
+   716→      }
+   717→
+   718→      final snapshot = await query.get();
+   719→      final movies = snapshot.docs
+   720→          .map((doc) => Movie.fromMap(
+   721→                doc.data() as Map<String, dynamic>,
+   722→                docId: doc.id,
+   723→              ))
+   724→          .toList();
+   725→
+   726→      return {
+   727→        'movies': movies,
+   728→        'hasMore': snapshot.docs.length >= limit,
+   729→        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+   730→      };
+   731→    } catch (e) {
+   732→      // Fallback without orderBy if composite index missing
+   733→      // (e.g., the new (categories, type, createdAt) 3-field index isn't
+   734→      // deployed yet — see firestore.indexes.json). This fallback path
+   735→      // works WITHOUT any composite index because equality + array-contains
+   736→      // queries don't require one; only orderBy on a 3rd field does.
+   737→      debugPrint('getMoviesByGenre with orderBy failed, trying fallback: $e');
+   738→      try {
+   739→        Query query = _moviesRef
+   740→            .where('categories', arrayContains: genreName);
+   741→        if (typeFilter != null) {
+   742→          query = query.where('type', isEqualTo: typeFilter);
+   743→        }
+   744→        query = query.limit(limit);
+   745→
+   746→        final snapshot = await query.get();
+   747→        final movies = snapshot.docs
+   748→            .map((doc) => Movie.fromMap(
+   749→                  doc.data() as Map<String, dynamic>,
+   750→                  docId: doc.id,
+   751→                ))
+   752→            .toList();
+   753→        movies.sort((a, b) => (b.createdAt ?? DateTime(2000))
+   754→            .compareTo(a.createdAt ?? DateTime(2000)));
+   755→
+   756→        return {
+   757→          'movies': movies,
+   758→          'hasMore': snapshot.docs.length >= limit,
+   759→          'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+   760→        };
+   761→      } catch (e2) {
+   762→        debugPrint('getMoviesByGenre fallback also failed: $e2');
+   763→        return {
+   764→          'movies': <Movie>[],
+   765→          'hasMore': false,
+   766→          'lastDoc': null,
+   767→        };
+   768→      }
+   769→    }
+   770→  }
+   771→
+   772→  /// Get movies by tag name
+   773→  Future<Map<String, dynamic>> getMoviesByTag(
+   774→    String tagName, {
+   775→    int limit = 50,
+   776→    DocumentSnapshot? startAfter,
+   777→    String? typeFilter,
+   778→  }) async {
+   779→    // Task 38 Req 5 — server-side type filter for Tags tab pagination.
+   780→    // See getMoviesByGenre above for the rationale.
+   781→    try {
+   782→      Query query = _moviesRef
+   783→          .where('tags', arrayContains: tagName);
+   784→      if (typeFilter != null) {
+   785→        query = query.where('type', isEqualTo: typeFilter);
+   786→      }
+   787→      query = query
+   788→          .orderBy('createdAt', descending: true)
+   789→          .limit(limit);
+   790→
+   791→      if (startAfter != null) {
+   792→        query = query.startAfterDocument(startAfter);
+   793→      }
+   794→
+   795→      final snapshot = await query.get();
+   796→      final movies = snapshot.docs
+   797→          .map((doc) => Movie.fromMap(
+   798→                doc.data() as Map<String, dynamic>,
+   799→                docId: doc.id,
+   800→              ))
+   801→          .toList();
+   802→
+   803→      return {
+   804→        'movies': movies,
+   805→        'hasMore': snapshot.docs.length >= limit,
+   806→        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+   807→      };
+   808→    } catch (e) {
+   809→      // Fallback without orderBy if composite index missing
+   810→      debugPrint('getMoviesByTag with orderBy failed, trying fallback: $e');
+   811→      try {
+   812→        Query query = _moviesRef
+   813→            .where('tags', arrayContains: tagName);
+   814→        if (typeFilter != null) {
+   815→          query = query.where('type', isEqualTo: typeFilter);
+   816→        }
+   817→        query = query.limit(limit);
+   818→
+   819→        final snapshot = await query.get();
+   820→        final movies = snapshot.docs
+   821→            .map((doc) => Movie.fromMap(
+   822→                  doc.data() as Map<String, dynamic>,
+   823→                  docId: doc.id,
+   824→                ))
+   825→            .toList();
+   826→        movies.sort((a, b) => (b.createdAt ?? DateTime(2000))
+   827→            .compareTo(a.createdAt ?? DateTime(2000)));
+   828→
+   829→        return {
+   830→          'movies': movies,
+   831→          'hasMore': snapshot.docs.length >= limit,
+   832→          'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+   833→        };
+   834→      } catch (e2) {
+   835→        debugPrint('getMoviesByTag fallback also failed: $e2');
+   836→        return {
+   837→          'movies': <Movie>[],
+   838→          'hasMore': false,
+   839→          'lastDoc': null,
+   840→        };
+   841→      }
+   842→    }
+   843→  }
+   844→
+   845→  /// Search movies with multiple filters (client-side for reliability)
+   846→  /// Supports: keyword, genre, type, year, rating, and sorting
+   847→  /// Advanced search: supports Name + Year combined search (e.g., "Kung Fu Panda 2008")
+   848→  /// by splitting query into tokens and matching all tokens against title/year
+   849→  Future<Map<String, dynamic>> searchMoviesWithFilters({
+   850→    String? keyword,
+   851→    String? genre,
+   852→    String? type, // 'movie' or 'series'
+   853→    String? year,
+   854→    String? rating, // e.g. '7', '8' - minimum rating
+   855→    String? sortBy, // 'latest', 'rating', 'name'
+   856→    int limit = 50,
+   857→    DocumentSnapshot? startAfter,
+   858→  }) async {
+   859→    try {
+   860→      // Determine if we need keyword-based search (more extensive fetching)
+   861→      final hasKeyword = keyword != null && keyword.trim().isNotEmpty;
+   862→
+   863→      if (hasKeyword) {
+   864→        // For keyword searches, we need to fetch more documents to find matches
+   865→        // especially for old movies that may not appear in the first batch
+   866→        return _searchWithKeyword(
+   867→          keyword: keyword!,
+   868→          genre: genre,
+   869→          type: type,
+   870→          year: year,
+   871→          rating: rating,
+   872→          sortBy: sortBy,
+   873→          limit: limit,
+   874→          startAfter: startAfter,
+   875→        );
+   876→      }
+   877→
+   878→      // No keyword — just filter-based browsing with pagination
+   879→      Query query = _moviesRef;
+   880→
+   881→      // Apply server-side filters where possible
+   882→      if (type != null && type.isNotEmpty) {
+   883→        query = query.where('type', isEqualTo: type);
+   884→      }
+   885→      if (genre != null && genre.isNotEmpty) {
+   886→        query = query.where('categories', arrayContains: genre);
+   887→      }
+   888→
+   889→      // Order by - only if we don't have genre filter (composite index issue)
+   890→      if (sortBy == 'rating') {
+   891→        query = query.orderBy('rating', descending: true);
+   892→      } else if (sortBy == 'name') {
+   893→        query = query.orderBy('title');
+   894→      } else {
+   895→        if (genre == null || genre.isEmpty) {
+   896→          query = query.orderBy('createdAt', descending: true);
+   897→        }
+   898→      }
+   899→
+   900→      // Apply cursor-based pagination
+   901→      if (startAfter != null) {
+   902→        query = query.startAfterDocument(startAfter);
+   903→      }
+   904→
+   905→      query = query.limit(limit);
+   906→
+   907→      final snapshot = await query.get();
+   908→      var allMovies = snapshot.docs
+   909→          .map((doc) => Movie.fromMap(
+   910→                doc.data() as Map<String, dynamic>,
+   911→                docId: doc.id,
+   912→              ))
+   913→          .toList();
+   914→
+   915→      // Client-side filtering for fields that can't be queried together in Firestore
+   916→      var filtered = allMovies;
+   917→
+   918→      // Type filter (client-side fallback if not applied server-side)
+   919→      if (type != null && type.isNotEmpty && genre != null && genre.isNotEmpty) {
+   920→        filtered = filtered.where((m) => m.type == type).toList();
+   921→      }
+   922→
+   923→      // Year filter
+   924→      if (year != null && year.isNotEmpty) {
+   925→        filtered = filtered.where((m) => m.year == year).toList();
+   926→      }
+   927→
+   928→      // Rating filter (minimum rating)
+   929→      if (rating != null && rating.isNotEmpty) {
+   930→        final minRating = double.tryParse(rating) ?? 0.0;
+   931→        filtered = filtered.where((m) {
+   932→          final movieRating = double.tryParse(m.rating ?? '0') ?? 0.0;
+   933→          return movieRating >= minRating;
+   934→        }).toList();
+   935→      }
+   936→
+   937→      // Client-side sort fallback for genre queries
+   938→      if (genre != null && genre.isNotEmpty) {
+   939→        if (sortBy == 'rating') {
+   940→          filtered.sort((a, b) =>
+   941→              (double.tryParse(b.rating ?? '0') ?? 0.0)
+   942→              .compareTo(double.tryParse(a.rating ?? '0') ?? 0.0));
+   943→        } else if (sortBy == 'name') {
+   944→          filtered.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+   945→        } else {
+   946→          filtered.sort((a, b) => (b.createdAt ?? DateTime(2000))
+   947→              .compareTo(a.createdAt ?? DateTime(2000)));
+   948→        }
+   949→      }
+   950→
+   951→      return {
+   952→        'movies': filtered.take(limit).toList(),
+   953→        'hasMore': allMovies.length >= limit,
+   954→        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+   955→      };
+   956→    } catch (e) {
+   957→      debugPrint('searchMoviesWithFilters failed: $e');
+   958→      return {
+   959→        'movies': <Movie>[],
+   960→        'hasMore': false,
+   961→        'lastDoc': null,
+   962→      };
+   963→    }
+   964→  }
+   965→
+   966→  /// Internal: keyword-based search that fetches more documents to find old movies too
+   967→  /// Supports advanced token-based search: "Kung Fu Panda 2008" matches title AND year
+   968→  Future<Map<String, dynamic>> _searchWithKeyword({
+   969→    required String keyword,
+   970→    String? genre,
+   971→    String? type,
+   972→    String? year,
+   973→    String? rating,
+   974→    String? sortBy,
+   975→    int limit = 50,
+   976→    DocumentSnapshot? startAfter,
+   977→  }) async {
+   978→    // Split keyword into tokens for advanced search
+   979→    final rawTokens = keyword.toLowerCase().trim().split(RegExp(r'\s+'));
+   980→    // Separate year-like tokens (4 digits) from name tokens
+   981→    final yearTokens = <String>[];
+   982→    final nameTokens = <String>[];
+   983→    for (final token in rawTokens) {
+   984→      if (RegExp(r'^\d{4}$').hasMatch(token)) {
+   985→        yearTokens.add(token);
+   986→      } else {
+   987→        nameTokens.add(token);
+   988→      }
+   989→    }
+   990→
+   991→    // =========================================================================
+   992→    // OPTIMIZATION (mirrors the legacy searchMovies() pattern, now removed)
+   993→    // =========================================================================
+   994→    // Before: 2 + 2N queries/search (N = name token count) = up to ~500 reads
+   995→    //   prefix + (per-token search_keywords) + orderBy(updatedAt) + no-orderBy
+   996→    // After:  1 + N queries/search = ~100-200 reads (50-75% reduction)
+   997→    //   Broader fallbacks are skipped when the primary queries returned
+   998→    //   ANY matching result. Only legacy movies missing both
+   999→    //   'title_lowercase' and 'search_keywords' trigger the fallback.
+  1000→    // =========================================================================
+  1001→
+  1002→    // Build a comprehensive search query
+  1003→    // Fetch a large batch to ensure old movies are included
+  1004→    final fetchLimit = (limit * 3).clamp(60, 200);
+  1005→
+  1006→    try {
+  1007→      // Strategy 1: Firestore prefix search on 'title_lowercase' (case-insensitive)
+  1008→      final lowerKeyword = keyword.toLowerCase().trim();
+  1009→      final upperKeyword = lowerKeyword + '\uf8ff';
+  1010→      final prefixSnapshot = await _moviesRef
+  1011→          .where('title_lowercase', isGreaterThanOrEqualTo: lowerKeyword)
+  1012→          .where('title_lowercase', isLessThanOrEqualTo: upperKeyword)
+  1013→          .orderBy('title_lowercase')
+  1014→          .limit(fetchLimit)
+  1015→          .get();
+  1016→
+  1017→      final prefixMovies = prefixSnapshot.docs
+  1018→          .map((doc) => Movie.fromMap(
+  1019→                doc.data() as Map<String, dynamic>,
+  1020→                docId: doc.id,
+  1021→              ))
+  1022→          .toList();
+  1023→
+  1024→      // Strategy 2: search_keywords array for each name token (non-prefix word matching)
+  1025→      // e.g. searching "Avengers" finds "The Avengers" because "avengers" is a search_keyword
+  1026→      final keywordResults = <Movie>[];
+  1027→      final keywordSeenIds = <String>{};
+  1028→      for (final token in nameTokens) {
+  1029→        try {
+  1030→          final kwSnapshot = await _moviesRef
+  1031→              .where('search_keywords', arrayContains: token)
+  1032→              .limit(fetchLimit)
+  1033→              .get();
+  1034→          for (final doc in kwSnapshot.docs) {
+  1035→            final movie = Movie.fromMap(doc.data() as Map<String, dynamic>, docId: doc.id);
+  1036→            if (!keywordSeenIds.contains(movie.id)) {
+  1037→              keywordSeenIds.add(movie.id);
+  1038→              keywordResults.add(movie);
+  1039→            }
+  1040→          }
+  1041→        } catch (_) {
+  1042→          // search_keywords field may not exist yet, skip gracefully
+  1043→        }
+  1044→      }
+  1045→
+  1046→      // Strategy 1.5: SUBSTRING FALLBACK for short queries (1-2 chars)
+  1047→      // =========================================================================
+  1048→      // Bro reported (Task 25) that searching a single character like "o"
+  1049→      // returned only movies STARTING with "o" (e.g. "Ocean's Eleven",
+  1050→      // "Once Upon a Time") but NOT movies CONTAINING "o" anywhere in the
+  1051→      // title (e.g. "Thor", "Iron Man 2", "Doctor Strange"). Meanwhile
+  1052→      // searching "ON" returned some movies with "on" anywhere — confusing.
+  1053→      //
+  1054→      // Root cause:
+  1055→      //   - Strategy 1 (prefix search) only matches titles that START with
+  1056→      //     the query. For "o", it returns plenty of results (Ocean's, Once,
+  1057→      //     Oldboy, etc.), so prefixMovies is NOT empty.
+  1058→      //   - The previous version of this Strategy 1.5 only fired when
+  1059→      //     `prefixMovies.isEmpty && keywordResults.isEmpty` — which rarely
+  1060→      //     happens for single letters (because Strategy 1 almost always
+  1061→      //     finds prefix matches). So the substring fallback never ran,
+  1062→      //     and the early-exit returned only the prefix matches.
+  1063→      //   - For "ON": Strategy 1 returns fewer prefix matches (movies
+  1064→      //     starting with "on" are rarer), so the substring fallback DID
+  1065→      //     fire and found movies containing "on" anywhere. That's why
+  1066→      //     Bro saw "some movies" for "ON" but "only starting-with-O
+  1067→      //     movies" for "O".
+  1068→      //
+  1069→      // FIX (Task 25): Always run the substring fallback for short queries
+  1070→      // (length <= 2), regardless of whether Strategies 1 and 2 returned
+  1071→      // matches. The early-exit logic below already merges
+  1072→      // prefixMovies + keywordResults + substringResults and applies a
+  1073→      // client-side `title.contains(query)` filter for short queries, so
+  1074→      // the user will see BOTH prefix matches (movies starting with "o")
+  1075→      // AND substring matches (movies containing "o" anywhere) — exactly
+  1076→      // what Bro wants.
+  1077→      //
+  1078→      // Cost: +1 Firestore query (~fetchLimit reads) for EVERY short
+  1079→      // search. At fetchLimit=60 reads/query (limit=20 → 20*3 clamped to
+  1080→      // 60) and Bro's typical usage, this adds ~5-10% to Firebase Reads
+  1081→      // — acceptable per Bro's explicit OK.
+  1082→      final substringResults = <Movie>[];
+  1083→      if (lowerKeyword.length <= 2) {
+  1084→        try {
+  1085→          final subSnapshot = await _moviesRef.limit(fetchLimit).get();
+  1086→          for (final doc in subSnapshot.docs) {
+  1087→            final movie = Movie.fromMap(
+  1088→              doc.data() as Map<String, dynamic>,
+  1089→              docId: doc.id,
+  1090→            );
+  1091→            // Case-insensitive substring match on title
+  1092→            if (movie.titleLowercase.contains(lowerKeyword)) {
+  1093→              substringResults.add(movie);
+  1094→            }
+  1095→          }
+  1096→        } catch (e) {
+  1097→          debugPrint('_searchWithKeyword substring fallback failed: $e');
+  1098→        }
+  1099→      }
+  1100→
+  1101→      // Pre-combine what we have so far. If primary queries already returned
+  1102→      // movies that match every name token AND year token, we can SKIP the
+  1103→      // expensive broader fallback queries below (saves ~200 reads).
+  1104→      final earlySeenIds = <String>{};
+  1105→      final earlyAllMovies = <Movie>[];
+  1106→      for (final m in [...prefixMovies, ...keywordResults, ...substringResults]) {
+  1107→        if (!earlySeenIds.contains(m.id)) {
+  1108→          earlySeenIds.add(m.id);
+  1109→          earlyAllMovies.add(m);
+  1110→        }
+  1111→      }
+  1112→      final earlyFiltered = earlyAllMovies.where((m) {
+  1113→        final lowerTitle = m.titleLowercase;
+  1114→        // For short single-token queries (<=2 chars), use substring match
+  1115→        // instead of token-every-contains. This prevents "o" from being
+  1116→        // rejected just because it isn't a full word in the title.
+  1117→        final nameMatch = nameTokens.isEmpty ||
+  1118→            (lowerKeyword.length <= 2 && nameTokens.length == 1
+  1119→                ? lowerTitle.contains(nameTokens.first)
+  1120→                : nameTokens.every((token) => lowerTitle.contains(token)));
+  1121→        final yearMatch = yearTokens.isEmpty ||
+  1122→            (m.year != null && yearTokens.contains(m.year!.toLowerCase()));
+  1123→        return nameMatch && yearMatch;
+  1124→      }).toList();
+  1125→
+  1126→      // --- EARLY EXIT: skip broader fallbacks if primary returned matches ---
+  1127→      // Apply the same downstream filters + sort so the user sees the same
+  1128→      // result shape they would have seen with the full query path.
+  1129→      if (earlyFiltered.isNotEmpty) {
+  1130→        var filtered = earlyFiltered;
+  1131→        if (genre != null && genre.isNotEmpty) {
+  1132→          filtered = filtered.where((m) => m.categories.contains(genre)).toList();
+  1133→        }
+  1134→        if (type != null && type.isNotEmpty) {
+  1135→          filtered = filtered.where((m) => m.type == type).toList();
+  1136→        }
+  1137→        if (year != null && year.isNotEmpty) {
+  1138→          filtered = filtered.where((m) => m.year == year).toList();
+  1139→        }
+  1140→        if (rating != null && rating.isNotEmpty) {
+  1141→          final minRating = double.tryParse(rating) ?? 0.0;
+  1142→          filtered = filtered.where((m) {
+  1143→            final movieRating = double.tryParse(m.rating ?? '0') ?? 0.0;
+  1144→            return movieRating >= minRating;
+  1145→          }).toList();
+  1146→        }
+  1147→        // Sort results (same logic as the main path below).
+  1148→        if (sortBy == 'rating') {
+  1149→          filtered.sort((a, b) =>
+  1150→              (double.tryParse(b.rating ?? '0') ?? 0.0)
+  1151→              .compareTo(double.tryParse(a.rating ?? '0') ?? 0.0));
+  1152→        } else if (sortBy == 'name') {
+  1153→          filtered.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+  1154→        } else {
+  1155→          filtered.sort((a, b) {
+  1156→            final aDate = b.updatedAt ?? b.createdAt ?? DateTime(2000);
+  1157→            final bDate = a.updatedAt ?? a.createdAt ?? DateTime(2000);
+  1158→            return aDate.compareTo(bDate);
+  1159→          });
+  1160→        }
+  1161→        return {
+  1162→          'movies': filtered.take(limit).toList(),
+  1163→          'hasMore': filtered.length > limit,
+  1164→          'lastDoc': null,
+  1165→        };
+  1166→      }
+  1167→
+  1168→      // --- FALLBACK: only when primary queries returned 0 matches ----------
+  1169→      // Run broader queries to catch LEGACY movies missing both
+  1170→      // 'title_lowercase' and 'search_keywords' fields.
+  1171→      //
+  1172→      // IMPORTANT: We use TWO parallel broader queries here instead of one:
+  1173→      //   - broaderByUpdatedAt: orderBy('updatedAt', descending) — catches
+  1174→      //     recently-updated movies that have 'updatedAt' field (added via
+  1175→      //     addMovie / updateMovie).
+  1176→      //   - broaderNoOrderBy:   plain .limit() without orderBy — catches
+  1177→      //     LEGACY movies that have neither 'updatedAt' nor 'createdAt'
+  1178→      //     field. Firestore's orderBy(field) silently excludes any doc
+  1179→      //     missing that field — that's why a previous version of this
+  1180→      //     code used orderBy('createdAt') and could NOT find movies that
+  1181→      //     Bro had imported via an older code path that didn't set
+  1182→      //     'createdAt'. Bro reported "search any movie → nothing shows"
+  1183→      //     because of this exact bug. The no-orderBy path guarantees
+  1184→      //     every movie in the collection is a candidate for the
+  1185→      //     client-side title filter below.
+  1186→      //
+  1187→      // Both queries are limited to fetchLimit (60-200 docs). Pagination
+  1188→      // via startAfterDocument only works on the orderBy path; the
+  1189→      // no-orderBy path is best-effort and skipped when paginating.
+  1190→      Query broaderByUpdatedAt = _moviesRef
+  1191→          .orderBy('updatedAt', descending: true);
+  1192→      if (startAfter != null) {
+  1193→        broaderByUpdatedAt = broaderByUpdatedAt.startAfterDocument(startAfter);
+  1194→      }
+  1195→      broaderByUpdatedAt = broaderByUpdatedAt.limit(fetchLimit);
+  1196→
+  1197→      final broaderMovies = <Movie>[];
+  1198→      try {
+  1199→        final snapshot = await broaderByUpdatedAt.get();
+  1200→        for (final doc in snapshot.docs) {
+  1201→          broaderMovies.add(Movie.fromMap(
+  1202→            doc.data() as Map<String, dynamic>,
+  1203→            docId: doc.id,
+  1204→          ));
+  1205→        }
+  1206→      } catch (e) {
+  1207→        debugPrint('_searchWithKeyword broaderByUpdatedAt failed: $e — '
+  1208→            'will rely on no-orderBy fallback');
+  1209→      }
+  1210→
+  1211→      // No-orderBy fallback: only on first page (startAfter == null).
+  1212→      // On subsequent pages, we'd need a stable cursor, which orderBy
+  1213→      // provides — without orderBy, pagination is unsafe. So we accept
+  1214→      // that legacy movies are only fully searchable on page 1.
+  1215→      if (startAfter == null) {
+  1216→        try {
+  1217→          final legacySnapshot = await _moviesRef.limit(fetchLimit).get();
+  1218→          for (final doc in legacySnapshot.docs) {
+  1219→            final movie = Movie.fromMap(
+  1220→              doc.data() as Map<String, dynamic>,
+  1221→              docId: doc.id,
+  1222→            );
+  1223→            // Dedup against the orderBy results — same movie could appear
+  1224→            // in both if it has updatedAt.
+  1225→            final id = movie.id;
+  1226→            final alreadySeen = broaderMovies.any((m) => m.id == id);
+  1227→            if (!alreadySeen) {
+  1228→              broaderMovies.add(movie);
+  1229→            }
+  1230→          }
+  1231→        } catch (e) {
+  1232→          debugPrint('_searchWithKeyword legacy fallback failed: $e');
+  1233→        }
+  1234→      }
+  1235→
+  1236→      // Combine results from all strategies, deduplicating by ID
+  1237→      final seenIds = <String>{};
+  1238→      final allMovies = <Movie>[];
+  1239→
+  1240→      for (final m in [...prefixMovies, ...keywordResults, ...substringResults, ...broaderMovies]) {
+  1241→        if (!seenIds.contains(m.id)) {
+  1242→          seenIds.add(m.id);
+  1243→          allMovies.add(m);
+  1244→        }
+  1245→      }
+  1246→
+  1247→      // Apply token-based advanced filtering
+  1248→      var filtered = allMovies.where((m) {
+  1249→        // All name tokens must be contained in the movie title (case-insensitive)
+  1250→        final lowerTitle = m.titleLowercase;
+  1251→        final nameMatch = nameTokens.isEmpty ||
+  1252→            nameTokens.every((token) => lowerTitle.contains(token));
+  1253→
+  1254→        // If year tokens present, at least one must match the movie year
+  1255→        final yearMatch = yearTokens.isEmpty ||
+  1256→            (m.year != null && yearTokens.contains(m.year!.toLowerCase()));
+  1257→
+  1258→        return nameMatch && yearMatch;
+  1259→      }).toList();
+  1260→
+  1261→      // Apply additional filters
+  1262→      if (genre != null && genre.isNotEmpty) {
+  1263→        filtered = filtered.where((m) => m.categories.contains(genre)).toList();
+  1264→      }
+  1265→      if (type != null && type.isNotEmpty) {
+  1266→        filtered = filtered.where((m) => m.type == type).toList();
+  1267→      }
+  1268→      if (year != null && year.isNotEmpty) {
+  1269→        filtered = filtered.where((m) => m.year == year).toList();
+  1270→      }
+  1271→      if (rating != null && rating.isNotEmpty) {
+  1272→        final minRating = double.tryParse(rating) ?? 0.0;
+  1273→        filtered = filtered.where((m) {
+  1274→          final movieRating = double.tryParse(m.rating ?? '0') ?? 0.0;
+  1275→          return movieRating >= minRating;
+  1276→        }).toList();
+  1277→      }
+  1278→
+  1279→      // Sort results
+  1280→      if (sortBy == 'rating') {
+  1281→        filtered.sort((a, b) =>
+  1282→            (double.tryParse(b.rating ?? '0') ?? 0.0)
+  1283→            .compareTo(double.tryParse(a.rating ?? '0') ?? 0.0));
+  1284→      } else if (sortBy == 'name') {
+  1285→        filtered.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+  1286→      } else {
+  1287→        // 'latest' — sort by updatedAt with fallback to createdAt, so that
+  1288→        // movies missing one of the timestamp fields still sort correctly
+  1289→        // relative to the others (DateTime(2000) sentinel sorts to bottom).
+  1290→        filtered.sort((a, b) {
+  1291→          final aDate = b.updatedAt ?? b.createdAt ?? DateTime(2000);
+  1292→          final bDate = a.updatedAt ?? a.createdAt ?? DateTime(2000);
+  1293→          return aDate.compareTo(bDate);
+  1294→        });
+  1295→      }
+  1296→
+  1297→      final hasMore = filtered.length > limit ||
+  1298→          broaderMovies.length >= fetchLimit;
+  1299→
+  1300→      // lastDoc: cursor for pagination. We can only paginate using the
+  1301→      // orderBy('updatedAt') query, so we look up the last movie in our
+  1302→      // combined list and find the corresponding snapshot. Since we don't
+  1303→      // keep the snapshot around, we return null here and let the caller
+  1304→      // re-run the search with the next "page" by skipping already-seen IDs.
+  1305→      // For the search screen, infinite scroll beyond page 1 is rarely used
+  1306→      // (users typically refine their query instead), so this is acceptable.
+  1307→      return {
+  1308→        'movies': filtered.take(limit).toList(),
+  1309→        'hasMore': hasMore,
+  1310→        'lastDoc': null,
+  1311→      };
+  1312→    } catch (e) {
+  1313→      debugPrint('_searchWithKeyword failed: $e');
+  1314→      return {
+  1315→        'movies': <Movie>[],
+  1316→        'hasMore': false,
+  1317→        'lastDoc': null,
+  1318→      };
+  1319→    }
+  1320→  }
+  1321→
+  1322→  /// Get available years from movies collection
+  1323→  Future<List<String>> getAvailableYears() async {
+  1324→    try {
+  1325→      final snapshot = await _moviesRef.limit(100).get();
+  1326→      final years = <String>{};
+  1327→      for (final doc in snapshot.docs) {
+  1328→        final data = doc.data() as Map<String, dynamic>;
+  1329→        final year = data['year']?.toString();
+  1330→        if (year != null && year.isNotEmpty && year != 'null') {
+  1331→          years.add(year);
+  1332→        }
+  1333→      }
+  1334→      final sortedYears = years.toList()
+  1335→        ..sort((a, b) => b.compareTo(a)); // Descending: newest first
+  1336→      return sortedYears;
+  1337→    } catch (e) {
+  1338→      debugPrint('getAvailableYears failed: $e');
+  1339→      return [];
+  1340→    }
+  1341→  }
+  1342→
+  1343→  /// Get all genres
+  1344→  Future<List<TagAndGenres>> getGenres() async {
+  1345→    final snapshot = await _genresRef.orderBy('name').get();
+  1346→    return snapshot.docs
+  1347→        .map((doc) => TagAndGenres.fromMap(
+  1348→              doc.data() as Map<String, dynamic>,
+  1349→              docId: doc.id,
+  1350→            ))
+  1351→        .toList();
+  1352→  }
+  1353→
+  1354→  /// Get all tags
+  1355→  Future<List<TagAndGenres>> getTags() async {
+  1356→    final snapshot = await _tagsRef.orderBy('name').get();
+  1357→    return snapshot.docs
+  1358→        .map((doc) => TagAndGenres.fromMap(
+  1359→              doc.data() as Map<String, dynamic>,
+  1360→              docId: doc.id,
+  1361→            ))
+  1362→        .toList();
+  1363→  }
+  1364→
+  1365→  /// Get all collections
+  1366→  Future<List<TagAndGenres>> getCollections() async {
+  1367→    final snapshot = await _collectionsRef.orderBy('name').get();
+  1368→    return snapshot.docs
+  1369→        .map((doc) => TagAndGenres.fromMap(
+  1370→              doc.data() as Map<String, dynamic>,
+  1371→              docId: doc.id,
+  1372→            ))
+  1373→        .toList();
+  1374→  }
+  1375→
+  1376→  /// Get movies by collection name
+  1377→  Future<Map<String, dynamic>> getMoviesByCollection(
+  1378→    String collectionName, {
+  1379→    int limit = 50,
+  1380→    DocumentSnapshot? startAfter,
+  1381→    String? typeFilter,
+  1382→  }) async {
+  1383→    // Task 38 Req 5 — server-side type filter for Collections tab pagination.
+  1384→    // See getMoviesByGenre above for the rationale.
+  1385→    try {
+  1386→      Query query = _moviesRef
+  1387→          .where('collections', arrayContains: collectionName);
+  1388→      if (typeFilter != null) {
+  1389→        query = query.where('type', isEqualTo: typeFilter);
+  1390→      }
+  1391→      query = query
+  1392→          .orderBy('createdAt', descending: true)
+  1393→          .limit(limit);
+  1394→
+  1395→      if (startAfter != null) {
+  1396→        query = query.startAfterDocument(startAfter);
+  1397→      }
+  1398→
+  1399→      final snapshot = await query.get();
+  1400→      final movies = snapshot.docs
+  1401→          .map((doc) => Movie.fromMap(
+  1402→                doc.data() as Map<String, dynamic>,
+  1403→                docId: doc.id,
+  1404→              ))
+  1405→          .toList();
+  1406→
+  1407→      return {
+  1408→        'movies': movies,
+  1409→        'hasMore': snapshot.docs.length >= limit,
+  1410→        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+  1411→      };
+  1412→    } catch (e) {
+  1413→      debugPrint('getMoviesByCollection with orderBy failed, trying fallback: $e');
+  1414→      try {
+  1415→        Query query = _moviesRef
+  1416→            .where('collections', arrayContains: collectionName);
+  1417→        if (typeFilter != null) {
+  1418→          query = query.where('type', isEqualTo: typeFilter);
+  1419→        }
+  1420→        query = query.limit(limit);
+  1421→
+  1422→        final snapshot = await query.get();
+  1423→        final movies = snapshot.docs
+  1424→            .map((doc) => Movie.fromMap(
+  1425→                  doc.data() as Map<String, dynamic>,
+  1426→                  docId: doc.id,
+  1427→                ))
+  1428→            .toList();
+  1429→        movies.sort((a, b) => (b.createdAt ?? DateTime(2000))
+  1430→            .compareTo(a.createdAt ?? DateTime(2000)));
+  1431→
+  1432→        return {
+  1433→          'movies': movies,
+  1434→          'hasMore': snapshot.docs.length >= limit,
+  1435→          'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+  1436→        };
+  1437→      } catch (e2) {
+  1438→        debugPrint('getMoviesByCollection fallback also failed: $e2');
+  1439→        return {
+  1440→          'movies': <Movie>[],
+  1441→          'hasMore': false,
+  1442→          'lastDoc': null,
+  1443→        };
+  1444→      }
+  1445→    }
+  1446→  }
+  1447→
+  1448→  /// Get movies by tag name (simple list, for home screen sections)
+  1449→  Future<List<Movie>> getMoviesByTagSimple(String tagName, {int limit = 50}) async {
+  1450→    try {
+  1451→      final snapshot = await _moviesRef
+  1452→          .where('tags', arrayContains: tagName)
+  1453→          .orderBy('createdAt', descending: true)
+  1454→          .limit(limit)
+  1455→          .get();
+  1456→
+  1457→      return snapshot.docs
+  1458→          .map((doc) => Movie.fromMap(
+  1459→                doc.data() as Map<String, dynamic>,
+  1460→                docId: doc.id,
+  1461→              ))
+  1462→          .toList();
+  1463→    } catch (e) {
+  1464→      // Fallback without orderBy if composite index missing
+  1465→      debugPrint('getMoviesByTagSimple with orderBy failed, trying fallback: $e');
+  1466→      try {
+  1467→        final snapshot = await _moviesRef
+  1468→            .where('tags', arrayContains: tagName)
+  1469→            .limit(limit)
+  1470→            .get();
+  1471→
+  1472→        final movies = snapshot.docs
+  1473→            .map((doc) => Movie.fromMap(
+  1474→                  doc.data() as Map<String, dynamic>,
+  1475→                  docId: doc.id,
+  1476→                ))
+  1477→            .toList();
+  1478→        movies.sort((a, b) => (b.createdAt ?? DateTime(2000))
+  1479→            .compareTo(a.createdAt ?? DateTime(2000)));
+  1480→        return movies;
+  1481→      } catch (e2) {
+  1482→        debugPrint('getMoviesByTagSimple fallback also failed: $e2');
+  1483→        return [];
+  1484→      }
+  1485→    }
+  1486→  }
+  1487→
+  1488→  /// Get movies/series featuring a specific actor by name.
+  1489→  /// Searches Firestore 'casts' array for objects with matching 'name' field.
+  1490→  /// This only returns items already in the library (no TMDB API call).
+  1491→  Future<List<Movie>> getMoviesByActor(String actorName) async {
+  1492→    try {
+  1493→      // Firestore doesn't support querying inside array of objects directly,
+  1494→      // so we fetch recent posts and filter client-side by cast name.
+  1495→      final snapshot = await _moviesRef
+  1496→          .orderBy('createdAt', descending: true)
+  1497→          .limit(100)
+  1498→          .get();
+  1499→
+  1500→      final movies = snapshot.docs
+  1501→          .map((doc) {
+  1502→            final data = doc.data() as Map<String, dynamic>;
+  1503→            // Check if this movie's casts contain the actor
+  1504→            final casts = data['casts'] as List?;
+  1505→            if (casts != null) {
+  1506→              final hasActor = casts.any((cast) {
+  1507→                if (cast is Map<String, dynamic>) {
+  1508→                  return (cast['name'] as String?)?.toLowerCase() ==
+  1509→                      actorName.toLowerCase();
+  1510→                }
+  1511→                return false;
+  1512→              });
+  1513→              if (hasActor) {
+  1514→                return Movie.fromMap(data, docId: doc.id);
+  1515→              }
+  1516→            }
+  1517→            return null;
+  1518→          })
+  1519→          .whereType<Movie>()
+  1520→          .toList();
+  1521→
+  1522→      return movies;
+  1523→    } catch (e) {
+  1524→      debugPrint('getMoviesByActor failed: $e');
+  1525→      // Fallback: try without orderBy
+  1526→      try {
+  1527→        final snapshot = await _moviesRef.limit(100).get();
+  1528→        final movies = snapshot.docs
+  1529→            .map((doc) {
+  1530→              final data = doc.data() as Map<String, dynamic>;
+  1531→              final casts = data['casts'] as List?;
+  1532→              if (casts != null) {
+  1533→                final hasActor = casts.any((cast) {
+  1534→                  if (cast is Map<String, dynamic>) {
+  1535→                    return (cast['name'] as String?)?.toLowerCase() ==
+  1536→                        actorName.toLowerCase();
+  1537→                  }
+  1538→                  return false;
+  1539→                });
+  1540→                if (hasActor) {
+  1541→                  return Movie.fromMap(data, docId: doc.id);
+  1542→                }
+  1543→              }
+  1544→              return null;
+  1545→            })
+  1546→            .whereType<Movie>()
+  1547→            .toList();
+  1548→        movies.sort((a, b) => (b.createdAt ?? DateTime(2000))
+  1549→            .compareTo(a.createdAt ?? DateTime(2000)));
+  1550→        return movies;
+  1551→      } catch (e2) {
+  1552→        debugPrint('getMoviesByActor fallback also failed: $e2');
+  1553→        return [];
+  1554→      }
+  1555→    }
+  1556→  }
+  1557→
+  1558→  // ==================== ADMIN VERIFICATION (Defense-in-Depth) ====================
+  1559→
+  1560→  /// Verify that the current user is an admin by checking Firestore directly.
+  1561→  /// This provides defense-in-depth beyond just Firestore rules — even if rules
+  1562→  /// are misconfigured, the client-side check prevents accidental admin operations.
+  1563→  ///
+  1564→  /// Public so [BatchImportService] can verify admin ONCE at the start of a
+  1565→  /// batch run, then pass `skipAdminCheck: true` to the per-item [addMovie]
+  1566→  /// calls. Before this was made public, every item in a 100-movie batch
+  1567→  /// import re-fetched the user doc, wasting 100 Firestore reads. See audit
+  1568→  /// finding C2.
+  1569→  Future<bool> isCurrentUserAdmin() async {
+  1570→    final user = FirebaseAuth.instance.currentUser;
+  1571→    if (user == null) return false;
+  1572→    try {
+  1573→      final doc = await _firestore.collection('users').doc(user.uid).get();
+  1574→      if (!doc.exists) return false;
+  1575→      final data = doc.data()!;
+  1576→      return data['role'] == 'admin' || data['isAdmin'] == true;
+  1577→    } catch (e) {
+  1578→      debugPrint('Admin verification failed: $e');
+  1579→      return false;
+  1580→    }
+  1581→  }
+  1582→
+  1583→  /// Throws an exception if the current user is not an admin.
+  1584→  /// Call this at the start of every admin-only operation.
+  1585→  ///
+  1586→  /// Public so [BatchImportService] can call this ONCE at the start of a
+  1587→  /// batch import run. After that, the per-item [addMovie] calls can skip
+  1588→  /// the redundant per-item admin check by passing `skipAdminCheck: true`.
+  1589→  /// See audit finding C2.
+  1590→  Future<void> verifyAdmin() async {
+  1591→    final isAdmin = await isCurrentUserAdmin();
+  1592→    if (!isAdmin) {
+  1593→      throw Exception('Admin permission required. You are not authorized to perform this action.');
+  1594→    }
+  1595→  }
+  1596→
+  1597→  /// Private alias kept for backward compat with existing internal call sites
+  1598→  /// (updateMovie, deleteMovie, addGenre, updateGenre, etc. — none of which
+  1599→  /// are called from tight loops, so the per-call admin read is fine there).
+  1600→  Future<void> _requireAdmin() => verifyAdmin();
+  1601→
+  1602→  // ==================== ADMIN CRUD OPERATIONS ====================
+  1603→
+  1604→  /// Generate slug from title
+  1605→  String _generateSlug(String title) {
+  1606→    return title
+  1607→        .toLowerCase()
+  1608→        .replaceAll(RegExp(r'[^\w\s-]'), '')
+  1609→        .replaceAll(RegExp(r'\s+'), '-')
+  1610→        .replaceAll(RegExp(r'-+'), '-')
+  1611→        .trim();
+  1612→  }
+  1613→
+  1614→  /// Add a new movie (admin only)
+  1615→  /// Checks for duplicate tmdbId FIRST, then falls back to slug check.
+  1616→  /// If a document with the same tmdbId exists, it updates instead of creating a duplicate.
+  1617→  ///
+  1618→  /// {@template skipAdminCheck_param}
+  1619→  /// [skipAdminCheck] — when true, skips the per-call admin verification
+  1620→  /// Firestore read. CALLER IS RESPONSIBLE for having already verified admin
+  1621→  /// status (e.g. via [verifyAdmin]) before calling this in a tight loop.
+  1622→  /// Used by [BatchImportService.runImport] to avoid N redundant admin reads
+  1623→  /// for an N-movie import. Default is false (safe for one-off callers).
+  1624→  /// See audit finding C2.
+  1625→  /// {@endtemplate}
+  1626→  ///
+  1627→  /// Audit finding C1: counter increments / decrements now use a [WriteBatch]
+  1628→  /// instead of sequential `_incrementCount` / `_decrementCount` calls. A
+  1629→  /// movie with 3 genres + 2 tags used to issue 10 separate Firestore ops
+  1630→  /// (5 reads + 5 writes) for counter sync; now it issues 5 reads + 1 batch
+  1631→  /// write. For a 100-movie batch import that's 400 fewer writes per run.
+  1632→  Future<String> addMovie(
+  1633→    Map<String, dynamic> data, {
+  1634→    bool skipAdminCheck = false,
+  1635→  }) async {
+  1636→    if (!skipAdminCheck) await _requireAdmin();
+  1637→    // Auto-generate slug if not provided
+  1638→    if (!data.containsKey('slug') || (data['slug'] as String).isEmpty) {
+  1639→      data['slug'] = _generateSlug(data['title'] as String);
+  1640→    }
+  1641→
+  1642→    // Auto-generate 'title_lowercase' for case-insensitive Firestore search
+  1643→    if (data.containsKey('title') && (data['title'] as String).isNotEmpty) {
+  1644→      data['title_lowercase'] = (data['title'] as String).toLowerCase();
+  1645→      // Auto-generate 'search_keywords' array for word-level Firestore search
+  1646→      data['search_keywords'] = _generateSearchKeywords(data['title'] as String);
+  1647→    }
+  1648→
+  1649→    // === PRIORITY 1: Check for duplicate tmdbId ===
+  1650→    final tmdbId = data['tmdbId'];
+  1651→    if (tmdbId != null) {
+  1652→      final existingByTmdbId = await findByTmdbId(tmdbId);
+  1653→      if (existingByTmdbId != null) {
+  1654→        final existingData = existingByTmdbId.data() as Map<String, dynamic>;
+  1655→        debugPrint('tmdbId $tmdbId already exists (doc: ${existingByTmdbId.id}), updating instead of creating duplicate');
+  1656→        // Build safe update map — only update TMDB fields, preserve user-edited fields
+  1657→        final safeData = _buildSafeUpdateMap(data, existingData);
+  1658→        safeData['updatedAt'] = FieldValue.serverTimestamp();
+  1659→        safeData.remove('createdAt');
+  1660→        // Remove fields that should never be overwritten
+  1661→        safeData.remove('slug'); // Keep existing slug
+  1662→        safeData.remove('downloadLinks'); // Keep user's download links
+  1663→        safeData.remove('seasons'); // Keep user's seasons/episodes
+  1664→        safeData.remove('tags'); // Keep user's tags
+  1665→        safeData.remove('isTrending'); // Keep user's trending status
+  1666→
+  1667→        // Update category counts via WriteBatch (audit C1).
+  1668→        // We still need the per-name reads to compute current+1, but the
+  1669→        // writes are committed together instead of one-by-one.
+  1670→        final oldCategories = List<String>.from(existingData['categories'] ?? []);
+  1671→        final oldTags = List<String>.from(existingData['tags'] ?? []);
+  1672→        final newCategories = List<String>.from(safeData['categories'] ?? oldCategories);
+  1673→        final newTags = List<String>.from(safeData['tags'] ?? oldTags);
+  1674→
+  1675→        final batch = _firestore.batch();
+  1676→        // Also fold the movie update itself into the same batch — saves one
+  1677→        // round-trip. (Existing-by-tmdbId branch is the most common path
+  1678→        // for Batch Import because admins usually re-import to update.)
+  1679→        batch.update(existingByTmdbId.reference, safeData);
+  1680→        for (final cat in oldCategories) {
+  1681→          if (!newCategories.contains(cat)) {
+  1682→            await _batchDecrementCount(batch, _genresRef, cat);
+  1683→          }
+  1684→        }
+  1685→        for (final cat in newCategories) {
+  1686→          if (!oldCategories.contains(cat)) {
+  1687→            await _batchIncrementCount(batch, _genresRef, cat);
+  1688→          }
+  1689→        }
+  1690→        for (final tag in oldTags) {
+  1691→          if (!newTags.contains(tag)) {
+  1692→            await _batchDecrementCount(batch, _tagsRef, tag);
+  1693→          }
+  1694→        }
+  1695→        for (final tag in newTags) {
+  1696→          if (!oldTags.contains(tag)) {
+  1697→            await _batchIncrementCount(batch, _tagsRef, tag);
+  1698→          }
+  1699→        }
+  1700→        await batch.commit();
+  1701→
+  1702→        return existingByTmdbId.id;
+  1703→      }
+  1704→    }
+  1705→
+  1706→    // === PRIORITY 2: Check for duplicate slug ===
+  1707→    final slug = data['slug'] as String;
+  1708→    final existingSnapshot = await _moviesRef
+  1709→        .where('slug', isEqualTo: slug)
+  1710→        .limit(1)
+  1711→        .get();
+  1712→
+  1713→    if (existingSnapshot.docs.isNotEmpty) {
+  1714→      // A document with this slug already exists - update it instead
+  1715→      final existingDoc = existingSnapshot.docs.first;
+  1716→      final existingData = existingDoc.data() as Map<String, dynamic>;
+  1717→      debugPrint('Slug "$slug" already exists (doc: ${existingDoc.id}), updating instead of creating duplicate');
+  1718→      final safeData = _buildSafeUpdateMap(data, existingData);
+  1719→      safeData['updatedAt'] = FieldValue.serverTimestamp();
+  1720→      safeData.remove('createdAt');
+  1721→      safeData.remove('slug');
+  1722→      safeData.remove('downloadLinks');
+  1723→      safeData.remove('seasons');
+  1724→      safeData.remove('tags');
+  1725→      safeData.remove('isTrending');
+  1726→
+  1727→      // Update category counts via WriteBatch (audit C1).
+  1728→      final oldCategories = List<String>.from(existingData['categories'] ?? []);
+  1729→      final oldTags = List<String>.from(existingData['tags'] ?? []);
+  1730→      final newCategories = List<String>.from(safeData['categories'] ?? oldCategories);
+  1731→      final newTags = List<String>.from(safeData['tags'] ?? oldTags);
+  1732→
+  1733→      final batch = _firestore.batch();
+  1734→      batch.update(existingDoc.reference, safeData);
+  1735→      for (final cat in oldCategories) {
+  1736→        if (!newCategories.contains(cat)) {
+  1737→          await _batchDecrementCount(batch, _genresRef, cat);
+  1738→        }
+  1739→      }
+  1740→      for (final cat in newCategories) {
+  1741→        if (!oldCategories.contains(cat)) {
+  1742→          await _batchIncrementCount(batch, _genresRef, cat);
+  1743→        }
+  1744→      }
+  1745→      for (final tag in oldTags) {
+  1746→        if (!newTags.contains(tag)) {
+  1747→          await _batchDecrementCount(batch, _tagsRef, tag);
+  1748→        }
+  1749→      }
+  1750→      for (final tag in newTags) {
+  1751→        if (!oldTags.contains(tag)) {
+  1752→          await _batchIncrementCount(batch, _tagsRef, tag);
+  1753→        }
+  1754→      }
+  1755→      await batch.commit();
+  1756→
+  1757→      return existingDoc.id;
+  1758→    }
+  1759→
+  1760→    // === No duplicate: Create new document ===
+  1761→    data['createdAt'] = FieldValue.serverTimestamp();
+  1762→    data['updatedAt'] = FieldValue.serverTimestamp();
+  1763→
+  1764→    // Task 27 ("All Posts disappeared" bug): coerce list-typed fields
+  1765→    // BEFORE writing. Same protection as in _buildSafeUpdateMap() — a
+  1766→    // JSON file with `categories: "Action"` (string instead of list)
+  1767→    // used to be written verbatim, then crash Movie.fromMap later. Now
+  1768→    // we coerce to List<String> or remove the field entirely so the
+  1769→    // new doc has clean data from the start.
+  1770→    for (final listField in ['categories', 'directors', 'tags']) {
+  1771→      if (data.containsKey(listField)) {
+  1772→        final coerced = _coerceToStringList(data[listField]);
+  1773→        if (coerced == null) {
+  1774→          data.remove(listField);
+  1775→        } else {
+  1776→          data[listField] = coerced;
+  1777→        }
+  1778→      }
+  1779→    }
+  1780→
+  1781→    // Task 31 ("An Error Occurred" bug): `casts` needs the SAME special
+  1782→    // handling here as in _buildSafeUpdateMap — coerce to a proper
+  1783→    // List<Map<String, dynamic>> in CastMember shape so reading it back
+  1784→    // via MovieDetail.fromMap doesn't throw. See _coerceToCastMaps for
+  1785→    // the full rationale.
+  1786→    if (data.containsKey('casts')) {
+  1787→      final coerced = _coerceToCastMaps(data['casts']);
+  1788→      if (coerced == null) {
+  1789→        data.remove('casts');
+  1790→      } else {
+  1791→        data['casts'] = coerced;
+  1792→      }
+  1793→    }
+  1794→
+  1795→    // Audit C1: fold genre/tag counter increments into a single WriteBatch
+  1796→    // that ALSO contains the new movie doc add. This saves N writes (one per
+  1797→    // genre/tag) plus a round-trip for the movie insert itself.
+  1798→    final batch = _firestore.batch();
+  1799→    final newDocRef = _moviesRef.doc();
+  1800→    batch.set(newDocRef, data);
+  1801→
+  1802→    if (data.containsKey('categories')) {
+  1803→      for (final genreName in data['categories'] as List) {
+  1804→        await _batchIncrementCount(batch, _genresRef, genreName.toString());
+  1805→      }
+  1806→    }
+  1807→    if (data.containsKey('tags')) {
+  1808→      for (final tagName in data['tags'] as List) {
+  1809→        await _batchIncrementCount(batch, _tagsRef, tagName.toString());
+  1810→      }
+  1811→    }
+  1812→    await batch.commit();
+  1813→
+  1814→    return newDocRef.id;
+  1815→  }
+  1816→
+  1817→  /// Build a safe update map from TMDB data that only contains
+  1818→  /// fields that should be updated from TMDB, preserving user-edited fields.
+  1819→  //
+  1820→  // Task 31 ("Search can't find re-imported movie" bug): `search_keywords`
+  1821→  // was missing from this list. When a Batch Import JSON file updated an
+  1822→  // existing movie with a NEW title, `title` and `title_lowercase` got
+  1823→  // overwritten (because they were already in this list), but
+  1824→  // `search_keywords` was NOT updated — so it stayed as the OLD title's
+  1825→  // tokens. The Home Search uses `search_keywords arrayContains` (Strategy 2)
+  1826→  // as one of its main query strategies; with stale tokens, searches for the
+  1827→  // new title found nothing via Strategy 2, and the client-side filter
+  1828→  // `title.contains(query)` then filtered out Strategy 1's prefix matches
+  1829→  // (because the new title's words didn't appear in the stale search_keywords
+  1830→  // list, and the early-exit merge confused things). Net effect: re-imported
+  1831→  // movies with new titles were unsearchable.
+  1832→  //
+  1833→  // FIX: add `search_keywords` to the list so it's regenerated alongside
+  1834→  // `title` / `title_lowercase` when the title changes. The value is
+  1835→  // computed below from `newData['title']`.
+  1836→  static const _tmdbUpdateFields = [
+  1837→    'title', 'title_lowercase', 'search_keywords',
+  1838→    'year', 'poster', 'backdrop', 'overview', 'rating',
+  1839→    'duration', 'type', 'isAdult', 'categories', 'directors',
+  1840→    'casts', 'tmdbId', 'country', 'status',
+  1841→  ];
+  1842→
+  1843→  Map<String, dynamic> _buildSafeUpdateMap(
+  1844→    Map<String, dynamic> newData,
+  1845→    Map<String, dynamic> existingData,
+  1846→  ) {
+  1847→    final result = <String, dynamic>{};
+  1848→    for (final field in _tmdbUpdateFields) {
+  1849→      if (newData.containsKey(field)) {
+  1850→        final value = newData[field];
+  1851→
+  1852→        // CRITICAL: skip empty / null / blank values so we never overwrite an
+  1853→        // existing non-empty value with junk. This was the root cause of the
+  1854→        // "posters disappeared after Batch Import" bug — when a JSON import
+  1855→        // file omitted the poster field or set it to "", the old code would
+  1856→        // happily write an empty string over the existing poster URL, leaving
+  1857→        // the admin panel showing movies with no poster image.
+  1858→        //
+  1859→        // Rules:
+  1860→        //   - null            → skip (don't update)
+  1861→        //   - empty string    → skip (don't update — keep existing)
+  1862→        //   - whitespace-only → skip (don't update)
+  1863→        //   - empty list/map  → skip (don't wipe existing categories/tags/etc.)
+  1864→        //   - anything else   → update
+  1865→        if (_isEmptyValue(value)) continue;
+  1866→
+  1867→        // Task 27 ("All Posts disappeared" bug): coerce list-typed fields
+  1868→        // to List<String>. If a JSON Batch Import file has
+  1869→        // `categories: "Action"` (string instead of list), the old code
+  1870→        // wrote the string to Firestore, which later crashed
+  1871→        // `Movie.fromMap` and made the Admin Panel All Posts tab appear
+  1872→        // empty. This coercion is the WRITE-SIDE fix — bad-type values
+  1873→        // are either coerced to a proper list or skipped entirely.
+  1874→        if (field == 'categories' || field == 'directors') {
+  1875→          final coerced = _coerceToStringList(value);
+  1876→          if (coerced == null) continue; // skip — can't coerce safely
+  1877→          result[field] = coerced;
+  1878→          continue;
+  1879→        }
+  1880→
+  1881→        // Task 31 ("An Error Occurred" bug): `casts` is special. It's
+  1882→        // stored in Firestore as a List<Map<String, dynamic>> (each Map
+  1883→        // has 'name' and 'profilePath' keys, per CastMember model). But
+  1884→        // JSON Batch Import files often send it as:
+  1885→        //   - List<String>:   ["Actor A", "Actor B"]
+  1886→        //   - String:         "Actor A"
+  1887→        //   - List<Map>:       [{name: "Actor A", ...}]
+  1888→        //
+  1889→        // The previous code ran `_coerceToStringList` on it, producing
+  1890→        // a List<String>. That was WRITTEN to Firestore successfully,
+  1891→        // but then `MovieDetail.fromMap` blew up trying to cast each
+  1892→        // String to Map<String, dynamic> for CastMember — and the detail
+  1893→        // page showed "An Error Occurred".
+  1894→        //
+  1895→        // FIX: coerce `casts` to a proper List<Map<String, dynamic>>
+  1896→        // where each Map is `{name: <string>}`. The defensive
+  1897→        // MovieDetail.fromMap (Task 31) handles reading this back.
+  1898→        if (field == 'casts') {
+  1899→          final coerced = _coerceToCastMaps(value);
+  1900→          if (coerced == null) continue; // skip — can't coerce safely
+  1901→          result[field] = coerced;
+  1902→          continue;
+  1903→        }
+  1904→
+  1905→        result[field] = value;
+  1906→      }
+  1907→    }
+  1908→
+  1909→    // Task 31 ("Search can't find re-imported movie" bug): if the title is
+  1910→    // being updated, regenerate `search_keywords` from the NEW title so the
+  1911→    // Home Search's `arrayContains` strategy stays in sync with the new
+  1912→    // title. The previous version only added `search_keywords` to the field
+  1913→    // list above — but JSON Batch Import files never include a
+  1914→    // `search_keywords` field (it's an internally-computed field), so the
+  1915→    // loop above skipped it. We synthesize it here from `title` instead.
+  1916→    if (result.containsKey('title') && result['title'] is String) {
+  1917→      final title = result['title'] as String;
+  1918→      if (title.trim().isNotEmpty) {
+  1919→        result['search_keywords'] = _generateSearchKeywords(title);
+  1920→      }
+  1921→    }
+  1922→
+  1923→    return result;
+  1924→  }
+  1925→
+  1926→  /// Returns true if [value] is "empty" in the sense that it should NOT be
+  1927→  /// used to overwrite an existing non-empty value during an update.
+  1928→  /// See [_buildSafeUpdateMap] for the rationale.
+  1929→  bool _isEmptyValue(dynamic value) {
+  1930→    if (value == null) return true;
+  1931→    if (value is String && value.trim().isEmpty) return true;
+  1932→    if (value is List && value.isEmpty) return true;
+  1933→    if (value is Map && value.isEmpty) return true;
+  1934→    return false;
+  1935→  }
+  1936→
+  1937→  /// Coerce [value] to a List<String>, or return null if it can't be
+  1938→  /// coerced safely. Used by [addMovie] to PREVENT writing wrong-type
+  1939→  /// values to Firestore (e.g., `categories: "Action"` as a string).
+  1940→  ///
+  1941→  /// Task 27 ("All Posts disappeared" bug): when a JSON Batch Import
+  1942→  /// file contained `categories` as a string instead of a list, the
+  1943→  /// old code wrote the string to Firestore, which later crashed
+  1944→  /// `Movie.fromMap` and made the entire Admin Panel All Posts tab
+  1945→  /// appear empty. This coercion is the WRITE-SIDE fix; the defensive
+  1946→  /// `Movie.fromMap` is the READ-SIDE fix.
+  1947→  ///
+  1948→  /// Rules:
+  1949→  ///   - null                       → null (skip)
+  1950→  ///   - List (any element types)   → List<String> (each element via toString)
+  1951→  ///   - String (non-empty)         → [value] (single-element list)
+  1952→  ///   - String (empty)             → null (skip — equivalent to _isEmptyValue)
+  1953→  ///   - any other type             → null (skip — don't write junk)
+  1954→  List<String>? _coerceToStringList(dynamic value) {
+  1955→    if (value == null) return null;
+  1956→    if (value is List) {
+  1957→      final result = value
+  1958→          .map((e) => e?.toString() ?? '')
+  1959→          .where((s) => s.isNotEmpty)
+  1960→          .toList();
+  1961→      return result.isEmpty ? null : result;
+  1962→    }
+  1963→    if (value is String) {
+  1964→      final trimmed = value.trim();
+  1965→      return trimmed.isEmpty ? null : [trimmed];
+  1966→    }
+  1967→    // int, bool, Map, etc. — don't write anything
+  1968→    return null;
+  1969→  }
+  1970→
+  1971→  /// Coerce [value] to a List<Map<String, dynamic>> in CastMember shape,
+  1972→  /// or return null if it can't be coerced safely. Companion to
+  1973→  /// [_coerceToStringList] — used for the `casts` field.
+  1974→  ///
+  1975→  /// Task 31 ("An Error Occurred" bug): JSON Batch Import files often
+  1976→  /// send `casts` as a List<String> (e.g., `["Actor A", "Actor B"]`)
+  1977→  /// or as a plain String (e.g., `"Actor A"`). The previous code ran
+  1978→  /// `_coerceToStringList` on it, producing a List<String> written to
+  1979→  /// Firestore. But `MovieDetail.fromMap` expected `casts` to be a
+  1980→  /// List<Map<String, dynamic>> (each Map has 'name'/'profilePath'
+  1981→  /// keys for CastMember). The type mismatch threw inside
+  1982→  /// `CastMember.fromMap(x as Map<String, dynamic>)` and the detail
+  1983→  /// page showed "An Error Occurred".
+  1984→  ///
+  1985→  /// This coercion produces a proper List<Map<String, dynamic>> where
+  1986→  /// each Map is shaped like `{name: <string>, profilePath: null}`.
+  1987→  /// Existing CastMember Maps in the input are preserved as-is (so
+  1988→  /// TMDB's real cast data with profile paths is kept intact).
+  1989→  ///
+  1990→  /// Rules:
+  1991→  ///   - null                              → null (skip)
+  1992→  ///   - List<Map<String, dynamic>>        → returned as-is (proper CastMember shape)
+  1993→  ///   - List<String>                      → [{name: s, profilePath: null}, ...]
+  1994→  ///   - List with mixed types             → each element coerced to a Map
+  1995→  ///   - String (non-empty)                → [{name: value, profilePath: null}]
+  1996→  ///   - String (empty) / other types      → null (skip)
+  1997→  List<Map<String, dynamic>>? _coerceToCastMaps(dynamic value) {
+  1998→    if (value == null) return null;
+  1999→    if (value is List) {
+  2000→      final result = <Map<String, dynamic>>[];
+
+[showing lines 1-2000 of 2280; use offset=2001 with limit to continue reading]

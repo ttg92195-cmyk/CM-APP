@@ -1,0 +1,713 @@
+     1→import 'package:flutter/material.dart';
+     2→import 'package:provider/provider.dart';
+     3→import 'package:cloud_firestore/cloud_firestore.dart';
+     4→import 'package:cm_movies/more_libs/setting/app_config.dart';
+     5→import 'package:cm_movies/app/core/models/movie.dart';
+     6→import 'package:cm_movies/app/core/models/tag_and_genres.dart';
+     7→import 'package:cm_movies/app/core/services/firestore_content_service.dart';
+     8→import 'package:cm_movies/app/ui/components/movie_card.dart';
+     9→import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
+    10→import 'package:cm_movies/app/ui/screens/series_detail_screen.dart';
+    11→import 'package:cm_movies/app/ui/home/trending_movie_component.dart';
+    12→
+    13→class GenresTagsCollectionsPage extends StatefulWidget {
+    14→  const GenresTagsCollectionsPage({super.key});
+    15→
+    16→  @override
+    17→  State<GenresTagsCollectionsPage> createState() =>
+    18→      _GenresTagsCollectionsPageState();
+    19→}
+    20→
+    21→class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
+    22→    with SingleTickerProviderStateMixin {
+    23→  final FirestoreContentService _contentService = FirestoreContentService();
+    24→  late TabController _tabController;
+    25→
+    26→  List<TagAndGenres> _genres = [];
+    27→  List<TagAndGenres> _tags = [];
+    28→  List<TagAndGenres> _collections = [];
+    29→  bool _isLoading = true;
+    30→
+    31→  // Sub-tab controllers for Genres and Tags
+    32→  late TabController _genresSubTabController;
+    33→  late TabController _tagsSubTabController;
+    34→
+    35→  @override
+    36→  void initState() {
+    37→    super.initState();
+    38→    _tabController = TabController(length: 3, vsync: this);
+    39→    _genresSubTabController = TabController(length: 2, vsync: this);
+    40→    _tagsSubTabController = TabController(length: 2, vsync: this);
+    41→    _loadData();
+    42→  }
+    43→
+    44→  @override
+    45→  void dispose() {
+    46→    _tabController.dispose();
+    47→    _genresSubTabController.dispose();
+    48→    _tagsSubTabController.dispose();
+    49→    super.dispose();
+    50→  }
+    51→
+    52→  Future<void> _loadData() async {
+    53→    try {
+    54→      List<TagAndGenres> genres = [];
+    55→      List<TagAndGenres> tags = [];
+    56→      List<TagAndGenres> collections = [];
+    57→
+    58→      // PARALLEL FETCH — previously sequential (genres → tags → collections),
+    59→      // adding 3 × query latency on slow networks. Now all three fire in
+    60→      // parallel; total wait ≈ slowest query instead of sum of all three.
+    61→      // (Task 36 #2 — see movies_page.dart for the artificial-skeleton-floor
+    62→      // removal rationale; that pattern was also removed here.)
+    63→      final results = await Future.wait([
+    64→        _contentService.getGenres().catchError((e) {
+    65→          debugPrint('Error loading genres: $e');
+    66→          return <TagAndGenres>[];
+    67→        }),
+    68→        _contentService.getTags().catchError((e) {
+    69→          debugPrint('Error loading tags: $e');
+    70→          return <TagAndGenres>[];
+    71→        }),
+    72→        _contentService.getCollections().catchError((e) {
+    73→          debugPrint('Error loading collections: $e');
+    74→          return <TagAndGenres>[];
+    75→        }),
+    76→      ]);
+    77→
+    78→      genres = results[0] as List<TagAndGenres>;
+    79→      tags = results[1] as List<TagAndGenres>;
+    80→      collections = results[2] as List<TagAndGenres>;
+    81→
+    82→      if (mounted) {
+    83→        setState(() {
+    84→          _genres = genres;
+    85→          _tags = tags;
+    86→          _collections = collections;
+    87→          _isLoading = false;
+    88→        });
+    89→      }
+    90→    } catch (e) {
+    91→      if (mounted) setState(() => _isLoading = false);
+    92→    }
+    93→  }
+    94→
+    95→  @override
+    96→  Widget build(BuildContext context) {
+    97→    final appConfig = Provider.of<AppConfig>(context);
+    98→    final theme = Theme.of(context);
+    99→
+   100→    return Scaffold(
+   101→      appBar: AppBar(
+   102→        title: Text(appConfig.translate('genres_tags_collections')),
+   103→        bottom: TabBar(
+   104→          controller: _tabController,
+   105→          splashFactory: NoSplash.splashFactory,
+   106→          overlayColor: WidgetStateProperty.all(Colors.transparent),
+   107→          tabs: [
+   108→            Tab(text: appConfig.translate('genres')),
+   109→            Tab(text: appConfig.translate('tags')),
+   110→            Tab(text: appConfig.translate('collections')),
+   111→          ],
+   112→        ),
+   113→      ),
+   114→      body: _isLoading
+   115→          ? const Center(child: CircularProgressIndicator())
+   116→          : TabBarView(
+   117→              controller: _tabController,
+   118→              children: [
+   119→                _buildGenresTab(appConfig, theme),
+   120→                _buildTagsTab(appConfig, theme),
+   121→                _buildCollectionsTab(appConfig, theme),
+   122→              ],
+   123→            ),
+   124→    );
+   125→  }
+   126→
+   127→  // ==================== GENRES TAB (with Movies/Series sub-tabs) ====================
+   128→  Widget _buildGenresTab(AppConfig appConfig, ThemeData theme) {
+   129→    if (_genres.isEmpty) {
+   130→      return Center(child: Text(appConfig.translate('no_results')));
+   131→    }
+   132→    return Column(
+   133→      children: [
+   134→        Container(
+   135→          color: theme.colorScheme.surface,
+   136→          child: TabBar(
+   137→            controller: _genresSubTabController,
+   138→            labelColor: const Color(0xFFE50914),
+   139→            unselectedLabelColor: theme.colorScheme.onSurface.withOpacity(0.5),
+   140→            indicatorColor: const Color(0xFFE50914),
+   141→            indicatorSize: TabBarIndicatorSize.label,
+   142→            dividerColor: Colors.transparent,
+   143→            tabs: const [
+   144→              Tab(text: 'Movies'),
+   145→              Tab(text: 'Series'),
+   146→            ],
+   147→          ),
+   148→        ),
+   149→        Expanded(
+   150→          child: TabBarView(
+   151→            controller: _genresSubTabController,
+   152→            children: [
+   153→              // Movies Genres
+   154→              SingleChildScrollView(
+   155→                padding: const EdgeInsets.all(12),
+   156→                child: Column(
+   157→                  crossAxisAlignment: CrossAxisAlignment.start,
+   158→                  children: [
+   159→                    Padding(
+   160→                      padding: const EdgeInsets.only(bottom: 12),
+   161→                      child: Text(
+   162→                        'Movies',
+   163→                        style: theme.textTheme.titleMedium?.copyWith(
+   164→                          fontWeight: FontWeight.bold,
+   165→                          color: const Color(0xFFE50914),
+   166→                        ),
+   167→                      ),
+   168→                    ),
+   169→                    _buildNeonGrid(theme, _genres.map((g) => g.name).toList(),
+   170→                        filterType: 'genre', typeFilter: 'movie'),
+   171→                  ],
+   172→                ),
+   173→              ),
+   174→              // Series Genres
+   175→              SingleChildScrollView(
+   176→                padding: const EdgeInsets.all(12),
+   177→                child: Column(
+   178→                  crossAxisAlignment: CrossAxisAlignment.start,
+   179→                  children: [
+   180→                    Padding(
+   181→                      padding: const EdgeInsets.only(bottom: 12),
+   182→                      child: Text(
+   183→                        'Series',
+   184→                        style: theme.textTheme.titleMedium?.copyWith(
+   185→                          fontWeight: FontWeight.bold,
+   186→                          color: const Color(0xFFE50914),
+   187→                        ),
+   188→                      ),
+   189→                    ),
+   190→                    _buildNeonGrid(theme, _genres.map((g) => g.name).toList(),
+   191→                        filterType: 'genre', typeFilter: 'series'),
+   192→                  ],
+   193→                ),
+   194→              ),
+   195→            ],
+   196→          ),
+   197→        ),
+   198→      ],
+   199→    );
+   200→  }
+   201→
+   202→  // ==================== TAGS TAB (with Movies/Series sub-tabs) ====================
+   203→  Widget _buildTagsTab(AppConfig appConfig, ThemeData theme) {
+   204→    if (_tags.isEmpty) {
+   205→      return Center(child: Text(appConfig.translate('no_results')));
+   206→    }
+   207→    return Column(
+   208→      children: [
+   209→        Container(
+   210→          color: theme.colorScheme.surface,
+   211→          child: TabBar(
+   212→            controller: _tagsSubTabController,
+   213→            labelColor: const Color(0xFFE50914),
+   214→            unselectedLabelColor: theme.colorScheme.onSurface.withOpacity(0.5),
+   215→            indicatorColor: const Color(0xFFE50914),
+   216→            indicatorSize: TabBarIndicatorSize.label,
+   217→            dividerColor: Colors.transparent,
+   218→            tabs: const [
+   219→              Tab(text: 'Movies'),
+   220→              Tab(text: 'Series'),
+   221→            ],
+   222→          ),
+   223→        ),
+   224→        Expanded(
+   225→          child: TabBarView(
+   226→            controller: _tagsSubTabController,
+   227→            children: [
+   228→              // Movies Tags
+   229→              SingleChildScrollView(
+   230→                padding: const EdgeInsets.all(12),
+   231→                child: Column(
+   232→                  crossAxisAlignment: CrossAxisAlignment.start,
+   233→                  children: [
+   234→                    Padding(
+   235→                      padding: const EdgeInsets.only(bottom: 12),
+   236→                      child: Text(
+   237→                        'Movies',
+   238→                        style: theme.textTheme.titleMedium?.copyWith(
+   239→                          fontWeight: FontWeight.bold,
+   240→                          color: const Color(0xFFE50914),
+   241→                        ),
+   242→                      ),
+   243→                    ),
+   244→                    _buildNeonGrid(theme, _tags.map((t) => t.name).toList(),
+   245→                        filterType: 'tag', typeFilter: 'movie'),
+   246→                  ],
+   247→                ),
+   248→              ),
+   249→              // Series Tags
+   250→              SingleChildScrollView(
+   251→                padding: const EdgeInsets.all(12),
+   252→                child: Column(
+   253→                  crossAxisAlignment: CrossAxisAlignment.start,
+   254→                  children: [
+   255→                    Padding(
+   256→                      padding: const EdgeInsets.only(bottom: 12),
+   257→                      child: Text(
+   258→                        'Series',
+   259→                        style: theme.textTheme.titleMedium?.copyWith(
+   260→                          fontWeight: FontWeight.bold,
+   261→                          color: const Color(0xFFE50914),
+   262→                        ),
+   263→                      ),
+   264→                    ),
+   265→                    _buildNeonGrid(theme, _tags.map((t) => t.name).toList(),
+   266→                        filterType: 'tag', typeFilter: 'series'),
+   267→                  ],
+   268→                ),
+   269→              ),
+   270→            ],
+   271→          ),
+   272→        ),
+   273→      ],
+   274→    );
+   275→  }
+   276→
+   277→  // ==================== COLLECTIONS TAB ====================
+   278→  Widget _buildCollectionsTab(AppConfig appConfig, ThemeData theme) {
+   279→    if (_collections.isEmpty) {
+   280→      return Center(child: Text(appConfig.translate('no_results')));
+   281→    }
+   282→    return SingleChildScrollView(
+   283→      padding: const EdgeInsets.all(12),
+   284→      child: _buildNeonGrid(theme, _collections.map((c) => c.name).toList(),
+   285→          filterType: 'collection'),
+   286→    );
+   287→  }
+   288→
+   289→  // ==================== SHARED WIDGETS ====================
+   290→
+   291→  Widget _buildNeonGrid(ThemeData theme, List<String> items,
+   292→      {required String filterType, String? typeFilter}) {
+   293→    return GridView.builder(
+   294→      shrinkWrap: true,
+   295→      physics: const NeverScrollableScrollPhysics(),
+   296→      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+   297→        crossAxisCount: 3,
+   298→        childAspectRatio: 2.2,
+   299→        crossAxisSpacing: 8,
+   300→        mainAxisSpacing: 8,
+   301→      ),
+   302→      itemCount: items.length,
+   303→      itemBuilder: (context, index) {
+   304→        final item = items[index];
+   305→        return _NeonGlowButton(
+   306→          title: item,
+   307→          isSolid: filterType == 'collection',
+   308→          onTap: () {
+   309→            Navigator.push(
+   310→              context,
+   311→              MaterialPageRoute(
+   312→                builder: (_) => FilterResultPage(
+   313→                  title: item,
+   314→                  genreName: filterType == 'genre' ? item : null,
+   315→                  tagName: filterType == 'tag' ? item : null,
+   316→                  collectionName: filterType == 'collection' ? item : null,
+   317→                  typeFilter: typeFilter,
+   318→                ),
+   319→              ),
+   320→            );
+   321→          },
+   322→        );
+   323→      },
+   324→    );
+   325→  }
+   326→}
+   327→
+   328→// ==================== NEON GLOW BUTTON (Netflix Red) ====================
+   329→
+   330→class _NeonGlowButton extends StatefulWidget {
+   331→  final String title;
+   332→  final bool isSolid;
+   333→  final VoidCallback? onTap;
+   334→
+   335→  const _NeonGlowButton({
+   336→    required this.title,
+   337→    this.isSolid = false,
+   338→    this.onTap,
+   339→  });
+   340→
+   341→  @override
+   342→  State<_NeonGlowButton> createState() => _NeonGlowButtonState();
+   343→}
+   344→
+   345→class _NeonGlowButtonState extends State<_NeonGlowButton> {
+   346→  bool _isHovering = false;
+   347→
+   348→  @override
+   349→  Widget build(BuildContext context) {
+   350→    final isDark = Theme.of(context).brightness == Brightness.dark;
+   351→
+   352→    return GestureDetector(
+   353→      onTapDown: (_) => setState(() => _isHovering = true),
+   354→      onTapUp: (_) => setState(() => _isHovering = false),
+   355→      onTapCancel: () => setState(() => _isHovering = false),
+   356→      onTap: widget.onTap,
+   357→      child: AnimatedContainer(
+   358→        duration: const Duration(milliseconds: 150),
+   359→        decoration: BoxDecoration(
+   360→          color: widget.isSolid
+   361→              ? const Color(0xFFE50914)
+   362→              : isDark
+   363→                  ? const Color(0xFF1A1A1A)
+   364→                  : Colors.grey.shade100,
+   365→          borderRadius: BorderRadius.circular(10),
+   366→          border: widget.isSolid
+   367→              ? null
+   368→              : Border.all(
+   369→                  color: _isHovering
+   370→                      ? const Color(0xFFE50914)
+   371→                      : isDark
+   372→                          ? Colors.white24
+   373→                          : Colors.grey.shade400,
+   374→                  width: 1.5,
+   375→                ),
+   376→          boxShadow: _isHovering
+   377→              ? [
+   378→                  BoxShadow(
+   379→                    color: const Color(0xFFE50914).withOpacity(0.4),
+   380→                    blurRadius: 12,
+   381→                    spreadRadius: 1,
+   382→                  ),
+   383→                ]
+   384→              : widget.isSolid
+   385→                  ? [
+   386→                      BoxShadow(
+   387→                        color: const Color(0xFFE50914).withOpacity(0.3),
+   388→                        blurRadius: 6,
+   389→                        spreadRadius: 0,
+   390→                      ),
+   391→                    ]
+   392→                  : null,
+   393→        ),
+   394→        child: Center(
+   395→          child: Padding(
+   396→            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+   397→            child: Text(
+   398→              widget.title,
+   399→              textAlign: TextAlign.center,
+   400→              style: TextStyle(
+   401→                color: widget.isSolid
+   402→                    ? Colors.white
+   403→                    : isDark
+   404→                        ? Colors.white
+   405→                        : Colors.black87,
+   406→                fontSize: 12,
+   407→                fontWeight: FontWeight.w600,
+   408→                shadows: _isHovering
+   409→                    ? [
+   410→                        Shadow(
+   411→                          color: const Color(0xFFE50914).withOpacity(0.8),
+   412→                          blurRadius: 8,
+   413→                        ),
+   414→                      ]
+   415→                    : null,
+   416→              ),
+   417→              maxLines: 2,
+   418→              overflow: TextOverflow.ellipsis,
+   419→            ),
+   420→          ),
+   421→        ),
+   422→      ),
+   423→    );
+   424→  }
+   425→}
+   426→
+   427→// ==================== FILTER RESULT PAGE (public) ====================
+   428→class FilterResultPage extends StatefulWidget {
+   429→  final String title;
+   430→  final String? genreName;
+   431→  final String? tagName;
+   432→  final String? collectionName;
+   433→  final String? typeFilter; // 'movie' or 'series'
+   434→
+   435→  const FilterResultPage({
+   436→    super.key,
+   437→    required this.title,
+   438→    this.genreName,
+   439→    this.tagName,
+   440→    this.collectionName,
+   441→    this.typeFilter,
+   442→  });
+   443→
+   444→  @override
+   445→  State<FilterResultPage> createState() => _FilterResultPageState();
+   446→}
+   447→
+   448→class _FilterResultPageState extends State<FilterResultPage> {
+   449→  final FirestoreContentService _contentService = FirestoreContentService();
+   450→
+   451→  List<Movie> _movies = [];
+   452→  List<Movie> _filteredMovies = [];
+   453→  DocumentSnapshot? _lastDoc;
+   454→  bool _hasMore = true;
+   455→  bool _isLoading = true;
+   456→  bool _isLoadingMore = false;
+   457→  // Track seen IDs to prevent duplicates
+   458→  final Set<String> _seenIds = {};
+   459→
+   460→  @override
+   461→  void initState() {
+   462→    super.initState();
+   463→    _loadMovies();
+   464→  }
+   465→
+   466→  Future<void> _loadMovies() async {
+   467→    setState(() {
+   468→      _isLoading = true;
+   469→      _seenIds.clear();
+   470→    });
+   471→    try {
+   472→      Map<String, dynamic> result;
+   473→      if (widget.genreName != null) {
+   474→        result = await _contentService.getMoviesByGenre(
+   475→          widget.genreName!, limit: 20, typeFilter: widget.typeFilter, // PAGINATION: 20/page (Task 38 Req 5)
+   476→        );
+   477→      } else if (widget.tagName != null) {
+   478→        result = await _contentService.getMoviesByTag(
+   479→          widget.tagName!, limit: 20, typeFilter: widget.typeFilter, // PAGINATION: 20/page (Task 38 Req 5)
+   480→        );
+   481→      } else if (widget.collectionName != null) {
+   482→        result = await _contentService.getMoviesByCollection(
+   483→          widget.collectionName!, limit: 20, typeFilter: widget.typeFilter, // PAGINATION: 20/page (Task 38 Req 5)
+   484→        );
+   485→      } else {
+   486→        result = await _contentService.getMovies(limit: 20); // PAGINATION: 20/page
+   487→      }
+   488→
+   489→      if (mounted) {
+   490→        final allMovies = result['movies'] as List<Movie>;
+   491→
+   492→        // Track IDs to prevent future duplicates
+   493→        for (final m in allMovies) {
+   494→          _seenIds.add(m.id);
+   495→        }
+   496→
+   497→        // Apply type filter if specified (Movies or Series sub-tab)
+   498→        List<Movie> filtered;
+   499→        if (widget.typeFilter != null) {
+   500→          filtered = allMovies
+   501→              .where((m) => m.type == widget.typeFilter)
+   502→              .toList();
+   503→        } else {
+   504→          filtered = allMovies;
+   505→        }
+   506→
+   507→        // NOTE: previously had an artificial 600ms skeleton floor here.
+   508→        // Removed in Task 36 #2 — see movies_page.dart for the rationale.
+   509→        setState(() {
+   510→          _movies = allMovies;
+   511→          _filteredMovies = filtered;
+   512→          _hasMore = result['hasMore'] as bool;
+   513→          _lastDoc = result['lastDoc'] as DocumentSnapshot?;
+   514→          _isLoading = false;
+   515→        });
+   516→
+   517→        // Task 38 Req 5 — post-frame auto-load safety net.
+   518→        // If the first page returned fewer items than would fill the
+   519→        // viewport (e.g., on a large tablet showing 30+ items per screen,
+   520→        // or a genre with exactly 20 docs that doesn't fill the screen),
+   521→        // the scroll listener never fires — and infinite scroll silently
+   522→        // dies. Schedule a `_loadMore()` on the next frame; `_loadMore`
+   523→        // will no-op if `_hasMore` is already false (e.g., the genre only
+   524→        // had 20 docs total).
+   525→        if (_hasMore && _filteredMovies.length < 30) {
+   526→          WidgetsBinding.instance.addPostFrameCallback((_) {
+   527→            if (mounted && _hasMore && !_isLoadingMore) {
+   528→              _loadMore();
+   529→            }
+   530→          });
+   531→        }
+   532→      }
+   533→    } catch (e) {
+   534→      debugPrint('FilterResultPage load error: $e');
+   535→      if (mounted) setState(() => _isLoading = false);
+   536→    }
+   537→  }
+   538→
+   539→  Future<void> _loadMore() async {
+   540→    if (_isLoadingMore || !_hasMore) return;
+   541→    setState(() => _isLoadingMore = true);
+   542→    try {
+   543→      Map<String, dynamic> result;
+   544→      if (widget.genreName != null) {
+   545→        result = await _contentService.getMoviesByGenre(
+   546→          widget.genreName!, limit: 20, startAfter: _lastDoc,
+   547→          typeFilter: widget.typeFilter, // Task 38 Req 5
+   548→        );
+   549→      } else if (widget.tagName != null) {
+   550→        result = await _contentService.getMoviesByTag(
+   551→          widget.tagName!, limit: 20, startAfter: _lastDoc,
+   552→          typeFilter: widget.typeFilter, // Task 38 Req 5
+   553→        );
+   554→      } else if (widget.collectionName != null) {
+   555→        result = await _contentService.getMoviesByCollection(
+   556→          widget.collectionName!, limit: 20, startAfter: _lastDoc,
+   557→          typeFilter: widget.typeFilter, // Task 38 Req 5
+   558→        );
+   559→      } else {
+   560→        result = await _contentService.getMovies(limit: 20, startAfter: _lastDoc);
+   561→      }
+   562→
+   563→      if (mounted) {
+   564→        final newMovies = result['movies'] as List<Movie>;
+   565→
+   566→        // Deduplicate by ID to prevent duplicates
+   567→        final dedupedMovies = <Movie>[];
+   568→        for (final m in newMovies) {
+   569→          if (!_seenIds.contains(m.id)) {
+   570→            _seenIds.add(m.id);
+   571→            dedupedMovies.add(m);
+   572→          }
+   573→        }
+   574→
+   575→        List<Movie> filtered;
+   576→        if (widget.typeFilter != null) {
+   577→          filtered = dedupedMovies
+   578→              .where((m) => m.type == widget.typeFilter)
+   579→              .toList();
+   580→        } else {
+   581→          filtered = dedupedMovies;
+   582→        }
+   583→
+   584→        setState(() {
+   585→          _movies.addAll(dedupedMovies);
+   586→          _filteredMovies.addAll(filtered);
+   587→          _hasMore = result['hasMore'] as bool && newMovies.isNotEmpty;
+   588→          _lastDoc = result['lastDoc'] as DocumentSnapshot?;
+   589→          _isLoadingMore = false;
+   590→        });
+   591→
+   592→        // Task 38 Req 5 — chained auto-load safety net (mirror of the one
+   593→        // in _loadMovies). If after a `_loadMore` we still have fewer
+   594→        // than 30 visible items AND `_hasMore` is still true, the grid
+   595→        // likely still doesn't fill the viewport — schedule another
+   596→        // `_loadMore` on the next frame. Caps infinite recursion because
+   597→        // `_loadMore` no-ops once `_hasMore` flips false (Firestore
+   598→        // returned fewer than `limit` docs).
+   599→        if (_hasMore && _filteredMovies.length < 30) {
+   600→          WidgetsBinding.instance.addPostFrameCallback((_) {
+   601→            if (mounted && _hasMore && !_isLoadingMore) {
+   602→              _loadMore();
+   603→            }
+   604→          });
+   605→        }
+   606→      }
+   607→    } catch (e) {
+   608→      if (mounted) setState(() => _isLoadingMore = false);
+   609→    }
+   610→  }
+   611→
+   612→  @override
+   613→  Widget build(BuildContext context) {
+   614→    final theme = Theme.of(context);
+   615→
+   616→    return Scaffold(
+   617→      appBar: AppBar(
+   618→        title: Text(
+   619→          widget.title,
+   620→          maxLines: 1,
+   621→          overflow: TextOverflow.ellipsis,
+   622→        ),
+   623→      ),
+   624→      body: _isLoading
+   625→          ? _buildSkeletonGrid()
+   626→          : RefreshIndicator(
+   627→              onRefresh: _loadMovies,
+   628→              child: NotificationListener<ScrollNotification>(
+   629→                onNotification: (scrollInfo) {
+   630→                  // Task 38 Req 5 — trigger at 80% scroll instead of 100%
+   631→                  // so the next page kicks in BEFORE the user hits the
+   632→                  // bottom (smoother infinite scroll). Combined with the
+   633→                  // post-frame auto-load below, this also handles the case
+   634→                  // where the first page didn't even fill the viewport
+   635→                  // (e.g., on a large tablet).
+   636→                  final trigger = scrollInfo.metrics.pixels >=
+   637→                      scrollInfo.metrics.maxScrollExtent * 0.8;
+   638→                  if (trigger && !_isLoadingMore && _hasMore) {
+   639→                    _loadMore();
+   640→                  }
+   641→                  return false;
+   642→                },
+   643→                child: _filteredMovies.isEmpty
+   644→                    ? Center(
+   645→                        child: Column(
+   646→                          mainAxisAlignment: MainAxisAlignment.center,
+   647→                          children: [
+   648→                            Icon(
+   649→                              Icons.movie_filter_outlined,
+   650→                              size: 64,
+   651→                              color: theme.colorScheme.onSurface.withOpacity(0.3),
+   652→                            ),
+   653→                            const SizedBox(height: 16),
+   654→                            Text(
+   655→                              'No ${widget.title} yet',
+   656→                              style: theme.textTheme.bodyLarge?.copyWith(
+   657→                                color: theme.colorScheme.onSurface.withOpacity(0.5),
+   658→                              ),
+   659→                            ),
+   660→                          ],
+   661→                        ),
+   662→                      )
+   663→                    : GridView.builder(
+   664→                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+   665→                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+   666→                          crossAxisCount: 3,
+   667→                          childAspectRatio: 0.53,
+   668→                          crossAxisSpacing: 6,
+   669→                          mainAxisSpacing: 6,
+   670→                        ),
+   671→                        itemCount: _filteredMovies.length + (_isLoadingMore ? 6 : 0),
+   672→                        itemBuilder: (context, index) {
+   673→                          if (index >= _filteredMovies.length) {
+   674→                            return const Center(child: CircularProgressIndicator());
+   675→                          }
+   676→                          final movie = _filteredMovies[index];
+   677→                          return MovieCard(
+   678→                            movie: movie,
+   679→                            onTap: () {
+   680→                              Navigator.push(
+   681→                                context,
+   682→                                MaterialPageRoute(
+   683→                                  builder: (_) => movie.type == 'series'
+   684→                                      ? SeriesDetailScreen(slug: movie.slug)
+   685→                                      : MovieDetailScreen(slug: movie.slug),
+   686→                                ),
+   687→                              );
+   688→                            },
+   689→                          );
+   690→                        },
+   691→                      ),
+   692→              ),
+   693→            ),
+   694→    );
+   695→  }
+   696→
+   697→  Widget _buildSkeletonGrid() {
+   698→    return GridView.builder(
+   699→      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+   700→      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+   701→        crossAxisCount: 3,
+   702→        childAspectRatio: 0.53,
+   703→        crossAxisSpacing: 6,
+   704→        mainAxisSpacing: 6,
+   705→      ),
+   706→      itemCount: 9,
+   707→      itemBuilder: (context, index) {
+   708→        return const MovieCardSkeleton();
+   709→      },
+   710→    );
+   711→  }
+   712→}
+   713→

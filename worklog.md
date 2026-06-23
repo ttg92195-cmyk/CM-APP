@@ -2515,3 +2515,56 @@ Stage Summary:
   was needed.
 - User should rebuild and verify the version label in Settings, About,
   Help & Support, and Home AppBar now shows 2.0.0.
+
+---
+Task ID: 39 (Genres/Tags/Collections pagination stuck at 20)
+Agent: Main Agent
+Task: User reported Genres → Action tab shows only 20 posts, scrolling does not load more. Find why and fix.
+
+Work Log:
+- Pulled origin/main (07dbe1c — benign submodule pointer bump).
+- Read firestore_content_service.dart getMoviesByGenre/Tag/Collection
+  (3 functions, ~80 lines each, lines 692-844 + 1377-1446).
+- Read genres_tags_collections_page.dart FilterResultPage._loadMovies
+  and _loadMore (lines 466-610).
+- Confirmed TWO bugs:
+
+  Bug 1 (root cause): in firestore_content_service.dart, all 3 fallback
+  paths (used when the composite index (categories, type, createdAt)
+  isn't deployed) IGNORED the `startAfter` cursor parameter. Every
+  _loadMore call returned page 1 again. Dedup stripped all 20 docs
+  (already in _seenIds), grid stayed at 20, auto-load safety net
+  spun forever (silently burning Firestore reads).
+
+  Bug 2 (compounding): in genres_tags_collections_page.dart line 587,
+  _hasMore was `result['hasMore'] && newMovies.isNotEmpty`. The
+  `newMovies` variable is the RAW Firestore result (20 docs even when
+  all are duplicates), so _hasMore stayed true forever when Bug 1 hit.
+
+- Fix 1: added `if (startAfter != null) { query = query.startAfterDocument(startAfter); }`
+  to all 3 fallback paths. Without orderBy, Firestore returns docs in
+  document-ID order; startAfterDocument advances by doc ID, which is
+  deterministic and consistent across pages.
+
+- Fix 2: changed _hasMore calculation to
+  `(result['hasMore'] as bool) && dedupedMovies.isNotEmpty`. Pagination
+  now terminates as soon as Firestore returns a page of duplicates,
+  which is the correct end-of-feed signal regardless of whether Bug 1
+  still exists in any other code path.
+
+- Wrote scripts/task39_syntax_check.py — Dart-aware delimiter scanner
+  + content invariants (verifies each fallback has the startAfterDocument
+  guard, verifies _hasMore uses dedupedMovies.isNotEmpty). All green.
+
+- Committed as d16f4fe, pushed to origin/main.
+
+Stage Summary:
+- Genres/Tags/Collections pagination now works whether or not the
+  composite index is deployed. If index is missing: fallback path
+  advances cursor by doc ID, client-sorts by createdAt. If index is
+  present: primary path server-sorts by createdAt desc.
+- No new Firestore indexes required.
+- No API surface changes. Backward compatible.
+- User should rebuild and test: Genres → Action should now show 20 →
+  scroll to 80% → next 20 loads → scroll again → next 20 → continues
+  until the genre's full list is shown.
