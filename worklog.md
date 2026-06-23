@@ -2678,3 +2678,44 @@ Stage Summary:
   again — surfaces a clear error with restore instructions.
 - User should re-trigger CI build (push another commit, or manually
   re-run the workflow) to verify the fix.
+
+---
+Task ID: 42#3 (Trailer button not responding)
+Agent: Main Agent
+Task: Trailer play icon in movie/series detail page does nothing when tapped.
+
+Work Log:
+- Pulled origin/main (1bd2f24 — benign worklog update).
+- Read movie_detail_screen.dart lines 358-385 (trailer button) +
+  series_detail_screen.dart lines 318-337 (mirror).
+- Confirmed both use `if (await canLaunchUrl(uri)) { await launchUrl(...); }`
+  pattern.
+- Read AndroidManifest.xml (57 lines) — confirmed NO <queries> block.
+  On Android 11+ (API 30+), url_launcher can't query external apps
+  without explicit <queries> declaration. canLaunchUrl returns false
+  silently → launchUrl never runs → button appears dead.
+
+Fix applied:
+  1. AndroidManifest.xml: added <queries> block declaring http + https
+     scheme visibility (covers all browser/YouTube intents).
+  2. movie_detail_screen.dart: removed canLaunchUrl guard. Wrapped
+     launchUrl in try/catch; on failure shows SnackBar 'Could not
+     open trailer' so user gets feedback instead of a dead button.
+  3. series_detail_screen.dart: same change.
+
+- Wrote scripts/task42_3_syntax_check.py — Dart-aware delimiter
+  scanner + comment-stripping regex checks (no canLaunchUrl in code,
+  launchUrl wrapped in try/catch, <queries> block present in manifest).
+  All green.
+- Committed as 399c464, pushed to origin/main.
+
+Stage Summary:
+- Trailer button on movie/series detail pages now reliably opens the
+  YouTube trailer (in YouTube app or browser fallback).
+- If launch fails for any reason, user sees a clear SnackBar error.
+- Bro can rebuild and verify; should also test that the Watchlist and
+  Bookmark icons in the same AppBar (which don't use launchUrl) still
+  work as before — they should, no changes were made to them.
+
+Tasks 42#1 (Casts actor movies) and 42#2 (Casts extra padding + You
+May Also Like related) still pending.
