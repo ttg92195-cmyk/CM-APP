@@ -109,32 +109,89 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
 
   Future<void> _loadRelatedMovies(MovieDetail detail) async {
     try {
-      List<Movie> related = [];
-      if (detail.categories.isNotEmpty) {
-        final result = await _contentService.getMoviesByGenre(
-          detail.categories.first,
-          limit: 11,
-        );
-        related = (result['movies'] as List<Movie>)
-            .where((m) => m.id != detail.id)
-            .toList();
-      }
-      if (related.length < 10 && detail.tags.isNotEmpty) {
-        final tagResult = await _contentService.getMoviesByTagSimple(
-          detail.tags.first,
-          limit: 11,
-        );
-        for (final m in tagResult) {
-          if (m.id != detail.id && !related.any((r) => r.id == m.id)) {
-            related.add(m);
+      // Task 42#2: rewritten to show genuinely related posts.
+      //
+      // OLD behavior: queried only the FIRST category, fell back to
+      // trending (unrelated) when genre returned < 10 results. User saw
+      // "new" movies instead of related ones.
+      //
+      // NEW behavior:
+      //   1. Query movies by EACH category (capped at 3) — type-filtered
+      //      to 'movie' so series don't leak in.
+      //   2. Query movies by EACH tag (capped at 2) for more candidates.
+      //   3. Score each candidate by # of shared categories (each shared
+      //      category = +2 points).
+      //   4. Sort by score desc, then createdAt desc as tiebreaker.
+      //   5. Take top 10.
+      //   6. NO trending fallback — if no related found, the section is
+      //      hidden (cleaner than showing unrelated posts).
+      final Map<String, Movie> candidates = {};
+
+      // Cap categories to avoid excessive Firestore reads.
+      final catsToQuery = detail.categories.take(3).toList();
+      for (final category in catsToQuery) {
+        try {
+          final result = await _contentService.getMoviesByGenre(
+            category,
+            limit: 30,
+            typeFilter: 'movie',
+          );
+          for (final m in (result['movies'] as List<Movie>)) {
+            if (m.id != detail.id) candidates[m.id] = m;
           }
-          if (related.length >= 10) break;
+        } catch (_) {
+          // Single-category failure shouldn't abort the whole load.
         }
       }
-      if (related.isEmpty) {
-        final result = await _contentService.getTrendingMovies();
-        related = result.where((m) => m.id != detail.id).take(10).toList();
+
+      // Tags as secondary signal — only used to FIND more candidates,
+      // not for scoring (tags not available on Movie model).
+      final tagsToQuery = detail.tags.take(2).toList();
+      for (final tag in tagsToQuery) {
+        try {
+          final tagResult = await _contentService.getMoviesByTagSimple(
+            tag,
+            limit: 20,
+          );
+          for (final m in tagResult) {
+            if (m.id != detail.id) {
+              candidates.putIfAbsent(m.id, () => m);
+            }
+          }
+        } catch (_) {
+          // Single-tag failure shouldn't abort the whole load.
+        }
       }
+
+      // Score by category overlap.
+      final detailCatsLower = detail.categories
+          .map((c) => c.toLowerCase())
+          .toSet();
+
+      final scored = candidates.values.map((m) {
+        int score = 0;
+        for (final c in m.categories) {
+          if (detailCatsLower.contains(c.toLowerCase())) score += 2;
+        }
+        return (movie: m, score: score);
+      }).toList();
+
+      // Sort: score desc, then createdAt desc as tiebreaker.
+      scored.sort((a, b) {
+        final scoreCmp = b.score.compareTo(a.score);
+        if (scoreCmp != 0) return scoreCmp;
+        return (b.movie.createdAt ?? DateTime(2000))
+            .compareTo(a.movie.createdAt ?? DateTime(2000));
+      });
+
+      final related = scored.take(10).map((e) => e.movie).toList();
+
+      debugPrint('LOAD_RELATED_MOVIES: "${detail.title}" '
+          'categories=${detail.categories} tags=${detail.tags} '
+          'candidates=${candidates.length} '
+          '→ ${related.length} related '
+          '(top score=${scored.isEmpty ? 0 : scored.first.score})');
+
       if (mounted) {
         setState(() {
           _relatedMovies = related;
@@ -142,6 +199,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
         });
       }
     } catch (e) {
+      debugPrint('_loadRelatedMovies failed: $e');
       if (mounted) {
         setState(() => _isLoadingRelated = false);
       }
@@ -917,8 +975,12 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                                 fontSize: 14,
                                 fontWeight: FontWeight.w600)),
                         const SizedBox(height: 8),
+                        // Task 42#2: height tightened 140 → 116. Cast item
+                        // content max = avatar(68) + gap(6) + name 2-line(~28)
+                        // + char gap(2) + char 1-line(~12) = 116. The old 140
+                        // left ~24px of empty space below each cast row.
                         SizedBox(
-                          height: 140,
+                          height: 116,
                           child: ListView.builder(
                             scrollDirection: Axis.horizontal,
                             clipBehavior: Clip.none,
