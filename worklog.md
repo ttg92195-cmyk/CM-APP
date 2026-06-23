@@ -2485,3 +2485,33 @@ Stage Summary:
   4. Edge case test: open a genre with fewer than 20 total movies. Should show all of them, no spinner, no infinite scroll attempt.
   5. Edge case test: open a genre on a large tablet (landscape). The post-frame auto-load safety net should kick in if the first 20 don't fill the screen — you'll see a brief spinner then more items load automatically without user scrolling.
 - v2.0.0 wrap-up: This is the LAST of the 5 requirements. After Bro confirms the build is green and tests pass, v2.0.0 is ready for release. Any future issues go to v2.1.0+.
+
+---
+Task ID: 39 (v2.0.0 version bump)
+Agent: Main Agent
+Task: APP version still showing 1.9.0 everywhere — bump to 2.0.0
+
+Work Log:
+- Pulled origin/main (3e8ece2). Local main had 12 garbage UUID-named commits
+  that had DELETED lib/main.dart, scripts/, worklog content — reset --hard
+  to origin/main to recover canonical state.
+- Grepped repo for 1.9.0 references. Found 8 version strings + 2 code
+  comments (left intact) + 2 "1.9 GB" file-size hints (left intact).
+- Updated 5 files:
+  * pubspec.yaml: 1.9.0+15 → 2.0.0+16 (also bumps build number)
+  * lib/main.dart:271: currentVersion '1.9.0' → '2.0.0' (force-update check)
+  * lib/app/ui/screens/help_support_page.dart: 3 strings (header/footer/help text)
+  * lib/app/ui/screens/about_kmm_page.dart: 2 strings + Build 2026.03 → 2026.06
+  * lib/app/ui/screens/settings_page.dart:862: About row subtitle
+- Runtime version (PackageInfo.fromPlatform) and Android versionName both
+  cascade from pubspec.yaml automatically — no manual gradle/plist changes
+  needed.
+- Committed as 56a3ca5, pushed to origin/main.
+
+Stage Summary:
+- Version now 2.0.0+16 across pubspec, force-update check, About/Help/
+  Settings screens, and Build label updated to 2026.06.
+- No syntax-level changes (string-only edits), so no Dart syntax scanner
+  was needed.
+- User should rebuild and verify the version label in Settings, About,
+  Help & Support, and Home AppBar now shows 2.0.0.
