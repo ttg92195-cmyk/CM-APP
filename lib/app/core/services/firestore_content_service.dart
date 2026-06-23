@@ -1513,30 +1513,44 @@ class FirestoreContentService {
   /// Get movies/series featuring a specific actor by name.
   /// Searches Firestore 'casts' array for objects with matching 'name' field.
   /// This only returns items already in the library (no TMDB API call).
+  ///
+  /// Task 42#1 fix: previously only matched casts stored as
+  /// `Map<String, dynamic>` (TMDB Generator format). But Firestore's Flutter
+  /// plugin returns nested array elements as `Map<dynamic, dynamic>` (NOT
+  /// `Map<String, dynamic>`) on most platforms — so the `is` check failed
+  /// silently and 0 results were returned. Older posts with casts saved as
+  /// `List<String>` (Batch Import legacy format) were also missed.
+  ///
+  /// Now uses [_extractCastName] which handles all 3 storage formats — same
+  /// defensive logic as `MovieDetail._parseCastMembers`. Also raised limit
+  /// from 100 → 500 so older posts in larger libraries are reachable.
   Future<List<Movie>> getMoviesByActor(String actorName) async {
+    final needle = actorName.trim().toLowerCase();
+    if (needle.isEmpty) return [];
+
     try {
       // Firestore doesn't support querying inside array of objects directly,
       // so we fetch recent posts and filter client-side by cast name.
       final snapshot = await _moviesRef
           .orderBy('createdAt', descending: true)
-          .limit(100)
+          .limit(500)
           .get();
 
       final movies = snapshot.docs
           .map((doc) {
             final data = doc.data() as Map<String, dynamic>;
-            // Check if this movie's casts contain the actor
-            final casts = data['casts'] as List?;
-            if (casts != null) {
+            final casts = data['casts'];
+            if (casts is List) {
               final hasActor = casts.any((cast) {
-                if (cast is Map<String, dynamic>) {
-                  return (cast['name'] as String?)?.toLowerCase() ==
-                      actorName.toLowerCase();
-                }
-                return false;
+                final name = _extractCastName(cast);
+                return name != null && name.toLowerCase() == needle;
               });
               if (hasActor) {
-                return Movie.fromMap(data, docId: doc.id);
+                try {
+                  return Movie.fromMap(data, docId: doc.id);
+                } catch (_) {
+                  return null;
+                }
               }
             }
             return null;
@@ -1547,23 +1561,24 @@ class FirestoreContentService {
       return movies;
     } catch (e) {
       debugPrint('getMoviesByActor failed: $e');
-      // Fallback: try without orderBy
+      // Fallback: try without orderBy (covers missing composite index)
       try {
-        final snapshot = await _moviesRef.limit(100).get();
+        final snapshot = await _moviesRef.limit(500).get();
         final movies = snapshot.docs
             .map((doc) {
               final data = doc.data() as Map<String, dynamic>;
-              final casts = data['casts'] as List?;
-              if (casts != null) {
+              final casts = data['casts'];
+              if (casts is List) {
                 final hasActor = casts.any((cast) {
-                  if (cast is Map<String, dynamic>) {
-                    return (cast['name'] as String?)?.toLowerCase() ==
-                        actorName.toLowerCase();
-                  }
-                  return false;
+                  final name = _extractCastName(cast);
+                  return name != null && name.toLowerCase() == needle;
                 });
                 if (hasActor) {
-                  return Movie.fromMap(data, docId: doc.id);
+                  try {
+                    return Movie.fromMap(data, docId: doc.id);
+                  } catch (_) {
+                    return null;
+                  }
                 }
               }
               return null;
@@ -1578,6 +1593,32 @@ class FirestoreContentService {
         return [];
       }
     }
+  }
+
+  /// Extract a cast member's display name from any of the 3 storage formats
+  /// used in Firestore 'casts' arrays:
+  ///   1. `Map<String, dynamic>` — TMDB Generator format (proper)
+  ///   2. `Map<dynamic, dynamic>` — Firestore's runtime return type for
+  ///      nested array objects (the type that broke the old `is` check)
+  ///   3. `String` — legacy Batch Import format
+  /// Returns null when no usable name can be extracted.
+  ///
+  /// Mirrors the defensive logic in `MovieDetail._parseCastMembers` so that
+  /// actor-search results match what the detail page actually renders.
+  static String? _extractCastName(dynamic cast) {
+    if (cast == null) return null;
+    if (cast is Map) {
+      final name = cast['name']?.toString().trim();
+      if (name != null && name.isNotEmpty) return name;
+      return null;
+    }
+    if (cast is String) {
+      final name = cast.trim();
+      return name.isEmpty ? null : name;
+    }
+    // int / bool / other — best-effort toString, trimmed.
+    final s = cast.toString().trim();
+    return s.isEmpty ? null : s;
   }
 
   // ==================== ADMIN VERIFICATION (Defense-in-Depth) ====================
