@@ -2719,3 +2719,85 @@ Stage Summary:
 
 Tasks 42#1 (Casts actor movies) and 42#2 (Casts extra padding + You
 May Also Like related) still pending.
+
+---
+Task ID: 42#1 (Casts actor movies not showing in cast detail page)
+Agent: Main Agent
+Task: In Post detail → Casts section → tap actor's photo → actor's movie/series posts NOT showing in that tab. User suspected TMDB Generator update wasn't done; investigate.
+
+Work Log:
+- Pulled origin/main (399c464 — Task 42#3 trailer fix already done by prior session).
+- Found ActorMoviesScreen at lib/app/ui/screens/actor_movies_screen.dart
+  (157 lines). It calls _contentService.getMoviesByActor(actorName).
+- Both movie_detail_screen.dart (line 934) and series_detail_screen.dart
+  (line 776) invoke ActorMoviesScreen(actorName: cast.name) where
+  cast.name comes from MovieDetail.casts — parsed from Firestore via
+  MovieDetail._parseCastMembers.
+- Read getMoviesByActor at firestore_content_service.dart:1516.
+  Found the bug:
+    final hasActor = casts.any((cast) {
+      if (cast is Map<String, dynamic>) {     // ← STRICT TYPE CHECK
+        return (cast['name'] as String?)?.toLowerCase() ==
+            actorName.toLowerCase();
+      }
+      return false;
+    });
+
+Root cause:
+- Firestore's Flutter plugin returns nested array elements as
+  Map<dynamic, dynamic> (specifically _InternalLinkedHashMap<dynamic,
+  dynamic>) on most platforms — NOT Map<String, dynamic>. So the
+  `is Map<String, dynamic>` check SILENTLY FAILS, the .any returns
+  false, hasActor is false, and the movie is filtered out. Net result:
+  empty list, even though the actor IS in the casts array.
+- This is the inverse of why the detail page DOES show casts: it uses
+  _parseCastMembers which handles THREE formats (Map<String,dynamic>,
+  loose Map, and String for legacy Batch Import). So casts appear in
+  the detail page but search-by-actor returns nothing — exactly the
+  user's symptom.
+- Secondary issue: .limit(100) is too small for libraries with 100+
+  posts; older posts featuring the actor would be missed.
+- User's TMDB Generator update wasn't the cause — TMDB Generator has
+  always saved casts as List<Map> with name field (verified via
+  git log -S extractTopCast). The bug is purely in the search path.
+
+Fix applied (firestore_content_service.dart):
+- New static helper _extractCastName(dynamic cast) that handles:
+    1. Map (loose) — reads ['name'], trims, returns null if empty
+    2. String    — trims, returns null if empty (legacy Batch Import)
+    3. other     — best-effort toString().trim()
+  Mirrors _parseCastMembers defensive logic so search results match
+  what the detail page actually renders.
+- getMoviesByActor rewritten to use _extractCastName in BOTH primary
+  and fallback paths. Old buggy `cast is Map<String, dynamic>` check
+  and `cast['name'] as String?` cast removed.
+- Raised .limit(100) → .limit(500) in both paths so older posts in
+  larger libraries are reachable.
+- Wrapped each Movie.fromMap() in try/catch so one corrupted doc
+  cannot nuke the entire result list (defense-in-depth — same
+  philosophy as Task 27's Movie model defensive parsing).
+- Empty/whitespace actorName now short-circuits to [].
+
+Verification:
+- Wrote scripts/task42_1_syntax_check.py — proper single-pass
+  tokenizer (handles '...', "...", r'...', r"...", '''...''',
+  \"\"\"...\"\"\"\" + line/block comments without one corrupting
+  the other — previous regex-based version ate // inside string
+  literals like URLs 'https://...').
+- 8 invariants checked: delimiter balance, _extractCastName present,
+  handles Map + String, getMoviesByActor uses _extractCastName, old
+  patterns removed, limit is 500, try/catch wraps Movie.fromMap,
+  both paths use .limit(500). All green.
+- Committed as 1e8cc96, pushed to origin/main.
+
+Stage Summary:
+- Tapping an actor's photo in Post detail → Casts section now
+  correctly shows all movies/series in the library featuring that
+  actor (within the most recent 500 posts).
+- Handles all 3 cast storage formats uniformly.
+- No data migration needed; fix is read-only.
+- Bro can rebuild and verify: open a post → scroll to Casts → tap
+  an actor's photo → ActorMoviesScreen should now show at least the
+  current post (and any other posts featuring the same actor).
+- Task 42#2 (extra spacing below Casts + You May Also Like showing
+  unrelated posts) still pending.
