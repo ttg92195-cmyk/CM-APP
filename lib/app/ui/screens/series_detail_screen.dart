@@ -318,6 +318,10 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
             actions: [
               // Task 38 Req 2: Trailer icon — opens the YouTube trailer URL
               // saved from TMDB. Only shown if the field is non-empty.
+              //
+              // Task 42#3: removed `canLaunchUrl` guard (unreliable on
+              // Android 11+ even with <queries> declared). Call launchUrl
+              // directly and surface failure via SnackBar.
               if (detail.trailerUrl != null &&
                   detail.trailerUrl!.isNotEmpty)
                 IconButton(
@@ -329,9 +333,26 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                   tooltip: 'Trailer',
                   onPressed: () async {
                     final uri = Uri.parse(detail.trailerUrl!);
-                    if (await canLaunchUrl(uri)) {
-                      await launchUrl(uri,
+                    try {
+                      final ok = await launchUrl(uri,
                           mode: LaunchMode.externalApplication);
+                      if (!ok && mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Could not open trailer'),
+                            duration: Duration(seconds: 2),
+                          ),
+                        );
+                      }
+                    } catch (e) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Could not open trailer: $e'),
+                            duration: const Duration(seconds: 3),
+                          ),
+                        );
+                      }
                     }
                   },
                 ),

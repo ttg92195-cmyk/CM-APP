@@ -1,5 +1,25 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Task 42#3 — <queries> block required by Android 11+ (API 30+)
+         for canLaunchUrl() / launchUrl() to resolve external app intents.
+         Without this, canLaunchUrl('https://www.youtube.com/...') returns
+         false silently, and the Trailer button on movie/series detail
+         pages appears dead (Bro's report). Declaring http/https scheme
+         visibility lets url_launcher query any browser / YouTube app
+         that registers for the URL. We also explicitly declare the
+         YouTube intent so url_launcher can prefer the native YouTube
+         app when installed. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="http" />
+        </intent>
+    </queries>
+
     <!-- Internet permission for API calls -->
     <uses-permission android:name="android.permission.INTERNET"/>
 

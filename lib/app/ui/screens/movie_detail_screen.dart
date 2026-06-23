@@ -366,6 +366,15 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
               // docs / non-TMDB movies won't have it). Uses url_launcher's
               // external-app mode so the user is taken to the YouTube app
               // (or browser fallback) instead of an in-app webview.
+              //
+              // Task 42#3: removed `canLaunchUrl` guard. On Android 11+
+              // canLaunchUrl returns false for any URL not declared in
+              // AndroidManifest <queries>, EVEN after we added the
+              // http/https scheme there — the check is unreliable in
+              // practice and was silently killing the trailer tap.
+              // We now call launchUrl directly and surface any failure
+              // via a SnackBar so the user knows the launch failed
+              // (rather than the button appearing dead).
               if (detail.trailerUrl != null &&
                   detail.trailerUrl!.isNotEmpty)
                 IconButton(
@@ -377,9 +386,26 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                   tooltip: 'Trailer',
                   onPressed: () async {
                     final uri = Uri.parse(detail.trailerUrl!);
-                    if (await canLaunchUrl(uri)) {
-                      await launchUrl(uri,
+                    try {
+                      final ok = await launchUrl(uri,
                           mode: LaunchMode.externalApplication);
+                      if (!ok && mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Could not open trailer'),
+                            duration: Duration(seconds: 2),
+                          ),
+                        );
+                      }
+                    } catch (e) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Could not open trailer: $e'),
+                            duration: const Duration(seconds: 3),
+                          ),
+                        );
+                      }
                     }
                   },
                 ),
