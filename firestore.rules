@@ -84,17 +84,32 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
-    // USERS: Public read for username→email lookup during login (login happens
-    // before auth, so the where('username', isEqualTo: ...) query requires a
-    // public list permission). Security: passwords are NEVER stored here (only
-    // in Firebase Auth). Sensitive fields (isAdmin, role, isVip, vipExpiry,
-    // vipGrantedAt, isBanned, forceLogout, forceLogoutAt) are admin-controlled
-    // — regular users cannot modify them via the update rule below, and cannot
+    // USERS: Login flow needs username→email lookup BEFORE Firebase Auth
+    // sign-in completes (see app_config._usernameToEmail line ~204).
+    // That lookup uses `where('username', isEqualTo: ...).get()` which is
+    // a `list` operation in Firestore rules — so `list` must be public.
+    //
+    // Security: passwords are NEVER stored here (only in Firebase Auth).
+    // Sensitive fields (isAdmin, role, isVip, vipExpiry, vipGrantedAt,
+    // isBanned, forceLogout, forceLogoutAt) are admin-controlled — regular
+    // users cannot modify them via the update rule below, and cannot
     // set them to elevated values via the create rule.
+    //
+    // Task 43.3 (2026-06-28): tightened from `allow read: if true` to
+    // `allow list: if true` + `allow get: if request.auth != null`.
+    // Previously `allow read: if true` exposed BOTH list AND get publicly,
+    // meaning an attacker could fetch any user doc by random/sequential
+    // UID without going through the username query. Now only the
+    // username→email lookup (list) is public; reading a single doc by
+    // ID requires authentication. This preserves the login flow while
+    // removing the unauthenticated get-by-UID attack surface.
     match /users/{userId} {
-      // Public read so username-based login can resolve username → email before auth.
-      // This is required because Firebase Auth needs email, but user types username.
-      allow read: if true;
+      // Public list so username-based login can resolve username → email
+      // before Firebase Auth sign-in completes.
+      allow list: if true;
+      // Authenticated get — after login, the app reads the user's own
+      // profile by UID (and admin reads other users' docs by UID).
+      allow get: if request.auth != null;
       // User can create their own profile on signup, but cannot set admin-only
       // fields to elevated values (prevents signup-time privilege escalation).
       allow create: if isOwner(userId) && safeSignupFields();
