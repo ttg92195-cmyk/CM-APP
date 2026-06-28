@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:cm_movies/app/core/models/notification_model.dart';
+import 'package:cm_movies/app/core/services/admin_audit_service.dart';
 
 /// Admin Notification Page — shows notification history and a launcher to the
 /// OneSignal Dashboard where push notifications are now sent.
@@ -375,6 +377,12 @@ class _AdminNotificationPageState extends State<AdminNotificationPage> {
             .collection('notifications')
             .doc(notificationId)
             .delete();
+        // Phase 2.4 — audit-log the notification delete.
+        unawaited(AdminAuditService.instance.record(
+          action: AdminAuditAction.notificationDelete,
+          collection: AdminAuditCollection.notifications,
+          docId: notificationId,
+        ));
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Notification deleted')),

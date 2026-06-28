@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/ui/components/no_toolbar_on_single_tap_text_field.dart';
+import 'package:cm_movies/app/core/services/admin_audit_service.dart';
 import 'package:provider/provider.dart';
 
 class AdminUsersPage extends StatefulWidget {
@@ -90,6 +92,15 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       await _firestore.collection('users').doc(uid).update({
         'isBanned': !currentlyBanned,
       });
+      // Phase 2.4 — audit-log the ban/unban action.
+      unawaited(AdminAuditService.instance.record(
+        action: currentlyBanned
+            ? AdminAuditAction.userUnban
+            : AdminAuditAction.userBan,
+        collection: AdminAuditCollection.users,
+        docId: uid,
+        details: {'newIsBanned': !currentlyBanned},
+      ));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -116,6 +127,12 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         'forceLogout': true,
         'forceLogoutAt': FieldValue.serverTimestamp(),
       });
+      // Phase 2.4 — audit-log the force-logout action.
+      unawaited(AdminAuditService.instance.record(
+        action: AdminAuditAction.userForceLogout,
+        collection: AdminAuditCollection.users,
+        docId: uid,
+      ));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -142,6 +159,15 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         'isAdmin': newRole == 'admin',
         'role': newRole,
       });
+      // Phase 2.4 — audit-log the role change. This is a sensitive
+      // action (privilege escalation / de-escalation), so it's important
+      // to have a trace.
+      unawaited(AdminAuditService.instance.record(
+        action: AdminAuditAction.userRoleChange,
+        collection: AdminAuditCollection.users,
+        docId: uid,
+        details: {'oldRole': currentRole, 'newRole': newRole},
+      ));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -277,6 +303,13 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                           'isVip': false,
                           'vipExpiry': '',
                         });
+                        // Phase 2.4 — audit-log the VIP revocation.
+                        unawaited(AdminAuditService.instance.record(
+                          action: AdminAuditAction.userVipRevoke,
+                          collection: AdminAuditCollection.users,
+                          docId: uid,
+                          details: {'username': username},
+                        ));
                         if (ctx.mounted) {
                           Navigator.pop(ctx);
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -331,6 +364,17 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                               'vipGrantedAt': FieldValue.serverTimestamp(),
                               'vipDays': selectedDays,
                             });
+                            // Phase 2.4 — audit-log the VIP grant.
+                            unawaited(AdminAuditService.instance.record(
+                              action: AdminAuditAction.userVipGrant,
+                              collection: AdminAuditCollection.users,
+                              docId: uid,
+                              details: {
+                                'username': username,
+                                'vipDays': selectedDays,
+                                'expiry': expiryString,
+                              },
+                            ));
 
                             if (ctx.mounted) {
                               Navigator.pop(ctx);

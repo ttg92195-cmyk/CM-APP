@@ -186,11 +186,16 @@ def main() -> int:
             has_isadmin = "isAdmin()" in expr_clean
             has_auth = "request.auth != null" in expr_clean
             has_owner = "isOwner(" in expr_clean
+            # `if false` is the explicit DENY pattern — used in Phase 2.4
+            # for the immutable admin_audit collection (update, delete
+            # denied to everyone, including admins). This is the STRONGEST
+            # possible security gate, not a missing one.
+            has_deny = expr_clean == "false"
             has_true = expr_clean == "true"
             # The ONLY place `true` is allowed is users/{userId} list
             # (login flow). Check by context — if expr is just `true`,
             # it must be in the users block and for list only.
-            if has_true and not (has_isadmin or has_auth or has_owner):
+            if has_true and not (has_isadmin or has_auth or has_owner or has_deny):
                 if "list" in perms_clean and "users" in raw:
                     # Could be the login flow — let's verify by checking
                     # the comment near it. For simplicity, accept it.
@@ -198,7 +203,7 @@ def main() -> int:
                 else:
                     print(f"FAIL: allow {perms_clean}: if {expr_clean} — only `true` is unsafe")
                     errors += 1
-            elif not (has_isadmin or has_auth or has_owner):
+            elif not (has_isadmin or has_auth or has_owner or has_deny):
                 print(f"FAIL: allow {perms_clean}: if {expr_clean} — no security gate")
                 errors += 1
 

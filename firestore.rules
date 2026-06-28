@@ -169,6 +169,55 @@ service cloud.firestore {
             || request.resource.data.updatedMovieIds is list);
     }
 
+    // ============================================================
+    // Phase 2.4 — Admin audit log helper
+    // ============================================================
+    // The admin_audit collection is a unified, immutable audit trail of
+    // every admin write action (movie.create, user.ban, batch_import.
+    // complete, etc.). One document per action, written by
+    // AdminAuditService.record() immediately AFTER the main action
+    // succeeds.
+    //
+    // Required fields:
+    //   action:        string (one of AdminAuditAction.* constants)
+    //   collection:    string (one of AdminAuditCollection.* constants)
+    //   adminUid:      string (non-empty — acting admin's UID)
+    //   timestamp:     timestamp (server timestamp)
+    //   success:       bool
+    //   details:       map (freeform, may be empty)
+    // Optional fields:
+    //   adminEmail:    string
+    //   appVersion:    string
+    //   docId:         string (target document ID, if applicable)
+    //
+    // Security model:
+    //   - create: admin-only + schema-validated
+    //   - read:    admin-only (for future audit-log viewer)
+    //   - update:  DENIED — audit entries are immutable
+    //   - delete:  DENIED — audit entries are immutable
+    // The immutability is defense-in-depth: even if an attacker steals
+    // admin creds, they cannot rewrite history to cover their tracks.
+    // Bro can still delete entries via Firebase Console directly if
+    // needed for compliance cleanup, but no client (not even admin)
+    // can do it through the app.
+    function isValidAuditEntry() {
+      return request.resource.data.action is string
+        && request.resource.data.action.size() > 0
+        && request.resource.data.collection is string
+        && request.resource.data.collection.size() > 0
+        && request.resource.data.adminUid is string
+        && request.resource.data.adminUid.size() > 0
+        && request.resource.data.timestamp is timestamp
+        && request.resource.data.success is bool
+        && request.resource.data.details is map
+        && (!request.resource.data.keys().hasAny(['docId'])
+            || request.resource.data.docId is string)
+        && (!request.resource.data.keys().hasAny(['adminEmail'])
+            || request.resource.data.adminEmail is string)
+        && (!request.resource.data.keys().hasAny(['appVersion'])
+            || request.resource.data.appVersion is string);
+    }
+
     // CONFIG: Admin email mappings - restrict admin_emails to admin-only read
     // to prevent reconnaissance of admin account emails.
     // Other config docs remain readable by authenticated users.
@@ -305,6 +354,38 @@ service cloud.firestore {
       allow read: if isAdmin();
       allow create: if isAdmin() && isValidBatchImport();
       allow update, delete: if isAdmin();
+    }
+
+    // ADMIN_AUDIT: unified, immutable audit trail of every admin write
+    // action (movie.create, user.ban, batch_import.complete, etc.).
+    // Phase 2.4 (2026-06-29).
+    //
+    // One document per admin action, written by AdminAuditService.record()
+    // AFTER the main action succeeds. Failure to write an audit entry
+    // does NOT roll back the main action — the audit log is best-effort.
+    //
+    // Why this exists in addition to batch_imports:
+    //   - batch_imports records detailed per-batch stats (failed items,
+    //     sample titles, movie doc IDs). It's a specialized audit for
+    //     one specific action type.
+    //   - admin_audit is a generalized audit log covering ALL admin
+    //     actions (movie CRUD, genre/tag/collection CRUD, banner update,
+    //     user ban/unban/VIP/forceLogout/roleChange, notification delete,
+    //     batch_import start/complete/delete). One place to grep through
+    //     "what did admins do this week?".
+    //
+    // Immutability:
+    //   - update and delete are DENIED (`if false`) — even admins cannot
+    //     rewrite history through the app. Defense-in-depth against a
+    //     compromised admin account.
+    //   - Bro can still delete entries directly via Firebase Console
+    //     (Console bypasses rules) for compliance cleanup if needed.
+    //
+    // Schema validation: see isValidAuditEntry() helper above.
+    match /admin_audit/{auditId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && isValidAuditEntry();
+      allow update, delete: if false;
     }
 
     // USER SUB-COLLECTIONS (bookmarks, watchlist, history)

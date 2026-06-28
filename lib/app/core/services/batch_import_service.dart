@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
+import 'package:cm_movies/app/core/services/admin_audit_service.dart';
 
 /// Progress event for the export (backup) phase. Fires after each page fetch
 /// so the UI can show a live counter of how many movies have been exported.
@@ -1001,7 +1002,19 @@ class BatchImportService {
         // skipAdminCheck:true — admin was verified once at the start of
         // runImport() (see top of this method). Skipping the per-item admin
         // read saves N Firestore reads for an N-item import. See audit C2.
-        final docId = await _contentService.addMovie(item.data, skipAdminCheck: true);
+        //
+        // skipAuditLog:true — Phase 2.4. Each individual movie add would
+        // otherwise create an admin_audit entry, leading to hundreds of
+        // entries for a single batch import. The batch_imports collection
+        // already records the run with full stats (created/updated/failed
+        // counts, sample titles, etc.) — that's the proper audit record
+        // for batch imports. We add ONE summary admin_audit entry at the
+        // end of the run instead (see _recordAudit below).
+        final docId = await _contentService.addMovie(
+          item.data,
+          skipAdminCheck: true,
+          skipAuditLog: true,
+        );
         item.movieDocId = docId;
 
         if (wasUpdate) {
@@ -1239,6 +1252,25 @@ class BatchImportService {
     };
 
     await _firestore.collection(auditCollectionName).add(payload);
+
+    // Phase 2.4 — also write a one-line summary to admin_audit. The full
+    // audit lives in batch_imports/{importId}; this admin_audit entry just
+    // makes the action visible in the unified audit-log viewer alongside
+    // movie.create / user.ban / etc.
+    unawaited(AdminAuditService.instance.record(
+      action: AdminAuditAction.batchImportComplete,
+      collection: AdminAuditCollection.batchImports,
+      details: {
+        'total': result.total,
+        'created': result.created,
+        'updated': result.updated,
+        'failed': result.failed,
+        'skipped': result.skipped,
+        'cancelled': cancelled,
+        'durationMs': completedAt.difference(startedAt).inMilliseconds,
+        'sourceFileName': context.sourceFileName,
+      },
+    ));
   }
 
   /// Fetch the most recent [limit] audit entries, newest first.
@@ -1273,6 +1305,13 @@ class BatchImportService {
   /// audit-log entry itself.
   Future<void> deleteImport(String id) async {
     await _firestore.collection(auditCollectionName).doc(id).delete();
+    // Phase 2.4 — record this delete in the unified admin_audit log so
+    // there's a trace even after the original batch_imports doc is gone.
+    unawaited(AdminAuditService.instance.record(
+      action: AdminAuditAction.batchImportDelete,
+      collection: AdminAuditCollection.batchImports,
+      docId: id,
+    ));
   }
 
   /// Convenience helper: get the current admin's UID + email from

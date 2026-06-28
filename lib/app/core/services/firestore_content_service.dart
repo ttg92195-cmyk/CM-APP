@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/models/movie_detail.dart';
 import 'package:cm_movies/app/core/models/tag_and_genres.dart';
+import 'package:cm_movies/app/core/services/admin_audit_service.dart';
 
 class FirestoreContentService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -1698,6 +1700,7 @@ class FirestoreContentService {
   Future<String> addMovie(
     Map<String, dynamic> data, {
     bool skipAdminCheck = false,
+    bool skipAuditLog = false,
   }) async {
     if (!skipAdminCheck) await _requireAdmin();
     // Auto-generate slug if not provided
@@ -1765,6 +1768,22 @@ class FirestoreContentService {
         }
         await batch.commit();
 
+        // Phase 2.4 — audit-log this as an update-via-duplicate-tmdbId.
+        // The addMovie() entry point transparently creates OR updates
+        // depending on whether a duplicate is found, so the audit log
+        // captures which path was taken via the `via` details field.
+        if (!skipAuditLog) {
+          unawaited(AdminAuditService.instance.record(
+            action: AdminAuditAction.movieUpdate,
+            collection: AdminAuditCollection.movies,
+            docId: existingByTmdbId.id,
+            details: {
+              'title': data['title'],
+              'tmdbId': tmdbId,
+              'via': 'duplicate_tmdbId',
+            },
+          ));
+        }
         return existingByTmdbId.id;
       }
     }
@@ -1820,6 +1839,19 @@ class FirestoreContentService {
       }
       await batch.commit();
 
+      // Phase 2.4 — audit-log this as an update-via-duplicate-slug.
+      if (!skipAuditLog) {
+        unawaited(AdminAuditService.instance.record(
+          action: AdminAuditAction.movieUpdate,
+          collection: AdminAuditCollection.movies,
+          docId: existingDoc.id,
+          details: {
+            'title': data['title'],
+            'slug': slug,
+            'via': 'duplicate_slug',
+          },
+        ));
+      }
       return existingDoc.id;
     }
 
@@ -1877,6 +1909,20 @@ class FirestoreContentService {
     }
     await batch.commit();
 
+    // Phase 2.4 — audit-log this as a movie create.
+    if (!skipAuditLog) {
+      unawaited(AdminAuditService.instance.record(
+        action: AdminAuditAction.movieCreate,
+        collection: AdminAuditCollection.movies,
+        docId: newDocRef.id,
+        details: {
+          'title': data['title'],
+          'tmdbId': data['tmdbId'],
+          'type': data['type'],
+          'slug': data['slug'],
+        },
+      ));
+    }
     return newDocRef.id;
   }
 
@@ -2147,6 +2193,19 @@ class FirestoreContentService {
     }
 
     await _moviesRef.doc(id).update(data);
+
+    // Phase 2.4 — audit-log the movie update. Details include the fields
+    // being changed so an admin reviewing the audit log can see at a
+    // glance what was edited without having to fetch the doc.
+    unawaited(AdminAuditService.instance.record(
+      action: AdminAuditAction.movieUpdate,
+      collection: AdminAuditCollection.movies,
+      docId: id,
+      details: {
+        'title': data['title'],
+        'fieldsChanged': data.keys.toList(),
+      },
+    ));
   }
 
   /// Delete a movie (admin only)
@@ -2177,6 +2236,18 @@ class FirestoreContentService {
     }
 
     await _moviesRef.doc(id).delete();
+
+    // Phase 2.4 — audit-log the movie delete. Capture title from the
+    // pre-delete snapshot so the audit log shows what was deleted (the
+    // doc no longer exists post-delete, so we can't read it back).
+    unawaited(AdminAuditService.instance.record(
+      action: AdminAuditAction.movieDelete,
+      collection: AdminAuditCollection.movies,
+      docId: id,
+      details: {
+        'title': doc.exists ? (doc.data() as Map<String, dynamic>)['title'] : null,
+        },
+      ));
   }
 
   /// Add a genre (admin only)
@@ -2186,6 +2257,12 @@ class FirestoreContentService {
       'name': name,
       'moviesCount': 0,
     });
+    unawaited(AdminAuditService.instance.record(
+      action: AdminAuditAction.genreCreate,
+      collection: AdminAuditCollection.genres,
+      docId: docRef.id,
+      details: {'name': name},
+    ));
     return docRef.id;
   }
 
@@ -2193,12 +2270,23 @@ class FirestoreContentService {
   Future<void> updateGenre(String id, String name) async {
     await _requireAdmin();
     await _genresRef.doc(id).update({'name': name});
+    unawaited(AdminAuditService.instance.record(
+      action: AdminAuditAction.genreUpdate,
+      collection: AdminAuditCollection.genres,
+      docId: id,
+      details: {'newName': name},
+    ));
   }
 
   /// Delete a genre (admin only)
   Future<void> deleteGenre(String id) async {
     await _requireAdmin();
     await _genresRef.doc(id).delete();
+    unawaited(AdminAuditService.instance.record(
+      action: AdminAuditAction.genreDelete,
+      collection: AdminAuditCollection.genres,
+      docId: id,
+    ));
   }
 
   /// Add a tag (admin only)
@@ -2208,6 +2296,12 @@ class FirestoreContentService {
       'name': name,
       'moviesCount': 0,
     });
+    unawaited(AdminAuditService.instance.record(
+      action: AdminAuditAction.tagCreate,
+      collection: AdminAuditCollection.tags,
+      docId: docRef.id,
+      details: {'name': name},
+    ));
     return docRef.id;
   }
 
@@ -2215,12 +2309,23 @@ class FirestoreContentService {
   Future<void> updateTag(String id, String name) async {
     await _requireAdmin();
     await _tagsRef.doc(id).update({'name': name});
+    unawaited(AdminAuditService.instance.record(
+      action: AdminAuditAction.tagUpdate,
+      collection: AdminAuditCollection.tags,
+      docId: id,
+      details: {'newName': name},
+    ));
   }
 
   /// Delete a tag (admin only)
   Future<void> deleteTag(String id) async {
     await _requireAdmin();
     await _tagsRef.doc(id).delete();
+    unawaited(AdminAuditService.instance.record(
+      action: AdminAuditAction.tagDelete,
+      collection: AdminAuditCollection.tags,
+      docId: id,
+    ));
   }
 
   /// Add a collection (admin only)
@@ -2230,6 +2335,12 @@ class FirestoreContentService {
       'name': name,
       'moviesCount': 0,
     });
+    unawaited(AdminAuditService.instance.record(
+      action: AdminAuditAction.collectionCreate,
+      collection: AdminAuditCollection.collections,
+      docId: docRef.id,
+      details: {'name': name},
+    ));
     return docRef.id;
   }
 
@@ -2237,12 +2348,23 @@ class FirestoreContentService {
   Future<void> updateCollection(String id, String name) async {
     await _requireAdmin();
     await _collectionsRef.doc(id).update({'name': name});
+    unawaited(AdminAuditService.instance.record(
+      action: AdminAuditAction.collectionUpdate,
+      collection: AdminAuditCollection.collections,
+      docId: id,
+      details: {'newName': name},
+    ));
   }
 
   /// Delete a collection (admin only)
   Future<void> deleteCollection(String id) async {
     await _requireAdmin();
     await _collectionsRef.doc(id).delete();
+    unawaited(AdminAuditService.instance.record(
+      action: AdminAuditAction.collectionDelete,
+      collection: AdminAuditCollection.collections,
+      docId: id,
+    ));
   }
 
   // ==================== BACKFILL & BANNER CONFIG ====================
@@ -2291,6 +2413,15 @@ class FirestoreContentService {
         'imageUrls': imageUrls,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+      // Phase 2.4 — audit-log the banner update. Record the count (not
+      // the URLs themselves — URLs can be long and the count is enough
+      // for accountability).
+      unawaited(AdminAuditService.instance.record(
+        action: AdminAuditAction.bannerUpdate,
+        collection: AdminAuditCollection.appSettings,
+        docId: 'banner_config',
+        details: {'imageCount': imageUrls.length},
+      ));
     } catch (e) {
       debugPrint('saveBannerConfig failed: $e');
       rethrow;
