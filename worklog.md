@@ -3454,3 +3454,99 @@ PHASE 2 STATUS: 2 of 9 done (2.1 reverted, 2.2 + 2.5 complete).
 NEXT: 2.4 (admin audit log) or 2.6 (admin field validation tightening).
 Both free, no Blaze needed. Suggest 2.6 first (security tightening)
 then 2.4 (audit log for accountability).
+
+---
+Task ID: Phase2.6
+Agent: main
+Task: Schema-bound admin field validation tightening in firestore.rules.
+
+Work Log:
+- Pulled main (6c2c790). Read current firestore.rules (Phase 2.2 state).
+- Audit step 1: enumerated all admin-write entry points in code.
+  Found 6 source files that write to admin collections:
+    - firestore_content_service.dart (movies, genres, tags, collections,
+      app_settings/banner_config)
+    - tmdb_generator_page.dart (movies sync — partial updates)
+    - edit_movie_page.dart, add_series_page.dart, add_movie_page.dart
+      (movies create/update via addMovie/updateMovie)
+    - batch_import_service.dart (batch_imports audit, movies via
+      _contentService.addMovie)
+    - admin_notification_page.dart (notifications delete only — Phase
+      1.1 stopped writes)
+- Audit step 2: built schema map per collection:
+    movies: {title:str, type:str∈{movie,series}, isAdult:int∈{0,1},
+             tmdbId:int, isTrending:bool, categories/tags/...:list}
+    genres/tags/collections: {name:str, moviesCount:int}
+    notifications: {title:str, body:str, sentBy:str, sentAt:ts,
+                    movieId/movieSlug/imageUrl:optional str}
+    app_settings/banner_config: {imageUrls:list, updatedAt:ts}
+    batch_imports: {adminUid:str, startedAt:ts, completedAt:ts,
+                    durationMs/total/created/updated/failed/skipped:int,
+                    cancelled:bool, failedItems/sampleCreated/...:list}
+    config: read-only in code (admin_emails edited via Console)
+- Audit step 3: discovered partial-update code paths:
+    - tmdb_generator_page.dart line 729-740: TMDB sync sends partial
+      movie updates WITHOUT 'type' field (type is immutable after
+      creation). Initial isValidMovie() required type — would have
+      broken all TMDB syncs.
+    - updateGenre/updateTag/updateCollection: send only {name: ...}
+      without moviesCount. Initial isValidGenreOrTagOrCollection()
+      required both — would have broken all genre/tag/collection
+      renames.
+- Audit step 4: rewrote validators using keys().hasAny() pattern:
+    - For each optional field, only validate if present in request.
+    - This allows partial updates to skip fields they don't touch.
+    - Required-on-create fields (e.g., movie title+type for new docs)
+      are still validated when present, but the validator no longer
+      FAILS if they're absent (because partial updates legitimately
+      omit them).
+- Phase 2.6 changes (2 files):
+    1. firestore.rules — added 5 helper functions + wired into allow
+       rules:
+         isValidMovie() → movies create/update
+         isValidGenreOrTagOrCollection() → genres/tags/collections
+                                          create/update
+         isValidNotification() → notifications create/update
+         isValidBannerConfig() → app_settings write (banner_config
+                                doc only; other app_settings docs
+                                remain admin-only without schema)
+         isValidBatchImport() → batch_imports create only
+                              (update/delete remain admin-only —
+                              audit docs are immutable)
+    2. scripts/phase2_6_verify.py — 26 checks:
+       - brace balance
+       - App Check NOT present (Phase 2.1 still reverted)
+       - user_devices removed (Phase 2.2)
+       - notifications read isAdmin-only (Phase 2.2)
+       - 5 helper functions defined
+       - 11 schema wiring checks (movies create+update, genres
+         create+update, tags create+update, collections create+update,
+         notifications create+update, app_settings write,
+         batch_imports create)
+       - 5 schema content checks (validate actual rules logic:
+         type enum, partial-update tolerance, required types)
+       All 26 checks PASS.
+- Re-ran phase2_2_audit_check.py — still PASS, no regression.
+- Committed as 1d6adb2, pushed to origin/main.
+
+Stage Summary:
+- 5 schema validators added, 11 allow rules tightened.
+- All existing app write paths already conform — no behavior change
+  expected for legitimate admin writes.
+- An attacker with stolen admin creds can no longer pollute collections
+  with malformed docs (e.g., type='evil', isAdult='yes',
+  downloadLinks='not-a-list'). Defense-in-depth.
+- Bro does NOT need to deploy anything else for Phase 2.6 to take
+  effect — the schema checks ride along with the Phase 2.2 rules
+  that Bro will paste into Firebase Console → Firestore → Rules.
+  Just one paste, both Phase 2.2 + Phase 2.6 active.
+- IF Bro already pasted Phase 2.2 rules: re-paste with the new
+  Phase 2.6 version to get the schema checks too.
+- IF Bro hasn't pasted anything yet: paste the current main
+  firestore.rules once, gets both Phase 2.2 + Phase 2.6 in one go.
+
+PHASE 2 STATUS: 3 of 9 done (2.1 reverted, 2.2 + 2.5 + 2.6 complete).
+NEXT: 2.4 (admin audit log — record admin actions for accountability)
+or 2.8 (client-side rate limiting). Both free, no Blaze needed.
+Suggest 2.4 first (accountability matters more than throttling for
+this app's threat model — admin actions are the high-value target).
