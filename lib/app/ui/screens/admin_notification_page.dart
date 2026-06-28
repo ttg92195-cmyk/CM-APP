@@ -1,18 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:cm_movies/app/core/models/notification_model.dart';
-import 'package:cm_movies/app/core/services/fcm_notification_service.dart';
 
-/// Admin Notification Page — allows admins to compose and send push notifications
-/// to all users, and view notification history.
+/// Admin Notification Page — shows notification history and a launcher to the
+/// OneSignal Dashboard where push notifications are now sent.
+///
+/// Task 43.1 (2026-06-28): the in-app "Send Notification" composer was
+/// REMOVED because it relied on the OneSignal REST API key being bundled
+/// in the APK via .env. Decompiling the APK would leak the key, allowing
+/// attackers to spam notifications, read subscriber data, or delete past
+/// notifications. Notifications are now sent from the OneSignal Dashboard
+/// (https://dashboard.onesignal.com) which is free, requires no backend,
+/// and keeps the REST API key server-side only.
 ///
 /// Flow:
-/// 1. Admin fills in Title, Body, and optional Movie ID/Slug
-/// 2. Taps "Send Notification"
-/// 3. Notification is saved to Firestore `notifications` collection
-/// 4. A Cloud Function triggers on the new document and sends FCM push to `movies_all` topic
-/// 5. All subscribed devices receive the push notification
+/// 1. Admin opens this page → taps "Open OneSignal Dashboard"
+/// 2. Browser opens to OneSignal Dashboard (admin must log in there)
+/// 3. Admin composes & sends the notification from the dashboard
+/// 4. OneSignal delivers the push to all subscribed devices
+/// 5. Past notifications sent via the old in-app composer are still
+///    viewable in the "History" tab here (the Firestore `notifications`
+///    collection is read-only going forward unless Bro manually logs)
 class AdminNotificationPage extends StatefulWidget {
   const AdminNotificationPage({super.key});
 
@@ -21,169 +31,315 @@ class AdminNotificationPage extends StatefulWidget {
 }
 
 class _AdminNotificationPageState extends State<AdminNotificationPage> {
-  final _formKey = GlobalKey<FormState>();
-  final _titleController = TextEditingController();
-  final _bodyController = TextEditingController();
-  final _movieIdController = TextEditingController();
-  final _movieSlugController = TextEditingController();
-
-  bool _isSending = false;
-  bool _includeMovieLink = false;
-
   @override
-  void dispose() {
-    _titleController.dispose();
-    _bodyController.dispose();
-    _movieIdController.dispose();
-    _movieSlugController.dispose();
-    super.dispose();
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Notifications'),
+          bottom: const TabBar(
+            tabs: [
+              Tab(icon: Icon(Icons.dashboard_outlined), text: 'Send'),
+              Tab(icon: Icon(Icons.history), text: 'History'),
+            ],
+          ),
+        ),
+        body: TabBarView(
+          children: [
+            _buildSendTab(isDark),
+            _buildHistoryTab(isDark),
+          ],
+        ),
+      ),
+    );
   }
 
-  /// Send notification: saves to Firestore and triggers Cloud Function push
-  Future<void> _sendNotification() async {
-    if (!_formKey.currentState!.validate()) return;
+  /// "Send" tab — explains the new flow and opens OneSignal Dashboard.
+  Widget _buildSendTab(bool isDark) {
+    final appId = dotenv.env['ONE_SIGNAL_APP_ID'] ?? '';
 
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Send Notification'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Send this notification to all users?'),
-            const SizedBox(height: 12),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFE50914).withOpacity(0.08),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: const Color(0xFFE50914).withOpacity(0.2),
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE50914).withOpacity(0.15),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.notifications_active,
+                    color: Color(0xFFE50914),
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Push Notifications',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Sent via OneSignal Dashboard (more secure)',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: isDark ? Colors.white54 : Colors.black54,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // Why this changed (brief explanation)
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.green.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.green.withOpacity(0.25)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.lock_outline, color: Colors.green.shade700, size: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'The in-app composer was removed because it bundled the OneSignal REST API key inside the APK. '
+                    'Sending notifications from the OneSignal Dashboard keeps the key server-side and prevents leakage.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isDark ? Colors.white70 : Colors.black87,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Steps
+          Text(
+            'How to Send a Notification',
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 10),
+          _buildStepCard(
+            isDark,
+            step: '1',
+            title: 'Open OneSignal Dashboard',
+            body: 'Tap the button below. You will be asked to log in to your OneSignal account.',
+          ),
+          const SizedBox(height: 8),
+          _buildStepCard(
+            isDark,
+            step: '2',
+            title: 'Select Your App',
+            body: 'Choose the CM Movies app from the apps list (App ID shown below for reference).',
+          ),
+          const SizedBox(height: 8),
+          _buildStepCard(
+            isDark,
+            step: '3',
+            title: 'Compose & Send',
+            body: 'Go to "Audience → Messages → New Push". Fill in title, body, and tap "Review & Send".',
+          ),
+          const SizedBox(height: 8),
+          _buildStepCard(
+            isDark,
+            step: '4',
+            title: 'Optional — Deep Link to a Movie',
+            body: 'Under "Additional Data" (or "Custom Data"), add:\n'
+                  '  movieSlug = the-movie-slug-here\n'
+                  '  movieId = optional-doc-id\n'
+                  'Tapping the notification on a device will open that movie\'s detail page.',
+          ),
+          const SizedBox(height: 20),
+
+          // App ID reference
+          if (appId.isNotEmpty) ...[
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xFFE50914).withOpacity(0.1),
+                color: isDark ? const Color(0xFF1E1E1E) : Colors.grey.shade100,
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFFE50914).withOpacity(0.3)),
+                border: Border.all(
+                  color: isDark ? Colors.white12 : Colors.grey.shade300,
+                ),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Row(
                 children: [
-                  Text(
-                    _titleController.text.trim(),
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _bodyController.text.trim(),
-                    style: const TextStyle(fontSize: 13),
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
+                  const Icon(Icons.info_outline, size: 18, color: Colors.blue),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'OneSignal App ID',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: isDark ? Colors.white54 : Colors.black54,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        SelectableText(
+                          appId,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontFamily: 'monospace',
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
             ),
+            const SizedBox(height: 20),
           ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton.icon(
-            onPressed: () => Navigator.pop(ctx, true),
-            icon: const Icon(Icons.send, size: 18),
-            label: const Text('Send'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFE50914),
-              foregroundColor: Colors.white,
+
+          // Open Dashboard button
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton.icon(
+              onPressed: _openDashboard,
+              icon: const Icon(Icons.open_in_new, size: 20),
+              label: const Text(
+                'Open OneSignal Dashboard',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFE50914),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
             ),
           ),
         ],
       ),
     );
+  }
 
-    if (confirmed != true) return;
+  Widget _buildStepCard(bool isDark, {
+    required String step,
+    required String title,
+    required String body,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isDark ? Colors.white12 : Colors.grey.shade300,
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 24,
+            height: 24,
+            decoration: const BoxDecoration(
+              color: Color(0xFFE50914),
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: Text(
+                step,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  body,
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.4,
+                    color: isDark ? Colors.white70 : Colors.black87,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-    setState(() => _isSending = true);
-
+  /// Open the OneSignal Dashboard in the device's default browser.
+  Future<void> _openDashboard() async {
+    final uri = Uri.parse('https://dashboard.onesignal.com/');
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) throw Exception('Not authenticated');
-
-      final notification = NotificationModel(
-        id: '', // Firestore will auto-generate
-        title: _titleController.text.trim(),
-        body: _bodyController.text.trim(),
-        movieId: _includeMovieLink && _movieIdController.text.trim().isNotEmpty
-            ? _movieIdController.text.trim()
-            : null,
-        movieSlug: _includeMovieLink && _movieSlugController.text.trim().isNotEmpty
-            ? _movieSlugController.text.trim()
-            : null,
-        sentBy: user.email ?? user.uid,
-        sentAt: DateTime.now(),
-        isSent: false, // Will be updated after OneSignal confirms
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
       );
-
-      // Save to Firestore for history tracking
-      final docRef = await FirebaseFirestore.instance
-          .collection('notifications')
-          .add(notification.toFirestore());
-
-      // Send push notification via OneSignal REST API (free, no server needed)
-      final result = await FcmNotificationService().sendNotificationToAll(
-        title: notification.title,
-        body: notification.body,
-        movieId: notification.movieId,
-        movieSlug: notification.movieSlug,
-      );
-
-      final sent = result['success'] == true;
-      final errorMsg = result['error'] as String?;
-      final recipients = result['recipients'] as int?;
-
-      // Update Firestore with send status
-      await FirebaseFirestore.instance
-          .collection('notifications')
-          .doc(docRef.id)
-          .update({'isSent': sent});
-
-      if (mounted) {
-        // Determine success message based on result
-        String message;
-        Color bgColor;
-
-        if (sent && recipients != null && recipients > 0) {
-          message = 'Notification sent to $recipients device(s)!';
-          bgColor = Colors.green;
-        } else if (sent && (recipients == null || recipients == 0)) {
-          // API accepted but no subscribers yet — this is normal for new apps
-          message = 'Notification queued! Subscribers will receive it once they open the app.';
-          bgColor = Colors.blue;
-        } else {
-          message = 'Push failed: ${errorMsg ?? "Unknown error"}';
-          bgColor = Colors.orange;
-        }
-
+      if (!launched && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(message),
-            backgroundColor: bgColor,
+            content: Text('Could not open browser. Visit $uri manually.'),
+            backgroundColor: Colors.orange,
             behavior: SnackBarBehavior.floating,
-            duration: Duration(seconds: sent ? 4 : 6),
           ),
         );
-        // Clear form
-        _titleController.clear();
-        _bodyController.clear();
-        _movieIdController.clear();
-        _movieSlugController.clear();
-        setState(() {
-          _includeMovieLink = false;
-          _isSending = false;
-        });
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _isSending = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to send: ${e.toString()}'),
+            content: Text('Error: $e'),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
           ),
@@ -192,7 +348,7 @@ class _AdminNotificationPageState extends State<AdminNotificationPage> {
     }
   }
 
-  /// Delete a notification from Firestore
+  /// Delete a notification from Firestore history.
   Future<void> _deleteNotification(String notificationId) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -237,304 +393,6 @@ class _AdminNotificationPageState extends State<AdminNotificationPage> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Notifications'),
-          bottom: const TabBar(
-            tabs: [
-              Tab(icon: Icon(Icons.send), text: 'Compose'),
-              Tab(icon: Icon(Icons.history), text: 'History'),
-            ],
-          ),
-        ),
-        body: TabBarView(
-          children: [
-            // ===== COMPOSE TAB =====
-            _buildComposeTab(isDark),
-            // ===== HISTORY TAB =====
-            _buildHistoryTab(isDark),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildComposeTab(bool isDark) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Form(
-        key: _formKey,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFFE50914).withOpacity(0.08),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: const Color(0xFFE50914).withOpacity(0.2),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE50914).withOpacity(0.15),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.notifications_active,
-                      color: Color(0xFFE50914),
-                      size: 24,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Push Notification',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          'Send to all subscribed users',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: isDark ? Colors.white54 : Colors.black54,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-
-            // Title field
-            Text(
-              'Notification Title',
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 6),
-            TextFormField(
-              controller: _titleController,
-              validator: (v) => v == null || v.trim().isEmpty ? 'Title is required' : null,
-              decoration: InputDecoration(
-                hintText: 'e.g. New Movie Added!',
-                prefixIcon: const Icon(Icons.title, size: 20),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-              maxLength: 100,
-            ),
-            const SizedBox(height: 16),
-
-            // Body field
-            Text(
-              'Notification Body',
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 6),
-            TextFormField(
-              controller: _bodyController,
-              validator: (v) => v == null || v.trim().isEmpty ? 'Body is required' : null,
-              decoration: InputDecoration(
-                hintText: 'e.g. Check out the latest blockbuster movie...',
-                prefixIcon: const Icon(Icons.message, size: 20),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-              maxLines: 4,
-              minLines: 2,
-              maxLength: 500,
-            ),
-            const SizedBox(height: 16),
-
-            // Movie link toggle
-            SwitchListTile(
-              value: _includeMovieLink,
-              onChanged: (val) => setState(() => _includeMovieLink = val),
-              title: const Text(
-                'Link to Movie',
-                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-              ),
-              subtitle: Text(
-                'When tapped, opens a specific movie detail page',
-                style: TextStyle(fontSize: 12, color: isDark ? Colors.white54 : Colors.black54),
-              ),
-              activeColor: const Color(0xFFE50914),
-              contentPadding: EdgeInsets.zero,
-            ),
-
-            // Movie ID & Slug fields (shown when toggle is on)
-            if (_includeMovieLink) ...[
-              const SizedBox(height: 12),
-              Text(
-                'Movie Slug',
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 6),
-              TextFormField(
-                controller: _movieSlugController,
-                decoration: InputDecoration(
-                  hintText: 'e.g. the-dark-knight-2008',
-                  prefixIcon: const Icon(Icons.link, size: 20),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'The slug from the movie URL. Users will navigate to this movie when they tap the notification.',
-                style: TextStyle(fontSize: 11, color: isDark ? Colors.white38 : Colors.black38),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Movie ID (optional)',
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 6),
-              TextFormField(
-                controller: _movieIdController,
-                decoration: InputDecoration(
-                  hintText: 'e.g. abc123def456',
-                  prefixIcon: const Icon(Icons.tag, size: 20),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                ),
-              ),
-            ],
-
-            const SizedBox(height: 24),
-
-            // Preview card
-            if (_titleController.text.isNotEmpty || _bodyController.text.isNotEmpty) ...[
-              Text(
-                'Preview',
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 8),
-              _buildNotificationPreview(isDark),
-              const SizedBox(height: 24),
-            ],
-
-            // Send button
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton.icon(
-                onPressed: _isSending ? null : _sendNotification,
-                icon: _isSending
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Icon(Icons.send, size: 20),
-                label: Text(
-                  _isSending ? 'Sending...' : 'Send Notification',
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFE50914),
-                  foregroundColor: Colors.white,
-                  disabledBackgroundColor: const Color(0xFFE50914).withOpacity(0.5),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildNotificationPreview(bool isDark) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isDark ? Colors.white12 : Colors.grey.shade300,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          // App icon
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: const Color(0xFFE50914),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Icon(Icons.play_circle_fill, color: Colors.white, size: 24),
-          ),
-          const SizedBox(width: 12),
-          // Title + Body
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'KMM',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: isDark ? Colors.white54 : Colors.black54,
-                  ),
-                ),
-                Text(
-                  _titleController.text.isEmpty ? 'Notification Title' : _titleController.text,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Text(
-                  _bodyController.text.isEmpty ? 'Notification body text...' : _bodyController.text,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: isDark ? Colors.white70 : Colors.black87,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildHistoryTab(bool isDark) {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
@@ -574,7 +432,7 @@ class _AdminNotificationPageState extends State<AdminNotificationPage> {
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  'No notifications sent yet',
+                  'No notifications in history',
                   style: TextStyle(
                     fontSize: 16,
                     color: isDark ? Colors.white54 : Colors.black54,
@@ -582,9 +440,11 @@ class _AdminNotificationPageState extends State<AdminNotificationPage> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Compose and send your first notification',
+                  'Past notifications sent via the old in-app composer appear here.\n'
+                  'New notifications are sent via OneSignal Dashboard.',
+                  textAlign: TextAlign.center,
                   style: TextStyle(
-                    fontSize: 13,
+                    fontSize: 12,
                     color: isDark ? Colors.white38 : Colors.black38,
                   ),
                 ),

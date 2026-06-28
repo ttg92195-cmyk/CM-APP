@@ -8,7 +8,10 @@ via flutter_dotenv) contains all the keys the app needs at runtime:
   - FIREBASE_API_KEY, FIREBASE_APP_ID, FIREBASE_MESSAGING_SENDER_ID,
     FIREBASE_PROJECT_ID, FIREBASE_STORAGE_BUCKET  (Firebase auth + Firestore)
   - TMDB_API_KEY                                        (TMDB lookups)
-  - ONE_SIGNAL_APP_ID, ONE_SIGNAL_REST_API_KEY         (push notifications)
+  - ONE_SIGNAL_APP_ID                                   (push notification subscription;
+                                                         sending is done via OneSignal
+                                                         Dashboard, REST API key no longer
+                                                         in client)
 
 Returns exit code 0 if ALL keys are present AND non-empty, 1 otherwise.
 Designed to run in CI before `flutter build apk` so a missing-key build
@@ -33,7 +36,6 @@ REQUIRED_KEYS = [
     "FIREBASE_STORAGE_BUCKET",
     "TMDB_API_KEY",
     "ONE_SIGNAL_APP_ID",
-    "ONE_SIGNAL_REST_API_KEY",
 ]
 
 

@@ -101,7 +101,6 @@ jobs:
           FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
           ONE_SIGNAL_APP_ID: ${{ secrets.ONE_SIGNAL_APP_ID }}
-          ONE_SIGNAL_REST_API_KEY: ${{ secrets.ONE_SIGNAL_REST_API_KEY }}
         run: |
           # Start from committed .env if it's healthy; otherwise start
           # from an empty file and rely entirely on secrets.
@@ -125,7 +124,6 @@ jobs:
           [ -n "$FIREBASE_STORAGE_BUCKET" ]      && echo "FIREBASE_STORAGE_BUCKET=$FIREBASE_STORAGE_BUCKET" >> .env
           [ -n "$TMDB_API_KEY" ]                 && echo "TMDB_API_KEY=$TMDB_API_KEY" >> .env
           [ -n "$ONE_SIGNAL_APP_ID" ]            && echo "ONE_SIGNAL_APP_ID=$ONE_SIGNAL_APP_ID" >> .env
-          [ -n "$ONE_SIGNAL_REST_API_KEY" ]      && echo "ONE_SIGNAL_REST_API_KEY=$ONE_SIGNAL_REST_API_KEY" >> .env
 
           echo "✓ .env final state: $(wc -l < .env) lines"
 
