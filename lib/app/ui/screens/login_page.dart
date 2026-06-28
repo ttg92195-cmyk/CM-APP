@@ -217,10 +217,20 @@ class _LoginPageState extends State<LoginPage>
             _loginError = appConfig.translate('login_failed');
           });
         }
+        // Phase 3.2 — TEMPORARY diagnostic: show actual Firebase error
+        // code + message in the SnackBar so Bro can tell us what's
+        // really failing. This bypasses the L4 generic-message security
+        // property temporarily — revert once root cause is identified.
+        final diagCode = appConfig.lastLoginErrorCode;
+        final diagMsg = appConfig.lastLoginErrorMessage;
+        final diagText = (diagCode != null)
+            ? 'Login failed [code: $diagCode${diagMsg != null ? ' | $diagMsg' : ''}]'
+            : appConfig.translate('login_failed');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(appConfig.translate('login_failed')),
+            content: Text(diagText),
             backgroundColor: Colors.redAccent,
+            duration: const Duration(seconds: 8),
           ),
         );
       }
@@ -448,10 +458,19 @@ class _LoginPageState extends State<LoginPage>
           setState(() {
             _registerError = appConfig.translate('register_failed');
           });
+          // Phase 3.2 — TEMPORARY diagnostic: show actual Firebase error
+          // code + message in the SnackBar so Bro can tell us what's
+          // really failing. Revert once root cause is identified.
+          final diagCode = appConfig.lastRegisterErrorCode;
+          final diagMsg = appConfig.lastRegisterErrorMessage;
+          final diagText = (diagCode != null)
+              ? 'Register failed [code: $diagCode${diagMsg != null ? ' | $diagMsg' : ''}]'
+              : appConfig.translate('register_failed');
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(appConfig.translate('register_failed')),
+              content: Text(diagText),
               backgroundColor: Colors.redAccent,
+              duration: const Duration(seconds: 8),
             ),
           );
         }

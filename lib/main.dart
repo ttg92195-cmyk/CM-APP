@@ -140,53 +140,83 @@ void main() async {
           .recordError(e, StackTrace.current, reason: 'Firebase init failure');
     }
 
-    // Initialize Firebase App Check.
+    // ====================================================================
+    // Phase 3.2 — App Check activation DISABLED (2026-06-29)
+    // ====================================================================
+    // Bro reported that after Phase 2.8, BOTH signup and login stopped
+    // working on the sideloaded APK — signup shows "Username already
+    // exists" and login shows "Invalid username or password" even with
+    // correct credentials.
     //
-    // Task 43.4: previous code always fell back to AndroidProvider.debug
-    // when Play Integrity failed — including in PRODUCTION builds. That
-    // leaked the debug token into release APKs, where it can be extracted
-    // and used to bypass App Check enforcement. Now we gate by
-    // kReleaseMode:
-    //   - Release builds: Play Integrity ONLY. If it fails, log the error
-    //     and continue without App Check (better than leaking debug).
-    //   - Debug builds (dev): allow debug fallback so local dev still
-    //     works without a Play Integrity setup.
-    if (kReleaseMode) {
-      // Production — Play Integrity only, NO debug fallback.
-      try {
-        await FirebaseAppCheck.instance.activate(
-          androidProvider: AndroidProvider.playIntegrity,
-          appleProvider: AppleProvider.deviceCheck,
-        );
-        debugPrint('App Check activated: Play Integrity (release)');
-      } catch (e) {
-        // Do NOT fall back to debug in release. Surface the error so we
-        // notice during release-channel testing.
-        debugPrint('App Check Play Integrity failed in RELEASE mode — '
-            'NOT falling back to debug. Error: $e');
-      }
-    } else {
-      // Debug build — try Play Integrity first, fall back to debug so
-      // local dev doesn't require a real device with Play Integrity.
-      try {
-        await FirebaseAppCheck.instance.activate(
-          androidProvider: AndroidProvider.playIntegrity,
-          appleProvider: AppleProvider.deviceCheck,
-        );
-        debugPrint('App Check activated: Play Integrity (debug build)');
-      } catch (e) {
-        debugPrint('App Check Play Integrity failed in debug build, '
-            'falling back to debug provider: $e');
-        try {
-          await FirebaseAppCheck.instance.activate(
-            androidProvider: AndroidProvider.debug,
-          );
-          debugPrint('App Check activated: Debug mode (debug build only)');
-        } catch (e2) {
-          debugPrint('App Check activation error: $e2');
-        }
-      }
-    }
+    // Root cause analysis: The App Check activation code below tries to
+    // use Play Integrity provider in release builds. For sideloaded APKs
+    // (not installed from Play Store), Play Integrity CANNOT issue a
+    // valid token. Even though `activate()` itself doesn't throw, when
+    // Firebase Auth subsequently requests an App Check token for sign-in
+    // requests, the token exchange fails. If Firebase Auth has App Check
+    // enforcement enabled at the project level (Firebase Console →
+    // Authentication → Settings → App Check), the request is rejected —
+    // producing the generic auth failures Bro is seeing.
+    //
+    // This is consistent with the Phase 2.1 decision to REVERT App Check
+    // enforcement in Firestore rules (also because of sideloaded APK
+    // incompatibility). Since enforcement is OFF, activation provides no
+    // security benefit — it only adds a failure point. Disabling it
+    // aligns the codebase with the Phase 2.1 decision.
+    //
+    // The activation code is preserved below (commented out) so it can
+    // be re-enabled if Bro ever publishes to Play Store (where Play
+    // Integrity works correctly).
+    // ====================================================================
+    //
+    // // Initialize Firebase App Check.
+    // //
+    // // Task 43.4: previous code always fell back to AndroidProvider.debug
+    // // when Play Integrity failed — including in PRODUCTION builds. That
+    // // leaked the debug token into release APKs, where it can be extracted
+    // // and used to bypass App Check enforcement. Now we gate by
+    // // kReleaseMode:
+    // //   - Release builds: Play Integrity ONLY. If it fails, log the error
+    // //     and continue without App Check (better than leaking debug).
+    // //   - Debug builds (dev): allow debug fallback so local dev still
+    // //     works without a Play Integrity setup.
+    // if (kReleaseMode) {
+    //   // Production — Play Integrity only, NO debug fallback.
+    //   try {
+    //     await FirebaseAppCheck.instance.activate(
+    //       androidProvider: AndroidProvider.playIntegrity,
+    //       appleProvider: AppleProvider.deviceCheck,
+    //     );
+    //     debugPrint('App Check activated: Play Integrity (release)');
+    //   } catch (e) {
+    //     // Do NOT fall back to debug in release. Surface the error so we
+    //     // notice during release-channel testing.
+    //     debugPrint('App Check Play Integrity failed in RELEASE mode — '
+    //         'NOT falling back to debug. Error: $e');
+    //   }
+    // } else {
+    //   // Debug build — try Play Integrity first, fall back to debug so
+    //   // local dev doesn't require a real device with Play Integrity.
+    //   try {
+    //     await FirebaseAppCheck.instance.activate(
+    //       androidProvider: AndroidProvider.playIntegrity,
+    //       appleProvider: AppleProvider.deviceCheck,
+    //     );
+    //     debugPrint('App Check activated: Play Integrity (debug build)');
+    //   } catch (e) {
+    //     debugPrint('App Check Play Integrity failed in debug build, '
+    //         'falling back to debug provider: $e');
+    //     try {
+    //       await FirebaseAppCheck.instance.activate(
+    //         androidProvider: AndroidProvider.debug,
+    //       );
+    //       debugPrint('App Check activated: Debug mode (debug build only)');
+    //     } catch (e2) {
+    //       debugPrint('App Check activation error: $e2');
+    //     }
+    //   }
+    // }
+    debugPrint('Phase 3.2: App Check activation DISABLED (sideloaded APK + no enforcement)');
 
     SystemChrome.setSystemUIOverlayStyle(
       const SystemUiOverlayStyle(

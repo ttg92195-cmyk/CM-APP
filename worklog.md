@@ -3983,3 +3983,137 @@ Stage Summary:
 
 PHASE 3 STATUS: 3.1 complete (Banner Auto-Scroll Glitch on Tab Switch).
 NEXT: Bro's call on the next Phase 3 task.
+
+---
+Task ID: Phase 3.2
+Agent: Main Agent
+Task: Bro reported that after Phase 2.8, BOTH signup and login stopped
+  working on the sideloaded APK. Signup shows "Username already exists"
+  for every new account. Login with correct Gmail + password shows
+  "Invalid username or password" for existing accounts. Need to diagnose
+  and fix the root cause.
+
+Work Log:
+- Read login_page.dart to understand the auth flow:
+  * _handleLogin() calls appConfig.loginUser(username, password)
+  * loginUser catches FirebaseAuthException internally, debugPrints,
+    returns false
+  * _handleLogin sees success==false, shows generic "login_failed"
+    SnackBar
+  * Same pattern for registerUser / _handleRegister
+  * The actual Firebase error code is SWALLOWED — Bro can't see what's
+    really failing
+- Read app_config.dart loginUser / registerUser / _usernameToEmail:
+  * loginUser calls _usernameToEmail(username) which returns the email
+    as-is if it contains '@' (so Gmail login works at the email-resolution
+    step)
+  * Then signInWithEmailAndPassword(email, password) is called
+  * On failure, the catch block returns false — actual error code lost
+- Read main.dart Firebase initialization:
+  * FirebaseAppCheck.instance.activate() is called with
+    androidProvider: AndroidProvider.playIntegrity in release builds
+  * For sideloaded APKs (not from Play Store), Play Integrity CANNOT
+    issue a valid token
+  * Even though activate() doesn't throw, Firebase Auth requests
+    subsequently fail to attach a valid App Check token
+  * If Firebase Auth has App Check enforcement enabled at project level
+    (Firebase Console → Authentication → Settings → App Check), all
+    Auth requests are rejected
+  * This is consistent with the Phase 2.1 decision to REVERT App Check
+    enforcement in Firestore rules (also due to sideloaded APK
+    incompatibility) — but the activation code was never removed
+- Hypothesis: App Check activation is the root cause. Even without
+  project-level Auth enforcement, the failed token exchange may be
+  causing Auth request failures or significant delays.
+
+Fix implemented (Phase 3.2 — diagnostic build):
+- main.dart:
+  * Commented out ALL FirebaseAppCheck.instance.activate() calls
+    (both release and debug paths)
+  * Added Phase 3.2 comment block explaining WHY (sideloaded APK +
+    no enforcement = activation provides no benefit, only failure
+    points)
+  * Preserved the commented code for easy re-enablement if Bro ever
+    publishes to Play Store
+  * Added debugPrint confirming disable
+- app_config.dart:
+  * Added 4 diagnostic fields: lastLoginErrorCode,
+    lastLoginErrorMessage, lastRegisterErrorCode,
+    lastRegisterErrorMessage
+  * Modified loginUser: clears diagnostic fields before attempt,
+    captures actual FirebaseAuthException code + message in the
+    FirebaseAuthException catch block, captures non-Auth exceptions
+    in the generic catch block (with code='non-auth-exception'),
+    reports ALL errors to Firebase Crashlytics via recordError()
+  * Modified registerUser: same diagnostic capture + Crashlytics
+    reporting
+  * Added firebase_crashlytics import
+- login_page.dart:
+  * Modified login failure SnackBar to show actual error code +
+    message in format "Login failed [code: XXX | message]"
+  * Modified register failure SnackBar to show "Register failed
+    [code: XXX | message]"
+  * Increased SnackBar duration to 8 seconds for readability
+  * Added TEMPORARY diagnostic markers — these verbose messages
+    bypass the L4 security property (generic messages prevent
+    username enumeration) and MUST be reverted once root cause is
+    identified
+- Created scripts/phase3_2_verify.py — 33 structural checks:
+  * [1] main.dart: 5 checks (no active activate() calls, commented
+    out, Phase 3.2 markers)
+  * [2] app_config.dart: 14 checks (4 fields, import, capture in
+    both methods, both exception types, Crashlytics reporting,
+    field clearing)
+  * [3] login_page.dart: 7 checks (reads fields, shows code format,
+    8s duration, TEMPORARY markers)
+  * [4] Regression: 7 checks (Phase 2.8 rate limiting in 3 paths,
+    Phase 2.8 in FirestoreContentService, Phase 3.1 banner methods,
+    Phase 3.1 Navigator wrapper, Phase 2.4+2.6 rules)
+  * All 33/33 checks PASS
+
+Stage Summary:
+- Files modified:
+  * lib/main.dart — App Check activation commented out (~50 lines
+    of activation code preserved as comments, Phase 3.2 explanation
+    block added)
+  * lib/more_libs/setting/app_config.dart — 4 diagnostic fields,
+    loginUser + registerUser capture actual error codes + report to
+    Crashlytics, firebase_crashlytics import added
+  * lib/app/ui/screens/login_page.dart — login + register failure
+    SnackBars show actual error code + message (TEMPORARY, 8s
+    duration)
+- Files added:
+  * scripts/phase3_2_verify.py — 33-check verification script
+- Two-part fix strategy:
+  1. DISABLE App Check activation (likely root cause — sideloaded
+     APK can't get Play Integrity token, causing Auth request
+     failures)
+  2. ADD diagnostic logging (if App Check wasn't the only issue,
+     the verbose SnackBar will reveal the actual Firebase error
+     code so we can fix the real root cause in the next iteration)
+- Bro action required:
+  1. Build via GitHub Actions CI (this commit)
+  2. Install the new APK
+  3. Try login AND signup again
+  4. If STILL failing: read the SnackBar — it will now show
+     "Login failed [code: XXX | message]" or
+     "Register failed [code: XXX | message]"
+  5. Tell Bro the actual error code (e.g., "network-request-failed",
+     "email-already-in-use", "too-many-requests",
+     "non-auth-exception", etc.)
+  6. ALSO check Firebase Console → Crashlytics dashboard for
+     detailed error reports (each failed auth attempt now reports
+     to Crashlytics with reason tag)
+- TEMPORARY changes to revert after diagnosis:
+  * login_page.dart verbose SnackBar messages (restore generic
+    "login_failed" / "register_failed" messages)
+  * app_config.dart diagnostic fields (lastLoginErrorCode etc.)
+  * The verbose SnackBar bypasses L4 security (username enumeration
+    prevention) — must be restored once root cause is fixed
+- PERMANENT change (keep):
+  * main.dart App Check activation disabled — this aligns with
+    Phase 2.1 revert decision and is correct for sideloaded APK
+    distribution model
+
+PHASE 3 STATUS: 3.2 in progress (diagnostic build). Awaiting Bro's
+test results to confirm root cause or get actual error code.

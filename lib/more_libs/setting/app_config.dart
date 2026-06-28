@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:onesignal_flutter/onesignal_flutter.dart';
 import 'package:cm_movies/app/core/services/recent_service.dart';
@@ -95,6 +96,27 @@ class AppConfig extends ChangeNotifier {
   String _videoPlayerMode = 'builtin'; // 'builtin' or 'external'
   Map<String, dynamic>? _currentUser;
   bool _isLoadingAuth = true;
+
+  // ====================================================================
+  // Phase 3.2 — DIAGNOSTIC auth error capture (TEMPORARY)
+  // ====================================================================
+  // Bro reported that after Phase 2.8, both signup and login fail with
+  // generic messages ("Username already exists" / "Invalid username or
+  // password") even with correct credentials. The actual Firebase Auth
+  // error code is swallowed by the catch blocks in loginUser/registerUser
+  // (they debugPrint but return false), so Bro can't see what's actually
+  // happening.
+  //
+  // These fields capture the last auth error code + message so the login
+  // page can display them in the SnackBar for diagnosis. This is
+  // TEMPORARY — once we identify and fix the root cause, these fields
+  // and the verbose SnackBar messages should be removed to restore the
+  // L4 security property (generic messages prevent username enumeration).
+  // ====================================================================
+  String? lastLoginErrorCode;
+  String? lastLoginErrorMessage;
+  String? lastRegisterErrorCode;
+  String? lastRegisterErrorMessage;
 
   ThemeMode get themeMode => _themeMode;
   String get languageCode => _languageCode;
@@ -489,6 +511,9 @@ class AppConfig extends ChangeNotifier {
 
   // Register a new user with Firebase Auth
   Future<bool> registerUser(String username, String password, {String? email}) async {
+    // Phase 3.2 — clear diagnostic fields before each attempt
+    lastRegisterErrorCode = null;
+    lastRegisterErrorMessage = null;
     try {
       // Use provided email, or auto-generate from username
       final userEmail = email ?? await _usernameToEmail(username);
@@ -528,15 +553,37 @@ class AppConfig extends ChangeNotifier {
       return true;
     } on FirebaseAuthException catch (e) {
       debugPrint('Register error: ${e.code} - ${e.message}');
+      // Phase 3.2 — capture actual error for diagnostic display
+      lastRegisterErrorCode = e.code;
+      lastRegisterErrorMessage = e.message;
+      // Also report to Crashlytics so Bro can see it in the dashboard
+      // even if the SnackBar diagnostic is missed.
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        StackTrace.current,
+        reason: 'registerUser FirebaseAuthException: ${e.code}',
+      );
       return false;
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('Register error: $e');
+      // Phase 3.2 — capture non-Auth exceptions too (e.g., Firestore
+      // permission errors, network errors, App Check rejection errors)
+      lastRegisterErrorCode = 'non-auth-exception';
+      lastRegisterErrorMessage = e.toString();
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'registerUser non-Auth exception',
+      );
       return false;
     }
   }
 
   // Login user with Firebase Auth (regular or admin)
   Future<bool> loginUser(String username, String password) async {
+    // Phase 3.2 — clear diagnostic fields before each attempt
+    lastLoginErrorCode = null;
+    lastLoginErrorMessage = null;
     try {
       final email = await _usernameToEmail(username);
 
@@ -554,9 +601,25 @@ class AppConfig extends ChangeNotifier {
       return _currentUser != null;
     } on FirebaseAuthException catch (e) {
       debugPrint('Login error: ${e.code} - ${e.message}');
+      // Phase 3.2 — capture actual error for diagnostic display
+      lastLoginErrorCode = e.code;
+      lastLoginErrorMessage = e.message;
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        StackTrace.current,
+        reason: 'loginUser FirebaseAuthException: ${e.code}',
+      );
       return false;
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('Login error: $e');
+      // Phase 3.2 — capture non-Auth exceptions too
+      lastLoginErrorCode = 'non-auth-exception';
+      lastLoginErrorMessage = e.toString();
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'loginUser non-Auth exception',
+      );
       return false;
     }
   }
