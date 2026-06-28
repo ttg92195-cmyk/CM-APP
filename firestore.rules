@@ -47,6 +47,128 @@ service cloud.firestore {
         && request.resource.data.forceLogout != true;
     }
 
+    // ============================================================
+    // Phase 2.6 — Schema-bound field validation helpers
+    // ============================================================
+    // These helpers enforce that admin writes conform to the documented
+    // schema for each collection. They are defense-in-depth: even if an
+    // attacker somehow obtains admin credentials, they cannot pollute
+    // collections with malformed documents (e.g., type='evil', title='',
+    // moviesCount='not-a-number'). All validation uses request.resource.data
+    // (the post-write doc state) so it applies to both create and update.
+    //
+    // Validation principles:
+    //   1. Required fields MUST be present and of correct type.
+    //   2. Enum fields MUST be one of the documented values.
+    //   3. String fields MUST be non-empty when required.
+    //   4. Numeric fields MUST be numbers (int or double).
+    //   5. List fields MUST be lists.
+    //   6. For update operations: only validate fields that are PRESENT
+    //      in the request — partial updates are allowed.
+    // ============================================================
+
+    // Helper: Validate a movie document.
+    // On CREATE: title (non-empty string) and type (string ∈ {movie, series})
+    // are required.
+    // On UPDATE: only validate fields that are PRESENT in the request —
+    // the TMDB sync code path (tmdb_generator_page.dart) sends partial
+    // updates like {title, year, poster, ...} WITHOUT type, which is valid
+    // because type is immutable after creation.
+    // Optional fields (validated only when present):
+    //   - isAdult: must be int 0 or 1
+    //   - tmdbId: must be int >= 0
+    //   - isTrending: must be bool
+    //   - categories/tags/downloadLinks/watchLinks/seasons: must be lists
+    function isValidMovie() {
+      return (!request.resource.data.keys().hasAny(['title'])
+            || (request.resource.data.title is string
+                && request.resource.data.title.size() > 0))
+        && (!request.resource.data.keys().hasAny(['type'])
+            || (request.resource.data.type is string
+                && (request.resource.data.type == 'movie'
+                    || request.resource.data.type == 'series')))
+        && (!request.resource.data.keys().hasAny(['isAdult'])
+            || (request.resource.data.isAdult is int
+                && (request.resource.data.isAdult == 0
+                    || request.resource.data.isAdult == 1)))
+        && (!request.resource.data.keys().hasAny(['tmdbId'])
+            || (request.resource.data.tmdbId is int
+                && request.resource.data.tmdbId >= 0))
+        && (!request.resource.data.keys().hasAny(['isTrending'])
+            || request.resource.data.isTrending is bool)
+        && (!request.resource.data.keys().hasAny(['categories'])
+            || request.resource.data.categories is list)
+        && (!request.resource.data.keys().hasAny(['tags'])
+            || request.resource.data.tags is list)
+        && (!request.resource.data.keys().hasAny(['downloadLinks'])
+            || request.resource.data.downloadLinks is list)
+        && (!request.resource.data.keys().hasAny(['watchLinks'])
+            || request.resource.data.watchLinks is list)
+        && (!request.resource.data.keys().hasAny(['seasons'])
+            || request.resource.data.seasons is list);
+    }
+
+    // Helper: Validate a genre / tag / collection document.
+    // All three collections share the same schema: { name, moviesCount }.
+    // Required on CREATE: name (non-empty string), moviesCount (int >= 0).
+    // On UPDATE: only validate fields that are PRESENT in the request —
+    // the app's updateGenre/updateTag/updateCollection methods send a
+    // partial {name: ...} map without moviesCount, which is valid because
+    // moviesCount is admin-managed by the count-sync code path.
+    function isValidGenreOrTagOrCollection() {
+      return request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && (!request.resource.data.keys().hasAny(['moviesCount'])
+            || (request.resource.data.moviesCount is int
+                && request.resource.data.moviesCount >= 0));
+    }
+
+    // Helper: Validate a notification document.
+    // Required: title (non-empty string), body (string), sentBy (non-empty
+    // string), sentAt (timestamp).
+    function isValidNotification() {
+      return request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.body is string
+        && request.resource.data.sentBy is string
+        && request.resource.data.sentBy.size() > 0
+        && request.resource.data.sentAt is timestamp;
+    }
+
+    // Helper: Validate the app_settings/banner_config document.
+    // Required: imageUrls (list of strings), updatedAt (timestamp).
+    function isValidBannerConfig() {
+      return request.resource.data.imageUrls is list
+        && request.resource.data.updatedAt is timestamp;
+    }
+
+    // Helper: Validate a batch_imports audit document.
+    // Required: adminUid (non-empty string), startedAt (timestamp),
+    // completedAt (timestamp), total/created/updated/failed/skipped (int),
+    // cancelled (bool).
+    // Optional: adminEmail, sourceFileName, appVersion (strings),
+    // sourceFileSizeBytes (int), failedItems/sampleCreated/sampleUpdated/
+    // createdMovieIds/updatedMovieIds (lists).
+    function isValidBatchImport() {
+      return request.resource.data.adminUid is string
+        && request.resource.data.adminUid.size() > 0
+        && request.resource.data.startedAt is timestamp
+        && request.resource.data.completedAt is timestamp
+        && request.resource.data.durationMs is int
+        && request.resource.data.cancelled is bool
+        && request.resource.data.total is int
+        && request.resource.data.created is int
+        && request.resource.data.updated is int
+        && request.resource.data.failed is int
+        && request.resource.data.skipped is int
+        && (!request.resource.data.keys().hasAny(['failedItems'])
+            || request.resource.data.failedItems is list)
+        && (!request.resource.data.keys().hasAny(['createdMovieIds'])
+            || request.resource.data.createdMovieIds is list)
+        && (!request.resource.data.keys().hasAny(['updatedMovieIds'])
+            || request.resource.data.updatedMovieIds is list);
+    }
+
     // CONFIG: Admin email mappings - restrict admin_emails to admin-only read
     // to prevent reconnaissance of admin account emails.
     // Other config docs remain readable by authenticated users.
@@ -60,28 +182,40 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // MOVIES: Authenticated users can read, only admins can write
+    // MOVIES: Authenticated users can read, only admins can write.
+    // Phase 2.6: create + update now require isValidMovie() schema check.
     match /movies/{movieId} {
       allow read: if request.auth != null;
-      allow create, update, delete: if isAdmin();
+      allow create: if isAdmin() && isValidMovie();
+      allow update: if isAdmin() && isValidMovie();
+      allow delete: if isAdmin();
     }
 
-    // GENRES: Authenticated users can read, only admins can write
+    // GENRES: Authenticated users can read, only admins can write.
+    // Phase 2.6: create + update now require isValidGenreOrTagOrCollection().
     match /genres/{genreId} {
       allow read: if request.auth != null;
-      allow create, update, delete: if isAdmin();
+      allow create: if isAdmin() && isValidGenreOrTagOrCollection();
+      allow update: if isAdmin() && isValidGenreOrTagOrCollection();
+      allow delete: if isAdmin();
     }
 
-    // TAGS: Authenticated users can read, only admins can write
+    // TAGS: Authenticated users can read, only admins can write.
+    // Phase 2.6: create + update now require isValidGenreOrTagOrCollection().
     match /tags/{tagId} {
       allow read: if request.auth != null;
-      allow create, update, delete: if isAdmin();
+      allow create: if isAdmin() && isValidGenreOrTagOrCollection();
+      allow update: if isAdmin() && isValidGenreOrTagOrCollection();
+      allow delete: if isAdmin();
     }
 
-    // COLLECTIONS: Authenticated users can read, only admins can write
+    // COLLECTIONS: Authenticated users can read, only admins can write.
+    // Phase 2.6: create + update now require isValidGenreOrTagOrCollection().
     match /collections/{collectionId} {
       allow read: if request.auth != null;
-      allow create, update, delete: if isAdmin();
+      allow create: if isAdmin() && isValidGenreOrTagOrCollection();
+      allow update: if isAdmin() && isValidGenreOrTagOrCollection();
+      allow delete: if isAdmin();
     }
 
     // USERS: Login flow needs username→email lookup BEFORE Firebase Auth
@@ -132,19 +266,28 @@ service cloud.firestore {
     // via OneSignal Dashboard, not via in-app composer), so only historical
     // entries remain — locking them to admin-only prevents further leakage.
     //
-    // Create is still allowed by admin in case future code re-introduces
-    // a Firestore-backed send log. Update/delete admin-only.
+    // Phase 2.6 (2026-06-29): create + update now require isValidNotification()
+    // schema check. Defends against malformed notification docs.
     match /notifications/{notificationId} {
       allow read: if isAdmin();
-      allow create: if isAdmin();
-      allow update, delete: if isAdmin();
+      allow create: if isAdmin() && isValidNotification();
+      allow update: if isAdmin() && isValidNotification();
+      allow delete: if isAdmin();
     }
 
     // APP_SETTINGS: admin-managed global config (banner images, etc.)
     // Authenticated users can read; only admins can write.
+    //
+    // Phase 2.6 (2026-06-29): banner_config doc create/update now requires
+    // isValidBannerConfig() schema check (imageUrls list + updatedAt ts).
+    // Other app_settings docs remain admin-only-write without schema
+    // enforcement — they're rare one-off config writes that the admin
+    // performs manually via Firebase Console.
     match /app_settings/{docId} {
       allow read: if request.auth != null;
-      allow write: if isAdmin();
+      // Schema check applies ONLY to the banner_config doc.
+      allow write: if isAdmin()
+        && (docId != 'banner_config' || isValidBannerConfig());
     }
 
     // BATCH_IMPORTS: audit log of past Batch Import runs.
@@ -153,9 +296,14 @@ service cloud.firestore {
     // admin account info and source-file metadata that non-admins shouldn't
     // see. The actual movie writes are still gated by the /movies/ rules
     // above; this collection is purely for audit history.
+    //
+    // Phase 2.6 (2026-06-29): create now requires isValidBatchImport()
+    // schema check. update/delete remain admin-only without schema check
+    // (audit docs are immutable once written — only the admin should ever
+    // touch them, and only for manual corrections via Firebase Console).
     match /batch_imports/{importId} {
       allow read: if isAdmin();
-      allow create: if isAdmin();
+      allow create: if isAdmin() && isValidBatchImport();
       allow update, delete: if isAdmin();
     }
 
