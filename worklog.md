@@ -3259,3 +3259,60 @@ PHASE 2 STATUS: 1 of 9 done (2.1).
 NEXT: 2.2 (Full Firestore rules audit) — but Bro should test the
 build first and decide whether to enable Console enforcement before
 we add more rule changes on top.
+
+---
+Task ID: Phase2.1-Revert
+Agent: main
+Task: Revert Phase 2.1 App Check enforcement in rules (CRITICAL — app would break for sideloaded APK distribution).
+
+Work Log:
+- Bro clarified: "APP ကို Play Store ပေါ်မတင်ပါဘူး။ အရင်ကလဲမတင်ဘူလို့
+  ဆုံးဖြတ်ထားပါတယ်။" (Never publishing to Play Store, distributes
+  APK directly via sideloading.)
+- Verified main.dart App Check activation code (lines 119-154):
+    - kReleaseMode == true (release APK): AndroidProvider.playIntegrity
+      ONLY, NO debug fallback. If Play Integrity fails, App Check does
+      not activate.
+    - kReleaseMode == false (debug build): Play Integrity first, debug
+      fallback if it fails.
+- Confirmed Play Integrity API requires the app to be uploaded to Play
+  Console (even internal track) AND signed via Play App Signing. For
+  sideloaded APKs without Play Console upload, Play Integrity returns
+  no token → request.app is null → isVerifiedApp() returns false →
+  rules block all Firestore/Storage access → app completely broken
+  (login fails, no movie list, no images).
+- Executed: git revert 372cc2b --no-edit → commit 1d25773
+    - Reverted firestore.rules: removed isVerifiedApp() helper + all
+      && isVerifiedApp() clauses from every allow rule. Back to
+      Phase 1.3 state (auth-only enforcement).
+    - Reverted storage.rules: same — removed isVerifiedApp() helper
+      + all && isVerifiedApp() clauses. Back to pre-Phase-2.1 state.
+    - Deleted scripts/phase2_1_syntax_check.py (no longer needed).
+- Pushed to origin/main (1d25773).
+- Phase 1.4 App Check ACTIVATION code in main.dart is KEPT AS-IS.
+  Reasoning: activation code is a no-op if Play Integrity fails. It
+  doesn't hurt — tokens just aren't issued. If Bro ever publishes to
+  Play Store in the future, can re-introduce rule enforcement by
+  re-applying Phase 2.1 changes.
+
+Stage Summary:
+- CRITICAL: Bro must NOT paste the new firestore.rules (372cc2b
+  version) into Firebase Console. The Console currently has the
+  pre-Phase-2.1 rules (Phase 1.3 state), which is correct and
+  safe — DO NOT change anything in the Console.
+- If Bro already pasted the new rules: revert by pasting the
+  current main firestore.rules content (Phase 1.3 state) into
+  Console → Firestore → Rules → Publish.
+- Phase 2.1 status: REVERTED (deferred until Play Store distribution).
+- Phase 2 Storage rules: Bro reports Firebase Console Storage tab
+  requires Blaze plan upgrade. Storage rules in Console are not
+  editable without enabling Storage (which needs Blaze). Skip
+  storage.rules changes for now — code remains on GitHub for
+  future reference but is not enforced.
+- App Check activation code remains in main.dart as a no-op for
+  sideloaded distribution. No harm, no benefit until Play Store.
+
+PHASE 2 STATUS: 0 of 9 done (2.1 reverted, 2.9 needs Blaze).
+NEXT: 2.2 (Full Firestore rules audit) — still valid, no App Check
+dependency. Will review all collection rules for tightening
+opportunities that don't require Play Integrity.
