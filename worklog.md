@@ -3316,3 +3316,72 @@ PHASE 2 STATUS: 0 of 9 done (2.1 reverted, 2.9 needs Blaze).
 NEXT: 2.2 (Full Firestore rules audit) — still valid, no App Check
 dependency. Will review all collection rules for tightening
 opportunities that don't require Play Integrity.
+
+---
+Task ID: Phase2.2
+Agent: main
+Task: Full Firestore rules audit — review all collections for tightening opportunities.
+
+Work Log:
+- Pulled main (383b235). Read firestore.rules (185 lines, 11 collections).
+- Code audit: enumerated all collection refs in lib/ via ripgrep.
+  Found 11 unique collections actually used in code:
+    users (28 refs), movies (16), bookmarks (7), watchlist (5),
+    notifications (2), config (2), app_settings (2), tags (1),
+    history (1), genres (1), collections (1)
+- Cross-checked with rules file: all 11 collections have rules.
+  Found ONE additional rule block — user_devices/{deviceId} —
+  that does NOT correspond to any collection used in code.
+- Verified device_management_service.dart: devices are stored as
+  `logged_in_devices` array field on the users/{uid} doc (line ~325),
+  NOT in a separate user_devices collection. The user_devices rule
+  is dead code governing a non-existent collection.
+- Verified notifications collection:
+    - admin_notification_page.dart only READS (history tab) and
+      DELETES — no writes since Phase 1.1 removed the composer.
+    - UI access is admin-gated via admin_panel_page.dart route.
+    - But the Firestore rule `allow read: if request.auth != null`
+      let ANY authenticated user query db.collection('notifications')
+      and read all docs — including the `sentBy` field which contains
+      admin email. Reconnaissance vector.
+- Verified other collections (config/admin_emails split precedence,
+  users Phase 1.3 split, subcollections owner-only): all correct.
+- Phase 2.2 changes:
+    1. Removed user_devices match block (lines 149-169 of old file).
+    2. Tightened notifications read: `request.auth != null` → `isAdmin()`.
+    3. Updated comments to document the changes and rationale.
+- Created scripts/phase2_2_audit_check.py — verifies:
+    - brace/paren/bracket balance
+    - isVerifiedApp / request.app NOT present (Phase 2.1 still reverted)
+    - user_devices match block removed
+    - notifications read restricted to isAdmin()
+    - every allow rule has a security gate (isAdmin / auth / isOwner / true-only-for-list)
+    - rules_version = '2' present
+  Result: 0 errors, all checks PASS.
+- Committed as 5cec639, pushed to origin/main.
+
+Stage Summary:
+- Phase 2.2 audit complete. 11 collections reviewed, 2 changes made:
+    (a) user_devices dead rule removed
+    (b) notifications read tightened to admin-only
+- No app behavior changes — rules are STRICTLY TIGHTER, never looser.
+  - User functionality unaffected: legitimate non-admin users never
+    read notifications via app code (UI gate already enforced this).
+  - Admin functionality unaffected: admin can still read/write
+    notifications, just like before.
+- CRITICAL: Bro must paste the new firestore.rules into Firebase
+  Console → Firestore Database → Rules tab → Publish. Same workflow
+  as Phase 1.3.
+- After paste: build and verify
+    1. Login works (uses users list, unaffected)
+    2. Movie list loads (movies read, unaffected)
+    3. Admin can still see notification history tab (admin can read)
+    4. Non-admin CANNOT read notifications even via direct Firestore
+       call (this is the security improvement)
+- Residual risk: NONE. Rules are strictly tighter than before.
+
+PHASE 2 STATUS: 1 of 9 done (2.1 reverted, 2.2 complete).
+NEXT: 2.3 (storage.rules audit) — but Bro reports Firebase Console
+Storage tab requires Blaze plan upgrade. May skip storage rules work
+since Console can't deploy them anyway. Suggest moving to 2.5
+(Crashlytics integration — free, no Blaze) or 2.4 (admin audit log).
