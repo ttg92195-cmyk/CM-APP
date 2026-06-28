@@ -105,22 +105,51 @@ void main() async {
       debugPrint('Firebase initialization error: $e');
     }
 
-    // Initialize Firebase App Check with Play Integrity (production) + Debug fallback.
-    try {
-      await FirebaseAppCheck.instance.activate(
-        androidProvider: AndroidProvider.playIntegrity,
-        appleProvider: AppleProvider.deviceCheck,
-      );
-      debugPrint('App Check activated: Play Integrity mode (production)');
-    } catch (e) {
-      debugPrint('App Check Play Integrity failed, trying debug fallback: $e');
+    // Initialize Firebase App Check.
+    //
+    // Task 43.4: previous code always fell back to AndroidProvider.debug
+    // when Play Integrity failed — including in PRODUCTION builds. That
+    // leaked the debug token into release APKs, where it can be extracted
+    // and used to bypass App Check enforcement. Now we gate by
+    // kReleaseMode:
+    //   - Release builds: Play Integrity ONLY. If it fails, log the error
+    //     and continue without App Check (better than leaking debug).
+    //   - Debug builds (dev): allow debug fallback so local dev still
+    //     works without a Play Integrity setup.
+    if (kReleaseMode) {
+      // Production — Play Integrity only, NO debug fallback.
       try {
         await FirebaseAppCheck.instance.activate(
-          androidProvider: AndroidProvider.debug,
+          androidProvider: AndroidProvider.playIntegrity,
+          appleProvider: AppleProvider.deviceCheck,
         );
-        debugPrint('App Check activated: Debug mode (fallback)');
-      } catch (e2) {
-        debugPrint('App Check activation error: $e2');
+        debugPrint('App Check activated: Play Integrity (release)');
+      } catch (e) {
+        // Do NOT fall back to debug in release. Surface the error so we
+        // notice during release-channel testing.
+        debugPrint('App Check Play Integrity failed in RELEASE mode — '
+            'NOT falling back to debug. Error: $e');
+      }
+    } else {
+      // Debug build — try Play Integrity first, fall back to debug so
+      // local dev doesn't require a real device with Play Integrity.
+      try {
+        await FirebaseAppCheck.instance.activate(
+          androidProvider: AndroidProvider.playIntegrity,
+          appleProvider: AppleProvider.deviceCheck,
+        );
+        debugPrint('App Check activated: Play Integrity (debug build)');
+      } catch (e) {
+        debugPrint('App Check Play Integrity failed in debug build, '
+            'falling back to debug provider: $e');
+        try {
+          await FirebaseAppCheck.instance.activate(
+            androidProvider: AndroidProvider.debug,
+          );
+          debugPrint('App Check activated: Debug mode (debug build only)');
+        } catch (e2) {
+          debugPrint('App Check activation error: $e2');
+        }
       }
     }
 
