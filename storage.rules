@@ -14,6 +14,21 @@ service cloud.storage {
       return request.auth != null && request.auth.uid == userId;
     }
 
+    // Helper: Check if the request comes from a verified app (App Check).
+    //
+    // Phase 2.1 (2026-06-28): enforces that requests come from the genuine
+    // CM Movies APK with a valid App Check token (Play Integrity in release,
+    // Debug provider in dev — both registered in Firebase Console → App Check).
+    // Blocks requests from scripts, curl, or random clients even if they
+    // somehow obtain valid Firebase credentials.
+    //
+    // Note: requires App Check enforcement to be enabled in Firebase Console
+    // (Project Settings → App Check → Cloud Storage → Enforce). Bro must
+    // toggle enforcement ON in the Console for this to bite.
+    function isVerifiedApp() {
+      return request.app != null;
+    }
+
     // ============================================
     // DEFAULT: Deny all access unless explicitly granted
     // ============================================
@@ -25,24 +40,24 @@ service cloud.storage {
     // MOVIE POSTERS / IMAGES — authenticated users can read
     // ============================================
     match /movies/{imagePath=**} {
-      allow read: if request.auth != null;
-      allow write: if isAdmin();
+      allow read: if request.auth != null && isVerifiedApp();
+      allow write: if isAdmin() && isVerifiedApp();
     }
 
     // ============================================
     // USER AVATARS — users can read all, write own only
     // ============================================
     match /users/{userId}/{imagePath=**} {
-      allow read: if request.auth != null;
-      allow write: if isOwner(userId) || isAdmin();
+      allow read: if request.auth != null && isVerifiedApp();
+      allow write: if (isOwner(userId) || isAdmin()) && isVerifiedApp();
     }
 
     // ============================================
     // APP ASSETS — anyone authenticated can read
     // ============================================
     match /assets/{assetPath=**} {
-      allow read: if request.auth != null;
-      allow write: if isAdmin();
+      allow read: if request.auth != null && isVerifiedApp();
+      allow write: if isAdmin() && isVerifiedApp();
     }
   }
 }
