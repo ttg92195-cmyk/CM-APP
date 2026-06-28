@@ -2899,3 +2899,72 @@ Stage Summary:
 - Task 42#3 (trailer icon) was already completed in commit 399c464
   by a prior session. All 3 of the user's reported issues are now
   addressed.
+
+---
+Task ID: 43 (Phase 1 Security Cleanup — Tasks 43.5, 43.4, 43.2a, 43.2b done; 43.3, 43.1 pending)
+Agent: Main Agent
+Task: Phase 1 Security Critical fixes from user's audit. Doing one at a time per user request. First 4 of 6 done.
+
+Work Log:
+- Pulled origin/main (f55f4b3 — .env restored after auto-commit wipe).
+
+Task 43.5 (Play Store URL) — DONE, commit a601768:
+  - lib/main.dart:344 had 'https://play.google.com/store/apps/details?id=com.cm.movies'
+    but real applicationId is 'than.pre.cm' (android/app/build.gradle:55).
+  - Old URL pointed to a non-existent Play Store listing — Update
+    button was effectively broken.
+  - Fixed: id=than.pre.cm.
+  - Verified no other 'com.cm.movies' refs in lib/.
+
+Task 43.4 (App Check kReleaseMode gate) — DONE, commit 4583f35:
+  - lib/main.dart:108-154 App Check activation always fell back to
+    AndroidProvider.debug when Play Integrity failed — including in
+    PRODUCTION builds. Debug token leaked into release APKs where it
+    can be extracted and used to bypass App Check enforcement.
+  - Now gated by kReleaseMode (already imported via
+    package:flutter/foundation.dart at line 4):
+      Release: Play Integrity ONLY. On failure, log + continue without
+               App Check (better than leaking debug).
+      Debug:   try Play Integrity first, fall back to debug.
+  - No new imports. No new dependencies.
+
+Task 43.2a (Delete duplicate functions/functions/) — DONE, commit e1aa205:
+  - functions/functions/index.js and functions/functions/package.json
+    were identical duplicates of functions/index.js and
+    functions/package.json (verified via diff — no output).
+  - Likely created by an accidental 'firebase init functions' run that
+    nested inside the existing functions/ directory.
+  - Confused firebase deploy (which source dir?) and confused future
+    devs (which index.js is canonical?).
+  - Deleted the duplicate subdir. Canonical files at functions/
+    preserved.
+  - Verified no references to 'functions/functions/' anywhere in repo.
+
+Task 43.2b (firebase.json expansion) — DONE, commit abbfb60:
+  - Previous firebase.json only had 'firestore' (rules + indexes).
+  - storage.rules file existed but wasn't wired into config —
+    'firebase deploy' silently skipped storage rules.
+  - Added 4 sections:
+      storage:   points to existing storage.rules
+      functions: source dir = 'functions' (canonical, post-43.2a)
+      appcheck:  Play Integrity token TTL = 1 hour (sane default)
+      emulators: local dev ports for auth/firestore/functions/storage
+                 + UI on port 4000 + singleProjectMode
+  - Does NOT change runtime behavior in production — just makes
+    'firebase deploy' deploy ALL rules + gives devs working emulator.
+  - JSON validated via python3 json.load.
+
+Stage Summary:
+- 4 of 6 Phase 1 fixes done. All pushed to origin/main.
+- Build should pass — no Dart code changes that could break compile
+  (43.5 changed a string literal, 43.4 wrapped an existing call in
+  kReleaseMode branch, 43.2a deleted duplicate JS files, 43.2b edited
+  JSON config only).
+- Remaining:
+  - Task 43.3 (firestore.rules line 97 'allow read: if true') —
+    WAITING for Bro to pick Option A (auth-gated read) vs Option B
+    (deny list, allow get only). Need to verify the username-based
+    login flow still works after the change.
+  - Task 43.1 (OneSignal REST API key leak) — largest task. Will
+    require new Cloud Function + client refactor + key rotation.
+    Do last.
