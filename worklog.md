@@ -3385,3 +3385,72 @@ NEXT: 2.3 (storage.rules audit) — but Bro reports Firebase Console
 Storage tab requires Blaze plan upgrade. May skip storage rules work
 since Console can't deploy them anyway. Suggest moving to 2.5
 (Crashlytics integration — free, no Blaze) or 2.4 (admin audit log).
+
+---
+Task ID: Phase2.5
+Agent: main
+Task: Integrate Firebase Crashlytics for crash + error reporting (free, no Blaze).
+
+Work Log:
+- Pulled main (cd54285). Read pubspec.yaml + main.dart + Android gradle files.
+- Confirmed: firebase_core ^3.6.0 + AGP 8.2.2 + Kotlin 2.1.0. Compatible
+  with firebase_crashlytics ^4.1.0 + crashlytics Gradle plugin 3.0.2.
+- Read main.dart error handlers (lines 58-73):
+    FlutterError.onError — logs + presents, doesn't crash
+    PlatformDispatcher.instance.onError — logs, returns true (no crash)
+    runZonedGuarded zone error handler — logs, doesn't rethrow
+  All 3 caught errors but only logged them locally. No central dashboard.
+- Phase 2.5 changes (5 files):
+    1. pubspec.yaml — added firebase_crashlytics ^4.1.0
+    2. android/settings.gradle — declared crashlytics Gradle plugin
+       v3.0.2 (supports AGP 8.x)
+    3. android/app/build.gradle —
+       - Applied 'com.google.firebase.crashlytics' plugin
+       - Added firebaseCrashlytics { mappingFileUploadEnabled true
+         nativeSymbolUploadEnabled true } to release buildType
+       (uploads ProGuard mapping + native symbol files so release
+       crash stacks are deobfuscated in Console)
+    4. lib/main.dart — 3 error hooks wired to Crashlytics:
+       - FlutterError.onError: recordFlutterError(details) for
+         framework errors (widget build failures, etc.)
+       - PlatformDispatcher.onError: recordError(error, stack,
+         fatal: false) for platform-channel + plugin errors
+       - runZonedGuarded zone handler: recordError(error,
+         stackTrace, fatal: true) for unhandled async errors
+       Plus Crashlytics init inside Firebase.initializeApp try block:
+       - setCrashlyticsCollectionEnabled(!kDebugMode) — disabled
+         in debug, enabled in release (avoids dashboard noise)
+       - setCustomKey('build_mode', ...) for dashboard filtering
+       - setCustomKey('app_version', ...) for dashboard filtering
+       - Firebase init failure caught and reported via recordError
+         so Bro sees init failures in Console instead of silent log
+    5. scripts/phase2_5_verify.py — verifies all 9 integration
+       points (deps, plugin declaration, plugin apply,
+       firebaseCrashlytics config, dart import, 3 error hooks,
+       setCrashlyticsCollectionEnabled). All checks PASS.
+- Caught a syntax issue during review: used '#' for comments in
+  Gradle files (Groovy uses '//'). Fixed both files before commit.
+- No ProGuard changes needed — existing
+  -keep class com.google.firebase.** { *; } covers the SDK.
+- Committed as 5e763fc, pushed to origin/main.
+
+Stage Summary:
+- Crashlytics is now ACTIVE in release builds. First crash report
+  will appear in Firebase Console → Crashlytics within ~5 minutes
+  of a real user crash.
+- Bro does NOT need to do anything in Firebase Console — Crashlytics
+  is auto-enabled for any Firebase project. Just open Console →
+  Crashlytics tab to see the dashboard.
+- Build behavior change: CI build may take ~30-60s longer on first
+  run because Gradle downloads the crashlytics plugin (~5MB) and
+  uploads the release mapping file at end of build. Subsequent
+  builds use the cached plugin.
+- No app behavior change visible to users. Crashlytics runs
+  silently in background.
+- Debug builds: Crashlytics collection disabled. Developers can
+  still see debug crashes in console output via debugPrint.
+
+PHASE 2 STATUS: 2 of 9 done (2.1 reverted, 2.2 + 2.5 complete).
+NEXT: 2.4 (admin audit log) or 2.6 (admin field validation tightening).
+Both free, no Blaze needed. Suggest 2.6 first (security tightening)
+then 2.4 (audit log for accountability).
