@@ -1,0 +1,730 @@
+     1→import 'package:flutter/material.dart';
+     2→import 'package:cloud_firestore/cloud_firestore.dart';
+     3→import 'package:firebase_auth/firebase_auth.dart';
+     4→import 'package:cm_movies/app/core/models/notification_model.dart';
+     5→import 'package:cm_movies/app/core/services/fcm_notification_service.dart';
+     6→
+     7→/// Admin Notification Page — allows admins to compose and send push notifications
+     8→/// to all users, and view notification history.
+     9→///
+    10→/// Flow:
+    11→/// 1. Admin fills in Title, Body, and optional Movie ID/Slug
+    12→/// 2. Taps "Send Notification"
+    13→/// 3. Notification is saved to Firestore `notifications` collection
+    14→/// 4. A Cloud Function triggers on the new document and sends FCM push to `movies_all` topic
+    15→/// 5. All subscribed devices receive the push notification
+    16→class AdminNotificationPage extends StatefulWidget {
+    17→  const AdminNotificationPage({super.key});
+    18→
+    19→  @override
+    20→  State<AdminNotificationPage> createState() => _AdminNotificationPageState();
+    21→}
+    22→
+    23→class _AdminNotificationPageState extends State<AdminNotificationPage> {
+    24→  final _formKey = GlobalKey<FormState>();
+    25→  final _titleController = TextEditingController();
+    26→  final _bodyController = TextEditingController();
+    27→  final _movieIdController = TextEditingController();
+    28→  final _movieSlugController = TextEditingController();
+    29→
+    30→  bool _isSending = false;
+    31→  bool _includeMovieLink = false;
+    32→
+    33→  @override
+    34→  void dispose() {
+    35→    _titleController.dispose();
+    36→    _bodyController.dispose();
+    37→    _movieIdController.dispose();
+    38→    _movieSlugController.dispose();
+    39→    super.dispose();
+    40→  }
+    41→
+    42→  /// Send notification: saves to Firestore and triggers Cloud Function push
+    43→  Future<void> _sendNotification() async {
+    44→    if (!_formKey.currentState!.validate()) return;
+    45→
+    46→    final confirmed = await showDialog<bool>(
+    47→      context: context,
+    48→      builder: (ctx) => AlertDialog(
+    49→        title: const Text('Send Notification'),
+    50→        content: Column(
+    51→          mainAxisSize: MainAxisSize.min,
+    52→          crossAxisAlignment: CrossAxisAlignment.start,
+    53→          children: [
+    54→            Text('Send this notification to all users?'),
+    55→            const SizedBox(height: 12),
+    56→            Container(
+    57→              padding: const EdgeInsets.all(12),
+    58→              decoration: BoxDecoration(
+    59→                color: const Color(0xFFE50914).withOpacity(0.1),
+    60→                borderRadius: BorderRadius.circular(8),
+    61→                border: Border.all(color: const Color(0xFFE50914).withOpacity(0.3)),
+    62→              ),
+    63→              child: Column(
+    64→                crossAxisAlignment: CrossAxisAlignment.start,
+    65→                children: [
+    66→                  Text(
+    67→                    _titleController.text.trim(),
+    68→                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+    69→                  ),
+    70→                  const SizedBox(height: 4),
+    71→                  Text(
+    72→                    _bodyController.text.trim(),
+    73→                    style: const TextStyle(fontSize: 13),
+    74→                    maxLines: 3,
+    75→                    overflow: TextOverflow.ellipsis,
+    76→                  ),
+    77→                ],
+    78→              ),
+    79→            ),
+    80→          ],
+    81→        ),
+    82→        actions: [
+    83→          TextButton(
+    84→            onPressed: () => Navigator.pop(ctx, false),
+    85→            child: const Text('Cancel'),
+    86→          ),
+    87→          ElevatedButton.icon(
+    88→            onPressed: () => Navigator.pop(ctx, true),
+    89→            icon: const Icon(Icons.send, size: 18),
+    90→            label: const Text('Send'),
+    91→            style: ElevatedButton.styleFrom(
+    92→              backgroundColor: const Color(0xFFE50914),
+    93→              foregroundColor: Colors.white,
+    94→            ),
+    95→          ),
+    96→        ],
+    97→      ),
+    98→    );
+    99→
+   100→    if (confirmed != true) return;
+   101→
+   102→    setState(() => _isSending = true);
+   103→
+   104→    try {
+   105→      final user = FirebaseAuth.instance.currentUser;
+   106→      if (user == null) throw Exception('Not authenticated');
+   107→
+   108→      final notification = NotificationModel(
+   109→        id: '', // Firestore will auto-generate
+   110→        title: _titleController.text.trim(),
+   111→        body: _bodyController.text.trim(),
+   112→        movieId: _includeMovieLink && _movieIdController.text.trim().isNotEmpty
+   113→            ? _movieIdController.text.trim()
+   114→            : null,
+   115→        movieSlug: _includeMovieLink && _movieSlugController.text.trim().isNotEmpty
+   116→            ? _movieSlugController.text.trim()
+   117→            : null,
+   118→        sentBy: user.email ?? user.uid,
+   119→        sentAt: DateTime.now(),
+   120→        isSent: false, // Will be updated after OneSignal confirms
+   121→      );
+   122→
+   123→      // Save to Firestore for history tracking
+   124→      final docRef = await FirebaseFirestore.instance
+   125→          .collection('notifications')
+   126→          .add(notification.toFirestore());
+   127→
+   128→      // Send push notification via OneSignal REST API (free, no server needed)
+   129→      final result = await FcmNotificationService().sendNotificationToAll(
+   130→        title: notification.title,
+   131→        body: notification.body,
+   132→        movieId: notification.movieId,
+   133→        movieSlug: notification.movieSlug,
+   134→      );
+   135→
+   136→      final sent = result['success'] == true;
+   137→      final errorMsg = result['error'] as String?;
+   138→      final recipients = result['recipients'] as int?;
+   139→
+   140→      // Update Firestore with send status
+   141→      await FirebaseFirestore.instance
+   142→          .collection('notifications')
+   143→          .doc(docRef.id)
+   144→          .update({'isSent': sent});
+   145→
+   146→      if (mounted) {
+   147→        // Determine success message based on result
+   148→        String message;
+   149→        Color bgColor;
+   150→
+   151→        if (sent && recipients != null && recipients > 0) {
+   152→          message = 'Notification sent to $recipients device(s)!';
+   153→          bgColor = Colors.green;
+   154→        } else if (sent && (recipients == null || recipients == 0)) {
+   155→          // API accepted but no subscribers yet — this is normal for new apps
+   156→          message = 'Notification queued! Subscribers will receive it once they open the app.';
+   157→          bgColor = Colors.blue;
+   158→        } else {
+   159→          message = 'Push failed: ${errorMsg ?? "Unknown error"}';
+   160→          bgColor = Colors.orange;
+   161→        }
+   162→
+   163→        ScaffoldMessenger.of(context).showSnackBar(
+   164→          SnackBar(
+   165→            content: Text(message),
+   166→            backgroundColor: bgColor,
+   167→            behavior: SnackBarBehavior.floating,
+   168→            duration: Duration(seconds: sent ? 4 : 6),
+   169→          ),
+   170→        );
+   171→        // Clear form
+   172→        _titleController.clear();
+   173→        _bodyController.clear();
+   174→        _movieIdController.clear();
+   175→        _movieSlugController.clear();
+   176→        setState(() {
+   177→          _includeMovieLink = false;
+   178→          _isSending = false;
+   179→        });
+   180→      }
+   181→    } catch (e) {
+   182→      if (mounted) {
+   183→        setState(() => _isSending = false);
+   184→        ScaffoldMessenger.of(context).showSnackBar(
+   185→          SnackBar(
+   186→            content: Text('Failed to send: ${e.toString()}'),
+   187→            backgroundColor: Colors.red,
+   188→            behavior: SnackBarBehavior.floating,
+   189→          ),
+   190→        );
+   191→      }
+   192→    }
+   193→  }
+   194→
+   195→  /// Delete a notification from Firestore
+   196→  Future<void> _deleteNotification(String notificationId) async {
+   197→    final confirmed = await showDialog<bool>(
+   198→      context: context,
+   199→      builder: (ctx) => AlertDialog(
+   200→        title: const Text('Delete Notification'),
+   201→        content: const Text('Are you sure you want to delete this notification?'),
+   202→        actions: [
+   203→          TextButton(
+   204→            onPressed: () => Navigator.pop(ctx, false),
+   205→            child: const Text('Cancel'),
+   206→          ),
+   207→          TextButton(
+   208→            onPressed: () => Navigator.pop(ctx, true),
+   209→            style: TextButton.styleFrom(foregroundColor: Colors.red),
+   210→            child: const Text('Delete'),
+   211→          ),
+   212→        ],
+   213→      ),
+   214→    );
+   215→
+   216→    if (confirmed == true) {
+   217→      try {
+   218→        await FirebaseFirestore.instance
+   219→            .collection('notifications')
+   220→            .doc(notificationId)
+   221→            .delete();
+   222→        if (mounted) {
+   223→          ScaffoldMessenger.of(context).showSnackBar(
+   224→            const SnackBar(content: Text('Notification deleted')),
+   225→          );
+   226→        }
+   227→      } catch (e) {
+   228→        if (mounted) {
+   229→          ScaffoldMessenger.of(context).showSnackBar(
+   230→            SnackBar(
+   231→              content: Text('Delete failed: $e'),
+   232→              backgroundColor: Colors.red,
+   233→            ),
+   234→          );
+   235→        }
+   236→      }
+   237→    }
+   238→  }
+   239→
+   240→  @override
+   241→  Widget build(BuildContext context) {
+   242→    final theme = Theme.of(context);
+   243→    final isDark = theme.brightness == Brightness.dark;
+   244→
+   245→    return DefaultTabController(
+   246→      length: 2,
+   247→      child: Scaffold(
+   248→        appBar: AppBar(
+   249→          title: const Text('Notifications'),
+   250→          bottom: const TabBar(
+   251→            tabs: [
+   252→              Tab(icon: Icon(Icons.send), text: 'Compose'),
+   253→              Tab(icon: Icon(Icons.history), text: 'History'),
+   254→            ],
+   255→          ),
+   256→        ),
+   257→        body: TabBarView(
+   258→          children: [
+   259→            // ===== COMPOSE TAB =====
+   260→            _buildComposeTab(isDark),
+   261→            // ===== HISTORY TAB =====
+   262→            _buildHistoryTab(isDark),
+   263→          ],
+   264→        ),
+   265→      ),
+   266→    );
+   267→  }
+   268→
+   269→  Widget _buildComposeTab(bool isDark) {
+   270→    return SingleChildScrollView(
+   271→      padding: const EdgeInsets.all(16),
+   272→      child: Form(
+   273→        key: _formKey,
+   274→        child: Column(
+   275→          crossAxisAlignment: CrossAxisAlignment.start,
+   276→          children: [
+   277→            // Header
+   278→            Container(
+   279→              padding: const EdgeInsets.all(16),
+   280→              decoration: BoxDecoration(
+   281→                color: const Color(0xFFE50914).withOpacity(0.08),
+   282→                borderRadius: BorderRadius.circular(12),
+   283→                border: Border.all(
+   284→                  color: const Color(0xFFE50914).withOpacity(0.2),
+   285→                ),
+   286→              ),
+   287→              child: Row(
+   288→                children: [
+   289→                  Container(
+   290→                    padding: const EdgeInsets.all(10),
+   291→                    decoration: BoxDecoration(
+   292→                      color: const Color(0xFFE50914).withOpacity(0.15),
+   293→                      shape: BoxShape.circle,
+   294→                    ),
+   295→                    child: const Icon(
+   296→                      Icons.notifications_active,
+   297→                      color: Color(0xFFE50914),
+   298→                      size: 24,
+   299→                    ),
+   300→                  ),
+   301→                  const SizedBox(width: 12),
+   302→                  Expanded(
+   303→                    child: Column(
+   304→                      crossAxisAlignment: CrossAxisAlignment.start,
+   305→                      children: [
+   306→                        const Text(
+   307→                          'Push Notification',
+   308→                          style: TextStyle(
+   309→                            fontWeight: FontWeight.bold,
+   310→                            fontSize: 16,
+   311→                          ),
+   312→                        ),
+   313→                        const SizedBox(height: 2),
+   314→                        Text(
+   315→                          'Send to all subscribed users',
+   316→                          style: TextStyle(
+   317→                            fontSize: 12,
+   318→                            color: isDark ? Colors.white54 : Colors.black54,
+   319→                          ),
+   320→                        ),
+   321→                      ],
+   322→                    ),
+   323→                  ),
+   324→                ],
+   325→              ),
+   326→            ),
+   327→            const SizedBox(height: 24),
+   328→
+   329→            // Title field
+   330→            Text(
+   331→              'Notification Title',
+   332→              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+   333→            ),
+   334→            const SizedBox(height: 6),
+   335→            TextFormField(
+   336→              controller: _titleController,
+   337→              validator: (v) => v == null || v.trim().isEmpty ? 'Title is required' : null,
+   338→              decoration: InputDecoration(
+   339→                hintText: 'e.g. New Movie Added!',
+   340→                prefixIcon: const Icon(Icons.title, size: 20),
+   341→                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+   342→              ),
+   343→              maxLength: 100,
+   344→            ),
+   345→            const SizedBox(height: 16),
+   346→
+   347→            // Body field
+   348→            Text(
+   349→              'Notification Body',
+   350→              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+   351→            ),
+   352→            const SizedBox(height: 6),
+   353→            TextFormField(
+   354→              controller: _bodyController,
+   355→              validator: (v) => v == null || v.trim().isEmpty ? 'Body is required' : null,
+   356→              decoration: InputDecoration(
+   357→                hintText: 'e.g. Check out the latest blockbuster movie...',
+   358→                prefixIcon: const Icon(Icons.message, size: 20),
+   359→                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+   360→              ),
+   361→              maxLines: 4,
+   362→              minLines: 2,
+   363→              maxLength: 500,
+   364→            ),
+   365→            const SizedBox(height: 16),
+   366→
+   367→            // Movie link toggle
+   368→            SwitchListTile(
+   369→              value: _includeMovieLink,
+   370→              onChanged: (val) => setState(() => _includeMovieLink = val),
+   371→              title: const Text(
+   372→                'Link to Movie',
+   373→                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+   374→              ),
+   375→              subtitle: Text(
+   376→                'When tapped, opens a specific movie detail page',
+   377→                style: TextStyle(fontSize: 12, color: isDark ? Colors.white54 : Colors.black54),
+   378→              ),
+   379→              activeColor: const Color(0xFFE50914),
+   380→              contentPadding: EdgeInsets.zero,
+   381→            ),
+   382→
+   383→            // Movie ID & Slug fields (shown when toggle is on)
+   384→            if (_includeMovieLink) ...[
+   385→              const SizedBox(height: 12),
+   386→              Text(
+   387→                'Movie Slug',
+   388→                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+   389→              ),
+   390→              const SizedBox(height: 6),
+   391→              TextFormField(
+   392→                controller: _movieSlugController,
+   393→                decoration: InputDecoration(
+   394→                  hintText: 'e.g. the-dark-knight-2008',
+   395→                  prefixIcon: const Icon(Icons.link, size: 20),
+   396→                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+   397→                ),
+   398→              ),
+   399→              const SizedBox(height: 4),
+   400→              Text(
+   401→                'The slug from the movie URL. Users will navigate to this movie when they tap the notification.',
+   402→                style: TextStyle(fontSize: 11, color: isDark ? Colors.white38 : Colors.black38),
+   403→              ),
+   404→              const SizedBox(height: 12),
+   405→              Text(
+   406→                'Movie ID (optional)',
+   407→                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+   408→              ),
+   409→              const SizedBox(height: 6),
+   410→              TextFormField(
+   411→                controller: _movieIdController,
+   412→                decoration: InputDecoration(
+   413→                  hintText: 'e.g. abc123def456',
+   414→                  prefixIcon: const Icon(Icons.tag, size: 20),
+   415→                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+   416→                ),
+   417→              ),
+   418→            ],
+   419→
+   420→            const SizedBox(height: 24),
+   421→
+   422→            // Preview card
+   423→            if (_titleController.text.isNotEmpty || _bodyController.text.isNotEmpty) ...[
+   424→              Text(
+   425→                'Preview',
+   426→                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+   427→              ),
+   428→              const SizedBox(height: 8),
+   429→              _buildNotificationPreview(isDark),
+   430→              const SizedBox(height: 24),
+   431→            ],
+   432→
+   433→            // Send button
+   434→            SizedBox(
+   435→              width: double.infinity,
+   436→              height: 50,
+   437→              child: ElevatedButton.icon(
+   438→                onPressed: _isSending ? null : _sendNotification,
+   439→                icon: _isSending
+   440→                    ? const SizedBox(
+   441→                        width: 20,
+   442→                        height: 20,
+   443→                        child: CircularProgressIndicator(
+   444→                          strokeWidth: 2,
+   445→                          color: Colors.white,
+   446→                        ),
+   447→                      )
+   448→                    : const Icon(Icons.send, size: 20),
+   449→                label: Text(
+   450→                  _isSending ? 'Sending...' : 'Send Notification',
+   451→                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+   452→                ),
+   453→                style: ElevatedButton.styleFrom(
+   454→                  backgroundColor: const Color(0xFFE50914),
+   455→                  foregroundColor: Colors.white,
+   456→                  disabledBackgroundColor: const Color(0xFFE50914).withOpacity(0.5),
+   457→                  shape: RoundedRectangleBorder(
+   458→                    borderRadius: BorderRadius.circular(12),
+   459→                  ),
+   460→                ),
+   461→              ),
+   462→            ),
+   463→          ],
+   464→        ),
+   465→      ),
+   466→    );
+   467→  }
+   468→
+   469→  Widget _buildNotificationPreview(bool isDark) {
+   470→    return Container(
+   471→      padding: const EdgeInsets.all(12),
+   472→      decoration: BoxDecoration(
+   473→        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+   474→        borderRadius: BorderRadius.circular(12),
+   475→        border: Border.all(
+   476→          color: isDark ? Colors.white12 : Colors.grey.shade300,
+   477→        ),
+   478→        boxShadow: [
+   479→          BoxShadow(
+   480→            color: Colors.black.withOpacity(0.1),
+   481→            blurRadius: 8,
+   482→            offset: const Offset(0, 2),
+   483→          ),
+   484→        ],
+   485→      ),
+   486→      child: Row(
+   487→        children: [
+   488→          // App icon
+   489→          Container(
+   490→            width: 40,
+   491→            height: 40,
+   492→            decoration: BoxDecoration(
+   493→              color: const Color(0xFFE50914),
+   494→              borderRadius: BorderRadius.circular(8),
+   495→            ),
+   496→            child: const Icon(Icons.play_circle_fill, color: Colors.white, size: 24),
+   497→          ),
+   498→          const SizedBox(width: 12),
+   499→          // Title + Body
+   500→          Expanded(
+   501→            child: Column(
+   502→              crossAxisAlignment: CrossAxisAlignment.start,
+   503→              children: [
+   504→                Text(
+   505→                  'KMM',
+   506→                  style: TextStyle(
+   507→                    fontSize: 11,
+   508→                    fontWeight: FontWeight.bold,
+   509→                    color: isDark ? Colors.white54 : Colors.black54,
+   510→                  ),
+   511→                ),
+   512→                Text(
+   513→                  _titleController.text.isEmpty ? 'Notification Title' : _titleController.text,
+   514→                  style: const TextStyle(
+   515→                    fontWeight: FontWeight.bold,
+   516→                    fontSize: 14,
+   517→                  ),
+   518→                  maxLines: 1,
+   519→                  overflow: TextOverflow.ellipsis,
+   520→                ),
+   521→                Text(
+   522→                  _bodyController.text.isEmpty ? 'Notification body text...' : _bodyController.text,
+   523→                  style: TextStyle(
+   524→                    fontSize: 13,
+   525→                    color: isDark ? Colors.white70 : Colors.black87,
+   526→                  ),
+   527→                  maxLines: 2,
+   528→                  overflow: TextOverflow.ellipsis,
+   529→                ),
+   530→              ],
+   531→            ),
+   532→          ),
+   533→        ],
+   534→      ),
+   535→    );
+   536→  }
+   537→
+   538→  Widget _buildHistoryTab(bool isDark) {
+   539→    return StreamBuilder<QuerySnapshot>(
+   540→      stream: FirebaseFirestore.instance
+   541→          .collection('notifications')
+   542→          .orderBy('sentAt', descending: true)
+   543→          .limit(50)
+   544→          .snapshots(),
+   545→      builder: (context, snapshot) {
+   546→        if (snapshot.connectionState == ConnectionState.waiting) {
+   547→          return const Center(child: CircularProgressIndicator());
+   548→        }
+   549→
+   550→        if (snapshot.hasError) {
+   551→          return Center(
+   552→            child: Column(
+   553→              mainAxisAlignment: MainAxisAlignment.center,
+   554→              children: [
+   555→                const Icon(Icons.error_outline, size: 48, color: Colors.redAccent),
+   556→                const SizedBox(height: 16),
+   557→                Text('Error: ${snapshot.error}'),
+   558→              ],
+   559→            ),
+   560→          );
+   561→        }
+   562→
+   563→        final docs = snapshot.data?.docs ?? [];
+   564→
+   565→        if (docs.isEmpty) {
+   566→          return Center(
+   567→            child: Column(
+   568→              mainAxisAlignment: MainAxisAlignment.center,
+   569→              children: [
+   570→                Icon(
+   571→                  Icons.notifications_off_outlined,
+   572→                  size: 64,
+   573→                  color: isDark ? Colors.white24 : Colors.grey.shade400,
+   574→                ),
+   575→                const SizedBox(height: 16),
+   576→                Text(
+   577→                  'No notifications sent yet',
+   578→                  style: TextStyle(
+   579→                    fontSize: 16,
+   580→                    color: isDark ? Colors.white54 : Colors.black54,
+   581→                  ),
+   582→                ),
+   583→                const SizedBox(height: 8),
+   584→                Text(
+   585→                  'Compose and send your first notification',
+   586→                  style: TextStyle(
+   587→                    fontSize: 13,
+   588→                    color: isDark ? Colors.white38 : Colors.black38,
+   589→                  ),
+   590→                ),
+   591→              ],
+   592→            ),
+   593→          );
+   594→        }
+   595→
+   596→        return ListView.builder(
+   597→          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+   598→          itemCount: docs.length,
+   599→          itemBuilder: (context, index) {
+   600→            final notification = NotificationModel.fromFirestore(docs[index]);
+   601→            return _buildNotificationHistoryItem(notification, isDark);
+   602→          },
+   603→        );
+   604→      },
+   605→    );
+   606→  }
+   607→
+   608→  Widget _buildNotificationHistoryItem(NotificationModel notification, bool isDark) {
+   609→    return Card(
+   610→      margin: const EdgeInsets.symmetric(vertical: 4),
+   611→      child: Padding(
+   612→        padding: const EdgeInsets.all(12),
+   613→        child: Row(
+   614→          crossAxisAlignment: CrossAxisAlignment.start,
+   615→          children: [
+   616→            // Status icon
+   617→            Container(
+   618→              padding: const EdgeInsets.all(8),
+   619→              decoration: BoxDecoration(
+   620→                color: notification.isSent
+   621→                    ? Colors.green.withOpacity(0.15)
+   622→                    : Colors.orange.withOpacity(0.15),
+   623→                shape: BoxShape.circle,
+   624→              ),
+   625→              child: Icon(
+   626→                notification.isSent ? Icons.check_circle : Icons.schedule,
+   627→                color: notification.isSent ? Colors.green : Colors.orange,
+   628→                size: 20,
+   629→              ),
+   630→            ),
+   631→            const SizedBox(width: 12),
+   632→            // Content
+   633→            Expanded(
+   634→              child: Column(
+   635→                crossAxisAlignment: CrossAxisAlignment.start,
+   636→                children: [
+   637→                  Row(
+   638→                    children: [
+   639→                      Expanded(
+   640→                        child: Text(
+   641→                          notification.title,
+   642→                          style: const TextStyle(
+   643→                            fontWeight: FontWeight.bold,
+   644→                            fontSize: 14,
+   645→                          ),
+   646→                          maxLines: 1,
+   647→                          overflow: TextOverflow.ellipsis,
+   648→                        ),
+   649→                      ),
+   650→                      // Status badge
+   651→                      Container(
+   652→                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+   653→                        decoration: BoxDecoration(
+   654→                          color: notification.isSent
+   655→                              ? Colors.green.withOpacity(0.15)
+   656→                              : Colors.orange.withOpacity(0.15),
+   657→                          borderRadius: BorderRadius.circular(4),
+   658→                        ),
+   659→                        child: Text(
+   660→                          notification.isSent ? 'SENT' : 'PENDING',
+   661→                          style: TextStyle(
+   662→                            color: notification.isSent ? Colors.green : Colors.orange,
+   663→                            fontSize: 9,
+   664→                            fontWeight: FontWeight.bold,
+   665→                          ),
+   666→                        ),
+   667→                      ),
+   668→                    ],
+   669→                  ),
+   670→                  const SizedBox(height: 4),
+   671→                  Text(
+   672→                    notification.body,
+   673→                    style: TextStyle(
+   674→                      fontSize: 13,
+   675→                      color: isDark ? Colors.white70 : Colors.black87,
+   676→                    ),
+   677→                    maxLines: 2,
+   678→                    overflow: TextOverflow.ellipsis,
+   679→                  ),
+   680→                  const SizedBox(height: 6),
+   681→                  Row(
+   682→                    children: [
+   683→                      Icon(Icons.person_outline, size: 12, color: isDark ? Colors.white38 : Colors.black38),
+   684→                      const SizedBox(width: 4),
+   685→                      Text(
+   686→                        notification.sentBy,
+   687→                        style: TextStyle(
+   688→                          fontSize: 11,
+   689→                          color: isDark ? Colors.white38 : Colors.black38,
+   690→                        ),
+   691→                      ),
+   692→                      const SizedBox(width: 12),
+   693→                      Icon(Icons.access_time, size: 12, color: isDark ? Colors.white38 : Colors.black38),
+   694→                      const SizedBox(width: 4),
+   695→                      Text(
+   696→                        notification.timeAgo,
+   697→                        style: TextStyle(
+   698→                          fontSize: 11,
+   699→                          color: isDark ? Colors.white38 : Colors.black38,
+   700→                        ),
+   701→                      ),
+   702→                      if (notification.movieSlug != null) ...[
+   703→                        const SizedBox(width: 12),
+   704→                        Icon(Icons.link, size: 12, color: const Color(0xFFE50914)),
+   705→                        const SizedBox(width: 4),
+   706→                        Text(
+   707→                          notification.movieSlug!,
+   708→                          style: const TextStyle(fontSize: 11, color: Color(0xFFE50914)),
+   709→                          overflow: TextOverflow.ellipsis,
+   710→                        ),
+   711→                      ],
+   712→                    ],
+   713→                  ),
+   714→                ],
+   715→              ),
+   716→            ),
+   717→            // Delete button
+   718→            IconButton(
+   719→              icon: Icon(Icons.delete_outline, size: 20, color: Colors.red.shade400),
+   720→              onPressed: () => _deleteNotification(notification.id),
+   721→              padding: EdgeInsets.zero,
+   722→              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+   723→            ),
+   724→          ],
+   725→        ),
+   726→      ),
+   727→    );
+   728→  }
+   729→}
+   730→
