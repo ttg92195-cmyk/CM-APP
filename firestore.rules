@@ -120,9 +120,22 @@ service cloud.firestore {
       allow update: if isOwner(userId) && preservesAdminOnlyFields() || isAdmin();
     }
 
-    // NOTIFICATIONS: Admin can write, authenticated users can read their own notifications
+    // NOTIFICATIONS: Admin-only.
+    //
+    // Phase 2.2 (2026-06-28): tightened from `allow read: if request.auth != null`
+    // to `allow read: if isAdmin()`. The notifications collection contains
+    // admin email in the `sentBy` field, which was a reconnaissance vector
+    // — any authenticated user could query db.collection('notifications').get()
+    // and harvest admin account emails. The UI already gates the history tab
+    // behind admin_panel, so legitimate non-admin users never see this data
+    // anyway. Phase 1.1 stopped writing to this collection (admin now sends
+    // via OneSignal Dashboard, not via in-app composer), so only historical
+    // entries remain — locking them to admin-only prevents further leakage.
+    //
+    // Create is still allowed by admin in case future code re-introduces
+    // a Firestore-backed send log. Update/delete admin-only.
     match /notifications/{notificationId} {
-      allow read: if request.auth != null;
+      allow read: if isAdmin();
       allow create: if isAdmin();
       allow update, delete: if isAdmin();
     }
@@ -146,29 +159,13 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
-    // USER_DEVICES: device-tracking for device-limit feature.
-    // Each user can read/write only their own device documents.
-    // The doc ID is the device fingerprint; the doc stores uid, deviceName,
-    // platform, lastActive, etc. Admins can read all devices for support.
-    //
-    // SECURITY FIX: update rule now requires request.resource.data.uid ==
-    // resource.data.uid — previously a user could change the uid field on
-    // their own device doc to someone else's uid, hijacking that user's
-    // device record (e.g. to bypass the per-user device limit).
-    match /user_devices/{deviceId} {
-      allow read: if isAdmin() || (request.auth != null && resource.data.uid == request.auth.uid);
-      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
-      // User can update their own device doc, but cannot change the uid field
-      // (prevents hijacking another user's device record by re-pointing uid).
-      // Parses as: (auth && ownsResource && uidUnchanged) || isAdmin()
-      allow update: if request.auth != null
-        && resource.data.uid == request.auth.uid
-        && request.resource.data.uid == resource.data.uid
-        || isAdmin();
-      allow delete: if isAdmin() || (request.auth != null && resource.data.uid == request.auth.uid);
-    }
-
     // USER SUB-COLLECTIONS (bookmarks, watchlist, history)
+    //
+    // Note: device management does NOT use a separate user_devices
+    // collection. Devices are stored as a `logged_in_devices` array
+    // field on the user document itself (see device_management_service.dart
+    // line ~325). The previous `user_devices/{deviceId}` rule was removed
+    // in Phase 2.2 because it governed a non-existent collection.
     match /users/{userId}/bookmarks/{bookmarkId} {
       allow read, write: if isOwner(userId);
     }
