@@ -64,8 +64,38 @@ class _HomePageState extends State<HomePage> {
       HomeScreen(
         key: _homeKey,
         onNavigateToTab: (index) {
+          // Phase 3.1 — capture previous tab index BEFORE setState so
+          // we can detect tab-switch direction. This callback is
+          // invoked from HomeScreen's "More" button (which always
+          // navigates AWAY from Home to Movies or Series), so in
+          // practice isLeavingHome is always true and isEnteringHome
+          // is always false. But we keep the symmetric pattern for
+          // safety and consistency with onDestinationSelected.
+          final previousIndex = _currentIndex;
+          final isLeavingHome = (previousIndex == kHomeTab && index != kHomeTab);
+          final isEnteringHome = (previousIndex != kHomeTab && index == kHomeTab);
+
+          // Pause banner auto-scroll BEFORE setState so the timer is
+          // cancelled before the IndexedStack re-renders with Home
+          // hidden. IndexedStack keeps HomeScreen mounted, so without
+          // this the timer keeps firing and _currentAbsolutePage drifts
+          // while the user is on another tab.
+          if (isLeavingHome) {
+            _pauseHomeBannerAutoScroll();
+          }
+
           // Switch tab first
           setState(() => _currentIndex = index);
+
+          // Resume banner auto-scroll AFTER setState, deferred to
+          // addPostFrameCallback (inside _resumeHomeBannerAutoScroll)
+          // so the PageController has re-attached to the (now-visible)
+          // PageView before we read its .page to re-sync
+          // _currentAbsolutePage.
+          if (isEnteringHome) {
+            _resumeHomeBannerAutoScroll();
+          }
+
           // Trigger data refresh with skeleton loading when navigating via "More" button
           // This ensures skeleton shows first, then fresh data loads
           if (index == kMoviesTab) {
@@ -124,6 +154,96 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  // ======================================================================
+  // Phase 3.1 — Banner auto-scroll pause/resume on tab switch.
+  //
+  // HomeScreen exposes pauseAutoScroll() and resumeAutoScroll() as
+  // public methods. We call them via the _homeKey GlobalKey whenever
+  // the user leaves or enters the Home tab, so the auto-scroll timer
+  // doesn't keep firing while Home is hidden inside IndexedStack.
+  //
+  // Why this matters: IndexedStack keeps all 4 tab pages mounted, so
+  // the HomeScreen's Timer.periodic keeps ticking while the user is
+  // on Movies/Series/Settings. Each tick increments
+  // _currentAbsolutePage and calls animateToPage() on a hidden
+  // PageView. Flutter throttles offscreen animation frames, so the
+  // animation may not execute visually — but _currentAbsolutePage
+  // keeps drifting ahead. On return to Home, the next tick fires
+  // animateToPage(driftedAbsolutePage) on a now-visible PageView,
+  // producing the "fast-forward" glitch.
+  //
+  // Fix: pause the timer when leaving Home, resume (with re-sync)
+  // when entering Home. The resume path MUST use addPostFrameCallback
+  // so the PageController has re-attached to the (now-visible)
+  // PageView before we read its .page.
+  // ======================================================================
+
+  /// Pause HomeScreen's banner auto-scroll timer. Called when the
+  /// user leaves the Home tab (either via bottom nav tap or via the
+  /// "More" button on Home that switches to another tab). Safe to
+  /// call when Home is not the current tab — IndexedStack keeps
+  /// HomeScreen alive, so the GlobalKey state is always available.
+  void _pauseHomeBannerAutoScroll() {
+    final state = _homeKey.currentState;
+    if (state != null) {
+      // ignore: avoid_dynamic_calls — HomeScreen.pauseAutoScroll() is a public API
+      (state as dynamic).pauseAutoScroll();
+    }
+  }
+
+  /// Resume HomeScreen's banner auto-scroll timer. Called when the
+  /// user enters the Home tab. Uses addPostFrameCallback to ensure
+  /// the PageController has re-attached to the (now-visible) PageView
+  /// before HomeScreen reads its .page to re-sync _currentAbsolutePage.
+  void _resumeHomeBannerAutoScroll() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final state = _homeKey.currentState;
+      if (state != null) {
+        // ignore: avoid_dynamic_calls — HomeScreen.resumeAutoScroll() is a public API
+        (state as dynamic).resumeAutoScroll();
+      }
+    });
+  }
+
+  /// Push a new route from the HomePage, pausing HomeScreen's banner
+  /// auto-scroll while the pushed route is visible and resuming it
+  /// when the route is popped.
+  ///
+  /// This is needed because IndexedStack keeps HomeScreen mounted even
+  /// when a route is pushed on top of HomePage. Without pause/resume,
+  /// the auto-scroll timer keeps firing against the hidden PageView,
+  /// causing _currentAbsolutePage to drift. When the user pops back to
+  /// Home, the next tick fires animateToPage(driftedAbsolutePage) on a
+  /// now-visible PageView, producing the "fast-forward" glitch.
+  ///
+  /// Only pauses if Home is the current tab (if we're on Movies/Series/
+  /// Settings, Home's auto-scroll is already paused from the tab switch).
+  /// Only resumes if Home is still the current tab when the route is
+  /// popped (the user can't switch tabs while the pushed route is
+  /// visible because it covers the bottom nav, but we check defensively).
+  ///
+  /// Set [refreshOnReturn] to true if Home should silently refresh its
+  /// data when the route is popped (e.g., after returning from TMDB
+  /// Generator or Admin Panel where the user may have added/edited
+  /// content).
+  Future<T?> _pushRouteWithBannerPause<T>(
+    WidgetBuilder builder, {
+    bool refreshOnReturn = false,
+  }) {
+    if (_currentIndex == kHomeTab) {
+      _pauseHomeBannerAutoScroll();
+    }
+    return Navigator.push<T>(context, MaterialPageRoute(builder: builder))
+        .then((result) {
+      if (refreshOnReturn) _refreshHomeIfMounted();
+      if (_currentIndex == kHomeTab) {
+        _resumeHomeBannerAutoScroll();
+      }
+      return result;
+    });
+  }
+
+
   @override
   Widget build(BuildContext context) {
     final appConfig = Provider.of<AppConfig>(context);
@@ -180,10 +300,7 @@ class _HomePageState extends State<HomePage> {
           IconButton(
             icon: Icon(Icons.search, color: theme.colorScheme.onSurface),
             onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SearchScreen()),
-              );
+              _pushRouteWithBannerPause((_) => const SearchScreen());
             },
           ),
         ],
@@ -223,10 +340,7 @@ class _HomePageState extends State<HomePage> {
                   }
                 }
                 if (mounted) {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const DownloadPage()),
-                  );
+                  _pushRouteWithBannerPause((_) => const DownloadPage());
                 }
               },
             ),
@@ -290,9 +404,37 @@ class _HomePageState extends State<HomePage> {
             _refreshHomeIfMounted();
             return;
           }
+          // Phase 3.1 — capture previous tab index BEFORE setState so
+          // we can detect tab-switch direction (Home→other vs other→Home).
+          // This is critical: after setState, _currentIndex is already
+          // updated to the new value, so we can't use it to detect the
+          // "leaving Home" vs "entering Home" case.
+          final previousIndex = _currentIndex;
+          final isLeavingHome = (previousIndex == kHomeTab && index != kHomeTab);
+          final isEnteringHome = (previousIndex != kHomeTab && index == kHomeTab);
+
+          // Pause banner auto-scroll BEFORE setState so the timer is
+          // cancelled before the IndexedStack re-renders with Home
+          // hidden. Otherwise the timer could tick one more time
+          // between setState and the next frame, causing a single
+          // spurious animateToPage() call.
+          if (isLeavingHome) {
+            _pauseHomeBannerAutoScroll();
+          }
+
           setState(() {
             _currentIndex = index;
           });
+
+          // Resume banner auto-scroll AFTER setState, but defer the
+          // actual work to addPostFrameCallback (inside
+          // _resumeHomeBannerAutoScroll) so the PageController has
+          // re-attached to the (now-visible) PageView before we read
+          // its .page to re-sync _currentAbsolutePage.
+          if (isEnteringHome) {
+            _resumeHomeBannerAutoScroll();
+          }
+
           // Trigger data refresh when switching to Movies/Series tabs
           if (index == kMoviesTab) {
             final state = _moviesKey.currentState;
@@ -415,10 +557,7 @@ class _HomePageState extends State<HomePage> {
                     isDark: isDark,
                     onTap: () {
                       Navigator.pop(context);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const RecentPage()),
-                      );
+                      _pushRouteWithBannerPause((_) => const RecentPage());
                     },
                   ),
 
@@ -430,10 +569,7 @@ class _HomePageState extends State<HomePage> {
                     isDark: isDark,
                     onTap: () {
                       Navigator.pop(context);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const GenresTagsCollectionsPage()),
-                      );
+                      _pushRouteWithBannerPause((_) => const GenresTagsCollectionsPage());
                     },
                   ),
 
@@ -475,10 +611,7 @@ class _HomePageState extends State<HomePage> {
                       }
 
                       // Permission granted — navigate to Download page
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const DownloadPage()),
-                      );
+                      _pushRouteWithBannerPause((_) => const DownloadPage());
                     },
                   ),
 
@@ -492,10 +625,10 @@ class _HomePageState extends State<HomePage> {
                       isDark: isDark,
                       onTap: () {
                         Navigator.pop(context);
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => const AdminPanelPage()),
-                        ).then((_) => _refreshHomeIfMounted());
+                        _pushRouteWithBannerPause(
+                          (_) => const AdminPanelPage(),
+                          refreshOnReturn: true,
+                        );
                       },
                     ),
                     _buildDrawerItem(
@@ -505,12 +638,10 @@ class _HomePageState extends State<HomePage> {
                       isDark: isDark,
                       onTap: () {
                         Navigator.pop(context);
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const TmdbGeneratorPage(),
-                          ),
-                        ).then((_) => _refreshHomeIfMounted());
+                        _pushRouteWithBannerPause(
+                          (_) => const TmdbGeneratorPage(),
+                          refreshOnReturn: true,
+                        );
                       },
                     ),
                   ],
@@ -526,10 +657,7 @@ class _HomePageState extends State<HomePage> {
                       isDark: isDark,
                       onTap: () {
                         Navigator.pop(context);
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => const ProfilePage()),
-                        );
+                        _pushRouteWithBannerPause((_) => const ProfilePage());
                       },
                     ),
 
@@ -561,10 +689,7 @@ class _HomePageState extends State<HomePage> {
                       isDark: isDark,
                       onTap: () {
                         Navigator.pop(context);
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => const LoginPage()),
-                        );
+                        _pushRouteWithBannerPause((_) => const LoginPage());
                       },
                     ),
                 ],
@@ -709,10 +834,7 @@ class _HomePageState extends State<HomePage> {
         borderRadius: BorderRadius.circular(12),
         onTap: () {
           Navigator.pop(context); // close drawer
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const VipPage()),
-          );
+          _pushRouteWithBannerPause((_) => const VipPage());
         },
         child: Container(
           width: double.infinity,

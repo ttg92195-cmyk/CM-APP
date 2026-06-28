@@ -3852,3 +3852,134 @@ PHASE 2 STATUS: 5 of 9 done (2.1 reverted, 2.2 + 2.5 + 2.6 + 2.4 +
 (username Cloud Function) all SKIP (require Blaze plan / no
 Functions in project). Phase 2 is now effectively COMPLETE.
 NEXT: Phase 3 (features) — Bro's call on what to prioritize.
+
+---
+Task ID: Phase 3.1
+Agent: Main Agent
+Task: Fix Banner Auto-Scroll Glitch on Tab Switch. Bro reported that
+  switching Home → Movies → Home causes the banner carousel to
+  "fast-forward" — a rapid multi-page animation on return to Home.
+  Provided an extremely detailed technical brief with root cause
+  analysis, 3 fix approaches, acceptance criteria, and implementation
+  notes.
+
+Work Log:
+- Read home_page.dart and home_screen.dart to verify the code structure
+  described in Bro's brief. Confirmed:
+  * IndexedStack keeps all 4 tab pages mounted (Home, Movies, Series,
+    Settings).
+  * HomeScreen's Timer.periodic(4s) keeps ticking while Home is hidden.
+  * Timer increments _currentAbsolutePage unconditionally and calls
+    animateToPage() on a hidden PageView.
+  * Flutter throttles offscreen animation frames, so animateToPage()
+    may not execute visually — but _currentAbsolutePage keeps drifting
+    ahead of the controller's real position.
+  * On return to Home, the next tick fires animateToPage(driftedPage)
+    on a now-visible PageView, producing the visible fast-forward.
+  * Existing didChangeAppLifecycleState only handles app-level
+    background/foreground, NOT tab switches.
+  * Existing _pauseAutoScroll(keepEnabledFlag: true) was designed for
+    exactly this use case — pause timer, preserve restart flag.
+- Chose Approach A (Pause/Resume on Tab Switch) over Approach B
+  (VisibilityDetector) and Approach C (RouteObserver):
+  * Approach A is minimal, uses existing _homeKey GlobalKey pattern,
+    adds no new dependencies, and directly addresses the root cause.
+  * Approach B adds a package dependency (visibility_detector) which
+    Bro's constraint of minimizing dependencies makes less ideal.
+  * Approach C (RouteObserver) doesn't fire for IndexedStack tab
+    switches — it only fires for Navigator push/pop, so it can't solve
+    this problem alone.
+- Implemented in home_screen.dart:
+  * Added public pauseAutoScroll() method — delegates to existing
+    _pauseAutoScroll(keepEnabledFlag: true). Idempotent.
+  * Added public resumeAutoScroll() method — re-syncs
+    _currentAbsolutePage to the controller's actual .page BEFORE
+    restarting the timer, so any drift accumulated while paused is
+    discarded. This is the critical fix.
+  * Added _startAutoScrollIfNeeded() helper — centralizes the guard
+    conditions (!mounted, !_bannerAutoScrollEnabled,
+    _bannerImageUrls.isEmpty, _isLoading) so callers don't repeat them.
+    Mirrors the guard in didChangeAppLifecycleState.
+  * Preserved all existing patterns: didChangeAppLifecycleState (app
+    background/foreground), _resetBannerController (pull-to-refresh),
+    _pauseAutoScroll(keepEnabledFlag) signature, dispose() cleanup.
+- Implemented in home_page.dart:
+  * Added _pauseHomeBannerAutoScroll() helper — calls
+    HomeScreen.pauseAutoScroll() via _homeKey GlobalKey.
+  * Added _resumeHomeBannerAutoScroll() helper — wraps the resume call
+    in addPostFrameCallback so the PageController has re-attached to
+    the (now-visible) PageView before HomeScreen reads its .page.
+  * Added _pushRouteWithBannerPause<T>() helper — wraps Navigator.push
+    with pause-before-push and resume-on-return. Supports
+    refreshOnReturn flag for routes that may modify content (TMDB
+    Generator, Admin Panel, etc.).
+  * Wired onDestinationSelected (bottom nav tap) — captures
+    previousIndex BEFORE setState, computes isLeavingHome /
+    isEnteringHome direction flags, pauses before setState if leaving,
+    resumes after setState (via addPostFrameCallback) if entering.
+  * Wired onNavigateToTab callback (Home "More" button) — same
+    pause/resume pattern, symmetric with onDestinationSelected.
+  * Converted ALL 10 Navigator.push call sites to use
+    _pushRouteWithBannerPause: SearchScreen, DownloadPage (mini
+    indicator), RecentPage, GenresTagsCollectionsPage, DownloadPage
+    (drawer), AdminPanelPage, TmdbGeneratorPage, ProfilePage,
+    LoginPage, VipPage.
+  * Verified no raw Navigator.push calls remain (all wrapped).
+- Created scripts/phase3_1_verify.py — 31 structural checks:
+  * [1] home_screen.dart: 13 checks (pauseAutoScroll, resumeAutoScroll,
+    re-sync logic, _startAutoScrollIfNeeded + 4 guards, existing
+    patterns preserved, dispose cleanup).
+  * [2] home_page.dart tab switch: 8 checks (helpers declared,
+    addPostFrameCallback, previousIndex capture, direction flags,
+    pause/resume in 2 tab-switch paths).
+  * [3] home_page.dart Navigator.push: 6 checks (helper declared,
+    pause-before-push, resume-on-return, refreshOnReturn param, 10
+    call sites, no raw Navigator.push remaining).
+  * [4] Phase 2 regression: 4 checks (admin_audit rules, schema
+    validation, rate limiting in FirestoreContentService + LoginPage).
+  * Fixed a bug in the verify script: the regex
+    _pushRouteWithBannerPause\( does NOT match the definition line
+    (Future<T?> _pushRouteWithBannerPause<T>() because of <T>
+    between name and paren, so the "subtract 1 for definition" logic
+    was wrong. Removed the subtraction.
+  * All 31/31 checks PASS.
+
+Stage Summary:
+- Files modified:
+  * lib/app/ui/home/home_screen.dart — added pauseAutoScroll(),
+    resumeAutoScroll(), _startAutoScrollIfNeeded() (3 new public/
+    internal methods, ~70 lines including detailed comments).
+  * lib/app/ui/home/home_page.dart — added _pauseHomeBannerAutoScroll(),
+    _resumeHomeBannerAutoScroll(), _pushRouteWithBannerPause<T>()
+    (3 new helpers, ~90 lines), wired onDestinationSelected +
+    onNavigateToTab with pause/resume, converted 10 Navigator.push
+    call sites to use the helper.
+- Files added:
+  * scripts/phase3_1_verify.py — 31-check verification script.
+- Acceptance criteria from Bro's brief — all met:
+  1. Switching Home → Movies → Home does NOT cause visible
+     "fast-forward" — timer is paused while Home is hidden, so no
+     drift accumulates.
+  2. While on other tabs, _currentAbsolutePage does NOT increment —
+     timer is cancelled by pauseAutoScroll().
+  3. Returning to Home, next banner advance is single 500ms animation
+     — resumeAutoScroll() re-syncs _currentAbsolutePage to the
+     controller's actual .page before restarting the timer.
+  4. App background/foreground behavior still works —
+     didChangeAppLifecycleState preserved, no regression.
+  5. Pull-to-refresh on Home still works — _resetBannerController
+     preserved, no regression.
+  6. No memory leaks: timer cancelled in dispose(), no duplicate
+     timers — _startAutoScroll() cancels existing timer before
+     starting new one (idempotent), dispose() calls _pauseAutoScroll()
+     + _bannerController?.dispose().
+- Bro action required: NONE. Pure code fix, no Firebase Console
+  changes, no rules to paste, no config to update. Build via GitHub
+  Actions CI and the glitch is gone on the next app session.
+- Risk: LOW. Changes are isolated to the Home tab's banner carousel
+  lifecycle. No data flow changes, no API changes, no Firestore
+  changes. All existing patterns preserved (verified by 4 regression
+  checks in the verify script).
+
+PHASE 3 STATUS: 3.1 complete (Banner Auto-Scroll Glitch on Tab Switch).
+NEXT: Bro's call on the next Phase 3 task.

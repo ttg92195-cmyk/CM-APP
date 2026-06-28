@@ -172,6 +172,78 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// initial load (initState → _loadData) and on pull-to-refresh.
   Future<void> refresh() => _refreshSilently();
 
+  // ======================================================================
+  // Phase 3.1 — Banner auto-scroll pause/resume on tab switch.
+  //
+  // IndexedStack keeps HomeScreen mounted across tab switches, which
+  // means the auto-scroll Timer.periodic keeps firing while the user
+  // is on Movies/Series/Settings. Each tick increments
+  // _currentAbsolutePage and calls animateToPage() on a hidden
+  // PageView. Flutter throttles animation frames for offscreen
+  // widgets, so the animation may not actually execute visually —
+  // but _currentAbsolutePage keeps drifting ahead of the controller's
+  // real position. When the user returns to Home, the next tick fires
+  // animateToPage(driftedAbsolutePage) on a now-visible PageView, and
+  // Flutter dutifully animates from real position to drifted position
+  // in 500ms — producing the visible "fast-forward" glitch Bro
+  // reported.
+  //
+  // Fix: home_page.dart calls pauseAutoScroll() when leaving the Home
+  // tab, and resumeAutoScroll() when entering it. The resume path
+  // MUST re-sync _currentAbsolutePage to the controller's actual page
+  // BEFORE restarting the timer, so any drift accumulated during the
+  // hidden period is discarded. (Pause already cancels the timer, so
+  // no further drift accumulates — but resume re-syncs defensively in
+  // case anything else touched the controller while we were gone.)
+  // ======================================================================
+
+  /// Pause the banner auto-scroll timer. Idempotent — safe to call
+  /// when already paused. Preserves _bannerAutoScrollEnabled so the
+  /// timer can be restarted by [resumeAutoScroll] or by
+  /// [didChangeAppLifecycleState] on app resume.
+  ///
+  /// Called by home_page.dart when:
+  ///   - User switches from Home tab to another tab (bottom nav tap)
+  ///   - User taps "More" button on Home which switches to another tab
+  ///   - User opens a drawer item that pushes a new route (Home becomes
+  ///     obscured by the pushed route)
+  void pauseAutoScroll() {
+    _pauseAutoScroll(keepEnabledFlag: true);
+  }
+
+  /// Resume the banner auto-scroll timer. Idempotent — safe to call
+  /// when already running. Re-syncs _currentAbsolutePage to the
+  /// controller's actual current page BEFORE starting the timer, so
+  /// any drift accumulated while paused is discarded.
+  ///
+  /// Should be called inside addPostFrameCallback by home_page.dart
+  /// to ensure the PageController has re-attached to the PageView
+  /// (which is now visible again) before we read its .page.
+  void resumeAutoScroll() {
+    if (!mounted) return;
+    // Re-sync _currentAbsolutePage defensively. The timer was
+    // cancelled by pauseAutoScroll, so no further drift should have
+    // accumulated — but if anything else (e.g. a user swipe, or a
+    // race with didChangeAppLifecycleState) touched the controller,
+    // we want to start from the controller's actual position, not a
+    // stale cached value.
+    if (_bannerController != null && _bannerController!.hasClients) {
+      _currentAbsolutePage = _bannerController!.page?.round() ?? _currentAbsolutePage;
+    }
+    _startAutoScrollIfNeeded();
+  }
+
+  /// Internal: start the auto-scroll timer only if all preconditions
+  /// are met. Centralizes the guard conditions so callers don't have
+  /// to repeat them. Mirrors the guard in didChangeAppLifecycleState.
+  void _startAutoScrollIfNeeded() {
+    if (!mounted) return;
+    if (!_bannerAutoScrollEnabled) return;
+    if (_bannerImageUrls.isEmpty) return;
+    if (_isLoading) return;
+    _startAutoScroll();
+  }
+
   /// Stop the auto-scroll timer WITHOUT touching the PageController.
   /// Used during loading/refresh transitions so the timer doesn't keep
   /// firing animateToPage() against a controller that may be unmounted
