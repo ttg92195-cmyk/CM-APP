@@ -6,6 +6,7 @@ import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/models/movie_detail.dart';
 import 'package:cm_movies/app/core/models/tag_and_genres.dart';
 import 'package:cm_movies/app/core/services/admin_audit_service.dart';
+import 'package:cm_movies/app/core/services/rate_limiter_service.dart';
 
 class FirestoreContentService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -1702,6 +1703,17 @@ class FirestoreContentService {
     bool skipAdminCheck = false,
     bool skipAuditLog = false,
   }) async {
+    // Phase 2.8: rate-limit admin writes to stop runaway loops.
+    // Note: BatchImportService calls addMovie in a tight loop with
+    // skipAdminCheck:true. The rate limit is enforced on the OUTER
+    // call (BatchImportService.runImport), not here per-movie, so
+    // skipAdminCheck callers also skip the rate limit check to avoid
+    // false positives. A 100-movie batch would otherwise blow through
+    // the 30/min limit in 30s. The batch-level rate limit
+    // (batch_import.start: 5/hour) is the real backstop.
+    if (!skipAdminCheck) {
+      RateLimiter.instance.enforce(RateLimitPolicies.movieAdd);
+    }
     if (!skipAdminCheck) await _requireAdmin();
     // Auto-generate slug if not provided
     if (!data.containsKey('slug') || (data['slug'] as String).isEmpty) {
@@ -2140,6 +2152,7 @@ class FirestoreContentService {
 
   /// Update a movie (admin only)
   Future<void> updateMovie(String id, Map<String, dynamic> data) async {
+    RateLimiter.instance.enforce(RateLimitPolicies.movieUpdate);
     await _requireAdmin();
     // Get old movie data to update counts
     final oldDoc = await _moviesRef.doc(id).get();
@@ -2210,6 +2223,7 @@ class FirestoreContentService {
 
   /// Delete a movie (admin only)
   Future<void> deleteMovie(String id) async {
+    RateLimiter.instance.enforce(RateLimitPolicies.movieDelete);
     await _requireAdmin();
     // Get movie data to update counts
     final doc = await _moviesRef.doc(id).get();
@@ -2252,6 +2266,7 @@ class FirestoreContentService {
 
   /// Add a genre (admin only)
   Future<String> addGenre(String name) async {
+    RateLimiter.instance.enforce(RateLimitPolicies.genreAdd);
     await _requireAdmin();
     final docRef = await _genresRef.add({
       'name': name,
@@ -2268,6 +2283,7 @@ class FirestoreContentService {
 
   /// Update a genre (admin only)
   Future<void> updateGenre(String id, String name) async {
+    RateLimiter.instance.enforce(RateLimitPolicies.genreUpdate);
     await _requireAdmin();
     await _genresRef.doc(id).update({'name': name});
     unawaited(AdminAuditService.instance.record(
@@ -2280,6 +2296,7 @@ class FirestoreContentService {
 
   /// Delete a genre (admin only)
   Future<void> deleteGenre(String id) async {
+    RateLimiter.instance.enforce(RateLimitPolicies.genreDelete);
     await _requireAdmin();
     await _genresRef.doc(id).delete();
     unawaited(AdminAuditService.instance.record(
@@ -2291,6 +2308,7 @@ class FirestoreContentService {
 
   /// Add a tag (admin only)
   Future<String> addTag(String name) async {
+    RateLimiter.instance.enforce(RateLimitPolicies.tagAdd);
     await _requireAdmin();
     final docRef = await _tagsRef.add({
       'name': name,
@@ -2307,6 +2325,7 @@ class FirestoreContentService {
 
   /// Update a tag (admin only)
   Future<void> updateTag(String id, String name) async {
+    RateLimiter.instance.enforce(RateLimitPolicies.tagUpdate);
     await _requireAdmin();
     await _tagsRef.doc(id).update({'name': name});
     unawaited(AdminAuditService.instance.record(
@@ -2319,6 +2338,7 @@ class FirestoreContentService {
 
   /// Delete a tag (admin only)
   Future<void> deleteTag(String id) async {
+    RateLimiter.instance.enforce(RateLimitPolicies.tagDelete);
     await _requireAdmin();
     await _tagsRef.doc(id).delete();
     unawaited(AdminAuditService.instance.record(
@@ -2330,6 +2350,7 @@ class FirestoreContentService {
 
   /// Add a collection (admin only)
   Future<String> addCollection(String name) async {
+    RateLimiter.instance.enforce(RateLimitPolicies.collectionAdd);
     await _requireAdmin();
     final docRef = await _collectionsRef.add({
       'name': name,
@@ -2346,6 +2367,7 @@ class FirestoreContentService {
 
   /// Update a collection (admin only)
   Future<void> updateCollection(String id, String name) async {
+    RateLimiter.instance.enforce(RateLimitPolicies.collectionUpdate);
     await _requireAdmin();
     await _collectionsRef.doc(id).update({'name': name});
     unawaited(AdminAuditService.instance.record(
@@ -2358,6 +2380,7 @@ class FirestoreContentService {
 
   /// Delete a collection (admin only)
   Future<void> deleteCollection(String id) async {
+    RateLimiter.instance.enforce(RateLimitPolicies.collectionDelete);
     await _requireAdmin();
     await _collectionsRef.doc(id).delete();
     unawaited(AdminAuditService.instance.record(
@@ -2407,6 +2430,7 @@ class FirestoreContentService {
   /// Save banner configuration to Firestore
   /// Writes 'imageUrls' array to 'app_settings/banner_config' document
   Future<void> saveBannerConfig(List<String> imageUrls) async {
+    RateLimiter.instance.enforce(RateLimitPolicies.bannerUpdate);
     await _requireAdmin();
     try {
       await _firestore.collection('app_settings').doc('banner_config').set({

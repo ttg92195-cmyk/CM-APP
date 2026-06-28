@@ -5,6 +5,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:cm_movies/app/core/models/notification_model.dart';
 import 'package:cm_movies/app/core/services/admin_audit_service.dart';
+import 'package:cm_movies/app/core/services/rate_limiter_service.dart';
 
 /// Admin Notification Page — shows notification history and a launcher to the
 /// OneSignal Dashboard where push notifications are now sent.
@@ -373,6 +374,8 @@ class _AdminNotificationPageState extends State<AdminNotificationPage> {
 
     if (confirmed == true) {
       try {
+        // Phase 2.8 — rate-limit notification deletes.
+        RateLimiter.instance.enforce(RateLimitPolicies.notificationDelete);
         await FirebaseFirestore.instance
             .collection('notifications')
             .doc(notificationId)

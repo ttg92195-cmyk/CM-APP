@@ -3695,3 +3695,160 @@ PHASE 2 STATUS: 4 of 9 done (2.1 reverted, 2.2 + 2.5 + 2.6 + 2.4 complete).
 NEXT: 2.8 (client-side rate limiting) — optional, low priority for
 this app's threat model. Or wrap up Phase 2 and move to Phase 3
 (features). Bro's call.
+
+---
+Task ID: Phase2.8
+Agent: main
+Task: Client-side rate limiting — throttle admin writes, auth attempts,
+and other high-frequency actions to prevent abuse and runaway loops.
+
+Work Log:
+- Pulled main (9e73fe5). Read worklog to confirm Phase 2 state:
+  2.1 reverted, 2.2 + 2.5 + 2.6 + 2.4 complete. Phase 2.8 is the
+  next (and likely final) Phase 2 task before moving to Phase 3.
+- Design step 1: scoped what "client-side rate limiting" means for
+  this app.
+  Threat model recap:
+    - Sideloaded APK (no Play Store, no Play Integrity)
+    - No Firebase Blaze plan (no Cloud Functions for server-side limits)
+    - Firebase Auth has its own ~100/min/IP server-side rate limit for
+      sign-in and account creation — that's the real backstop for auth
+    - Firestore Security Rules (Phase 2.2/2.6) + Admin Audit Log
+      (Phase 2.4) are the authoritative server-side protections
+  Conclusion: client-side rate limiting is a UX-layer + defense-in-
+  depth control, NOT a security boundary. It prevents:
+    - Bugs (infinite loops, accidental rapid taps)
+    - Casual abuse (a non-technical user clicking delete 100 times)
+    - Quota burn (saving TMDB API calls, Firestore writes)
+  It does NOT stop a determined attacker (who can modify the APK to
+  bypass it). That's an accepted trade-off given the constraints.
+- Design step 2: chose sliding-window over fixed-window.
+  Sliding window gives more accurate throttling — an admin who
+  makes 25 writes at 11:00:59 and 5 more at 11:01:01 is correctly
+  blocked from the 31st write, whereas a fixed 1-minute window would
+  reset at 11:01:00 and allow it. Implementation: keep a list of
+  timestamps per action ID, prune entries older than the window on
+  each check. O(n) per check but n is tiny (capped at maxCount+1).
+- Design step 3: chose in-memory over SharedPreferences persistence.
+  Trade-off: restarting the app resets limits. Accepted because:
+    - Admin actions: audit log already records every action; limits
+      are about UX, not security
+    - Login attempts: Firebase Auth's server-side ~100/min/IP limit
+      is the real backstop; in-memory limit is UX-layer feedback
+    - Adding persistence doubles the code complexity for little
+      benefit. If we later need it (e.g., for a stricter login
+      lockout), we can add it as Phase 2.8.1.
+- Design step 4: chose throw-based API with non-throwing variant.
+  enforce() throws RateLimitExceededException. tryEnforce() returns
+  bool. canDo() peeks without recording. retryAfter() returns the
+  Duration until next-allowed.
+  Rationale: the existing admin UI uses `try/catch (e) { SnackBar(
+  Text('Error: $e')) }` pattern everywhere. A thrown exception
+  flows through that pattern naturally — no caller changes needed
+  beyond adding the enforce() call. The non-throwing variant is
+  for callers that want explicit control (login_page.dart uses it
+  to give custom "try again in Ns" messages).
+- Implementation step 1: created lib/app/core/services/rate_limiter_service.dart
+  - RateLimitExceededException class with actionId, retryAfter,
+    limit, window fields + userMessage getter that formats a
+    "Too many actions. Try again in Ns. (Limit: X per Ym)" string.
+  - RateLimitPolicies class with 25 action ID constants (3 movies +
+    3 genres + 3 tags + 3 collections + 1 banner + 1 notification +
+    2 batch_import + 6 user admin + 3 auth = 25) and a private
+    _policies map of (maxCount, window) tuples.
+  - RateLimiter singleton with enforce/tryEnforce/canDo/retryAfter
+    methods + reset/resetAction for testing.
+- Implementation step 2: tuned the limits.
+  Generous for normal use, tight enough to stop runaway loops:
+    - movie.add: 30/min — admin adds ~1 movie/2s normally
+    - movie.update: 60/min — inline edits more frequent
+    - movie.delete: 20/min — deletes are rare
+    - genre/tag/collection CRUD: 30/min each
+    - banner.update: 5/min — banner edits very rare
+    - notification.delete: 20/min
+    - batch_import.start: 5/hour — heavy operation
+    - batch_import.delete: 30/min
+    - user.ban/unban/forceLogout: 20/min each
+    - user.role_change: 10/min — sensitive (privilege escalation)
+    - user.vip_grant/revoke: 20/min each
+    - auth.login.attempt: 10/min — complementary to existing 5/30s
+    - auth.signup.attempt: 3/min — tight (signups are rare)
+    - auth.password.reset: 3/min — tight (emails are expensive)
+- Implementation step 3: wired rate limits into 24 call sites.
+  - firestore_content_service.dart: 13 enforce() calls
+    (addMovie, updateMovie, deleteMovie, 3 genre, 3 tag, 3 collection,
+    saveBannerConfig). addMovie SKIPS the rate limit when called with
+    skipAdminCheck=true (BatchImportService uses this for tight loops;
+    the batch_import.start limit is the real backstop at the outer call).
+  - batch_import_service.dart: 2 enforce() calls (runImport + deleteImport).
+  - admin_users_page.dart: 6 enforce() calls (ban/unban/forceLogout/
+    roleChange/vipGrant/vipRevoke). The exception is caught by the
+    existing try/catch which displays "Error: <message>" in a SnackBar.
+  - admin_notification_page.dart: 1 enforce() call (deleteNotification).
+  - login_page.dart: 3 tryEnforce() calls (login, register, password
+    reset). Uses the non-throwing variant because we want custom
+    "Try again in Ns" messages rather than the generic "Error: ..." one.
+    The existing 5-failures/30s-lockout is PRESERVED — the new 10/min
+    limit is complementary (counts all attempts, not just failures).
+- Verification step: created scripts/phase2_8_verify.py with 83 checks.
+  Verifies:
+    - rate_limiter_service.dart: class declaration, singleton, exception
+      class with 4 fields, userMessage getter, 4 methods (enforce,
+      tryEnforce, canDo, retryAfter), sliding-window prune via removeWhere.
+    - 25 RateLimitPolicies constants + policy map with 25 entries.
+    - 9 specific limit value checks (regex-based, whitespace-tolerant).
+    - firestore_content_service.dart: import present, 13 rate-limit
+      call sites, addMovie skipAdminCheck guard preserved.
+    - batch_import_service.dart: import present, 2 call sites.
+    - admin_users_page.dart: import present, 6 call sites (ban + unban
+      checked separately since they share a method).
+    - admin_notification_page.dart: import present, 1 call site.
+    - login_page.dart: import present, 3 call sites, existing 5/30s
+      lockout preserved (no regression).
+    - firestore.rules: Phase 2.4 admin_audit rules intact + Phase 2.6
+      schema validation intact (no regression — Phase 2.8 is client-side
+      only, rules file is unchanged).
+  All 83 checks PASS.
+- Regression check: re-ran all 4 prior Phase 2 verification scripts.
+    phase2_2_audit_check.py: PASS (no regression)
+    phase2_4_verify.py:        PASS (no regression)
+    phase2_5_verify.py:        PASS (no regression)
+    phase2_6_verify.py:        PASS (no regression)
+- Sanity check: brace/paren/bracket balance on all 6 modified files.
+  All balanced. (batch_import_service.dart has a pre-existing 3-extra-
+  close-paren imbalance from `)` characters in comments/strings; my
+  changes added 3 open + 3 close, preserving the balance.)
+
+Stage Summary:
+- 24 rate-limit checks now enforce throttling across admin writes,
+  batch imports, admin user actions, notification deletes, and all
+  three auth flows (login, signup, password reset).
+- API is throw-based (enforce) with a non-throwing variant (tryEnforce)
+  for callers that want custom error UX.
+- Limits are intentionally generous for normal use; tight enough to
+  stop runaway loops and casual abuse.
+- NO firestore.rules changes (client-side only). NO build config
+  changes. NO new dependencies.
+- RateLimiter is in-memory only — restarting the app resets limits.
+  This is an accepted trade-off given the threat model. Firebase
+  Auth's server-side ~100/min/IP limit is the real backstop for auth
+  flows; Firestore Security Rules + Admin Audit Log are the real
+  backstops for admin writes.
+- Existing 5-failures/30s-lockout in login_page.dart is PRESERVED.
+  The new 10/min login limit is complementary — it counts ALL
+  attempts (success + fail), while the existing one counts only
+  failures and triggers a hard 30s lockout.
+- Bro action required: NONE. This phase is purely client-side — no
+  Firebase Console changes, no rules to paste, no config to update.
+  Build via GitHub Actions CI and the rate limits activate
+  automatically on the next app session.
+- Tuning note: if any limit feels too tight in real use (e.g., a
+  legitimate admin workflow hits the 30/min movie.add limit), all
+  values are centralized in rate_limiter_service.dart's _policies
+  map — edit one place, rebuild, done.
+
+PHASE 2 STATUS: 5 of 9 done (2.1 reverted, 2.2 + 2.5 + 2.6 + 2.4 +
+2.8 complete). 2.3 (storage.rules) + 2.7 (Functions audit) + 2.9
+(username Cloud Function) all SKIP (require Blaze plan / no
+Functions in project). Phase 2 is now effectively COMPLETE.
+NEXT: Phase 3 (features) — Bro's call on what to prioritize.

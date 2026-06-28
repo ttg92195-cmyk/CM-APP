@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/ui/components/no_toolbar_on_single_tap_text_field.dart';
 import 'package:cm_movies/app/core/services/admin_audit_service.dart';
+import 'package:cm_movies/app/core/services/rate_limiter_service.dart';
 import 'package:provider/provider.dart';
 
 class AdminUsersPage extends StatefulWidget {
@@ -89,6 +90,12 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
   Future<void> _toggleBan(String uid, bool currentlyBanned) async {
     try {
+      // Phase 2.8 — rate-limit admin user actions.
+      RateLimiter.instance.enforce(
+        currentlyBanned
+            ? RateLimitPolicies.userUnban
+            : RateLimitPolicies.userBan,
+      );
       await _firestore.collection('users').doc(uid).update({
         'isBanned': !currentlyBanned,
       });
@@ -122,6 +129,8 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
   Future<void> _forceLogout(String uid) async {
     try {
+      // Phase 2.8 — rate-limit admin user actions.
+      RateLimiter.instance.enforce(RateLimitPolicies.userForceLogout);
       await _firestore.collection('users').doc(uid).update({
         'logged_in_devices': [],
         'forceLogout': true,
@@ -155,6 +164,10 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   Future<void> _changeRole(String uid, String currentRole) async {
     final newRole = currentRole == 'admin' ? 'user' : 'admin';
     try {
+      // Phase 2.8 — rate-limit admin user actions. Role changes are
+      // sensitive (privilege escalation), so the limit is tighter
+      // (10/min vs 20/min for other user actions).
+      RateLimiter.instance.enforce(RateLimitPolicies.userRoleChange);
       await _firestore.collection('users').doc(uid).update({
         'isAdmin': newRole == 'admin',
         'role': newRole,
@@ -299,6 +312,8 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                   TextButton.icon(
                     onPressed: () async {
                       try {
+                        // Phase 2.8 — rate-limit admin user actions.
+                        RateLimiter.instance.enforce(RateLimitPolicies.userVipRevoke);
                         await _firestore.collection('users').doc(uid).update({
                           'isVip': false,
                           'vipExpiry': '',
@@ -354,6 +369,8 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                       ? null
                       : () async {
                           try {
+                            // Phase 2.8 — rate-limit admin user actions.
+                            RateLimiter.instance.enforce(RateLimitPolicies.userVipGrant);
                             // Calculate expiry date
                             final expiryDate = DateTime.now().add(Duration(days: selectedDays!));
                             final expiryString = '${expiryDate.year}-${expiryDate.month.toString().padLeft(2, '0')}-${expiryDate.day.toString().padLeft(2, '0')}';

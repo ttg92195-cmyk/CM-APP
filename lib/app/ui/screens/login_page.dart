@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/services/bookmark_service.dart';
 import 'package:cm_movies/app/core/services/device_management_service.dart';
+import 'package:cm_movies/app/core/services/rate_limiter_service.dart';
 import 'package:cm_movies/app/ui/components/device_limit_dialog.dart';
 
 class LoginPage extends StatefulWidget {
@@ -92,6 +93,31 @@ class _LoginPageState extends State<LoginPage>
           backgroundColor: Colors.orange,
         ),
       );
+      return;
+    }
+
+    // Phase 2.8 — global rate limit on login attempts (10/min).
+    // This is COMPLEMENTARY to the existing 5-failures/30s-lockout above:
+    //   - Existing: counts FAILED attempts only, hard lockout for 30s
+    //   - New: counts ALL attempts (success + fail), softer 10/min limit
+    // The new limit catches an attacker trying many different credentials
+    // (none of which trigger the failed-counter) while leaving normal
+    // users unaffected. Firebase Auth's own ~100/min/IP limit is the
+    // real server-side backstop.
+    if (!RateLimiter.instance.tryEnforce(RateLimitPolicies.authLoginAttempt)) {
+      if (mounted) {
+        final retryAfter = RateLimiter.instance
+            .retryAfter(RateLimitPolicies.authLoginAttempt);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Too many login attempts. Try again in '
+              '${retryAfter.inSeconds + 1}s.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
       return;
     }
 
@@ -286,6 +312,28 @@ class _LoginPageState extends State<LoginPage>
 
                           setDialogState(() => _isResettingPassword = true);
 
+                          // Phase 2.8 — rate-limit password reset emails
+                          // (3/min). Reset emails are expensive (Firebase
+                          // sends an actual email) and an attacker could
+                          // spam someone's inbox if not throttled.
+                          if (!RateLimiter.instance.tryEnforce(
+                            RateLimitPolicies.authPasswordReset,
+                          )) {
+                            setDialogState(() => _isResettingPassword = false);
+                            if (ctx.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Too many reset requests. Try again in '
+                                    '${RateLimiter.instance.retryAfter(RateLimitPolicies.authPasswordReset).inSeconds + 1}s.',
+                                  ),
+                                  backgroundColor: Colors.orange,
+                                ),
+                              );
+                            }
+                            return;
+                          }
+
                           try {
                             await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
                             if (ctx.mounted) {
@@ -342,6 +390,30 @@ class _LoginPageState extends State<LoginPage>
 
   Future<void> _handleRegister() async {
     if (!_registerFormKey.currentState!.validate()) return;
+
+    // Phase 2.8 — rate-limit signups (3/min). Tight limit because:
+    //   - Normal users rarely sign up more than once
+    //   - Account-creation spam is a real abuse vector (bad actors
+    //     create many accounts to farm free trials, spam, etc.)
+    //   - Firebase Auth has its own ~100/min/IP server-side limit; this
+    //     is the UX-layer early-warning that gives clear feedback before
+    //     Firebase starts returning quota errors.
+    if (!RateLimiter.instance.tryEnforce(RateLimitPolicies.authSignupAttempt)) {
+      if (mounted) {
+        final retryAfter = RateLimiter.instance
+            .retryAfter(RateLimitPolicies.authSignupAttempt);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Too many signups. Try again in '
+              '${retryAfter.inSeconds + 1}s.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
 
     setState(() {
       _isRegistering = true;

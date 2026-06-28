@@ -7,6 +7,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/core/services/admin_audit_service.dart';
+import 'package:cm_movies/app/core/services/rate_limiter_service.dart';
 
 /// Progress event for the export (backup) phase. Fires after each page fetch
 /// so the UI can show a live counter of how many movies have been exported.
@@ -942,6 +943,12 @@ class BatchImportService {
     bool Function()? shouldStop,
     BatchImportAuditContext? auditContext,
   }) async {
+    // Phase 2.8 — rate-limit batch imports. Each run is expensive
+    // (potentially hundreds of Firestore writes), so the limit is
+    // intentionally tight: 5 per hour. This stops accidental rapid
+    // retries without affecting legitimate use.
+    RateLimiter.instance.enforce(RateLimitPolicies.batchImportStart);
+
     final startedAt = DateTime.now();
 
     // =========================================================================
@@ -1304,6 +1311,8 @@ class BatchImportService {
   /// The actual imported movies are NOT touched — this only removes the
   /// audit-log entry itself.
   Future<void> deleteImport(String id) async {
+    // Phase 2.8 — rate-limit bulk deletions of batch import audit records.
+    RateLimiter.instance.enforce(RateLimitPolicies.batchImportDelete);
     await _firestore.collection(auditCollectionName).doc(id).delete();
     // Phase 2.4 — record this delete in the unified admin_audit log so
     // there's a trace even after the original batch_imports doc is gone.
