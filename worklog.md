@@ -2968,3 +2968,44 @@ Stage Summary:
   - Task 43.1 (OneSignal REST API key leak) — largest task. Will
     require new Cloud Function + client refactor + key rotation.
     Do last.
+
+---
+Task ID: 43-env-recurrence-3
+Agent: main
+Task: CI build failed — .env wiped again by UUID auto-commit. Restore + push.
+
+Work Log:
+- User reported CI build failure: verify_env.py found 3 missing keys
+  (TMDB_API_KEY, ONE_SIGNAL_APP_ID, ONE_SIGNAL_REST_API_KEY).
+- Inspected local .env — confirmed single-line DATABASE_URL only.
+- Traced git log: UUID auto-commit 2344757 (fired right after Task 41
+  restore f55f4b3) overwrote .env from 14 lines / 8 keys back to 1 line.
+  'git show 2344757 -- .env' confirmed: -14 lines, +1 line.
+- All 5 subsequent Task 43 commits (a601768, 4583f35, e1aa205, abbfb60,
+  4be4602) didn't touch .env, so the wiped state persisted into CI.
+- Restored .env from f55f4b3 (last known-good):
+    git show f55f4b3:.env > .env
+- Ran scripts/verify_env.py: 8/8 keys present, 0 missing, 0 empty. OK.
+- Committed as 4af094b with detailed commit message explaining this is
+  the THIRD recurrence of the same UUID-auto-commit wipe pattern
+  (0c51c4c → 5516658 → 2344757).
+- Pushed to origin/main: 4be4602..4af094b.
+
+Stage Summary:
+- .env restored to 8 keys. CI build should pass next run.
+- Root cause is the same as Task 41: UUID auto-commits run 'git add -A'
+  which picks up the local agent's .env (only DATABASE_URL — secrets
+  are not present locally), overwriting the tracked canonical .env.
+- This is the THIRD recurrence. CI verify_env.py guard is working
+  correctly (catching the wipe each time) but doesn't prevent the
+  wipe itself.
+- RECOMMENDED PERMANENT FIX (proposed, not implemented — needs user
+  approval): store canonical .env content as a GitHub Actions Secret,
+  and add a workflow step before verify_env.py that restores .env
+  from that secret. This way even if the repo's .env gets wiped,
+  CI always builds with the canonical version. Requires Bro to:
+    1. Go to repo Settings → Secrets and variables → Actions
+    2. Add a new secret named ENV_FILE with the full .env contents
+    3. Tell me to update the workflow YAML
+- Phase 1 status unchanged: 4 of 6 fixes done (43.5, 43.4, 43.2a, 43.2b).
+  Remaining: 43.3 (waiting for user option pick) and 43.1 (largest, last).
