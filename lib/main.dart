@@ -339,9 +339,13 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
                   ),
                 ),
                 onPressed: () async {
-                  // Try to open Play Store, fallback to a message
+                  // Try to open Play Store, fallback to a message.
+                  // Task 43.5: package id was wrong — real applicationId is
+                  // than.pre.cm (see android/app/build.gradle:55). The old
+                  // 'com.cm.movies' value opened a non-existent Play Store
+                  // listing, so the Update button was effectively broken.
                   final uri = Uri.parse(
-                    'https://play.google.com/store/apps/details?id=com.cm.movies',
+                    'https://play.google.com/store/apps/details?id=than.pre.cm',
                   );
                   if (await canLaunchUrl(uri)) {
                     await launchUrl(uri, mode: LaunchMode.externalApplication);
