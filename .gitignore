@@ -37,3 +37,6 @@ Thumbs.db
 # Generated
 *.g.dart
 *.freezed.dart
+
+# Tool result cache (not for version control)
+tool-results/

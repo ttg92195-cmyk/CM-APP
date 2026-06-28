@@ -61,7 +61,7 @@ def read(rel_path):
 
 
 def check_main_app_check_disabled(c):
-    print("\n[1] main.dart — App Check activation disabled")
+    print("\n[1] main.dart — App Check activation disabled + import removed")
     src = read("lib/main.dart")
     if not src:
         c.fail("file exists", "main.dart missing")
@@ -94,6 +94,51 @@ def check_main_app_check_disabled(c):
         c.ok("Phase 3.2 disable debugPrint active")
     else:
         c.fail("Phase 3.2 disable debugPrint active")
+
+    # The firebase_app_check import should be REMOVED (not just commented)
+    if "import 'package:firebase_app_check/firebase_app_check.dart';" in src:
+        # Check if it's commented out
+        if re.search(r"^\s*//\s*import 'package:firebase_app_check", src, re.MULTILINE):
+            c.ok("firebase_app_check import commented out (package removed)")
+        else:
+            c.fail("firebase_app_check import removed/commented", "import still active")
+    else:
+        # Import fully removed — that's also acceptable
+        if "Phase 3.2: firebase_app_check import REMOVED" in src:
+            c.ok("firebase_app_check import fully removed (with explanation)")
+        else:
+            c.fail("firebase_app_check import removed with explanation")
+
+
+def check_pubspec_app_check_removed(c):
+    print("\n[1b] pubspec.yaml — firebase_app_check dependency removed")
+    src = read("pubspec.yaml")
+    if not src:
+        c.fail("file exists", "pubspec.yaml missing")
+        return
+
+    c.ok("file exists")
+
+    # Check that firebase_app_check is NOT an active dependency line
+    # (it may appear in comments explaining why it was removed)
+    active_dep = re.search(r"^\s*firebase_app_check\s*:", src, re.MULTILINE)
+    if active_dep:
+        c.fail("firebase_app_check removed from dependencies", "still listed as active dependency")
+    else:
+        c.ok("firebase_app_check not in active dependencies")
+
+    # Check that a Phase 3.2 removal explanation exists
+    if "firebase_app_check REMOVED" in src:
+        c.ok("Phase 3.2 removal explanation present")
+    else:
+        c.fail("Phase 3.2 removal explanation present")
+
+    # Other Firebase packages should still be present
+    for pkg in ["firebase_core:", "firebase_auth:", "cloud_firestore:", "firebase_crashlytics:"]:
+        if pkg in src:
+            c.ok(f"{pkg} dependency still present")
+        else:
+            c.fail(f"{pkg} dependency still present")
 
 
 def check_app_config_diagnostic_fields(c):
@@ -262,6 +307,7 @@ def main():
     c = Check()
 
     check_main_app_check_disabled(c)
+    check_pubspec_app_check_removed(c)
     check_app_config_diagnostic_fields(c)
     check_login_page_diagnostic_display(c)
     check_no_regression(c)

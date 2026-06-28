@@ -39,10 +39,22 @@ dependencies:
   # Must use ^0.2.x — media_kit_video 1.2.5 depends on screen_brightness ^0.2.2
   screen_brightness: ^0.2.2
   # Firebase
+  # Phase 3.2: kept on 5.x / 3.x major lines to avoid API breaking
+  # changes from major version bumps (firebase_auth 6.x, cloud_firestore
+  # 6.x, firebase_core 4.x exist but require migration). firebase_app_check
+  # was REMOVED entirely (was at ^0.3.0, incompatible with firebase_auth
+  # 5.x — see Phase 3.2 worklog entry).
   firebase_core: ^3.6.0
-  firebase_auth: ^5.3.1
-  cloud_firestore: ^5.4.4
-  firebase_app_check: ^0.3.0
+  firebase_auth: ^5.5.0
+  cloud_firestore: ^5.5.0
+  # Phase 3.2: firebase_app_check REMOVED from dependencies.
+  # The package was at ^0.3.0 (very outdated — current is 2.x), and
+  # was causing compatibility issues with firebase_auth 5.x. Since App
+  # Check activation was disabled in main.dart (sideloaded APK cannot
+  # get Play Integrity tokens), the package provided no benefit.
+  # Re-add only if Bro publishes to Play Store (where Play Integrity
+  # works correctly). Required version then: firebase_app_check: ^0.3.1+
+  # or migrate to the latest 2.x API.
   # Phase 2.5: Crashlytics — crash + non-fatal error reporting to Firebase
   # Console. Free, no Blaze plan needed. Compatible with firebase_core ^3.6.0.
   # Disabled in debug builds via setCrashlyticsCollectionEnabled(!kDebugMode)

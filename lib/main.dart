@@ -7,7 +7,10 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_app_check/firebase_app_check.dart';
+// Phase 3.2: firebase_app_check import REMOVED — package no longer in
+// pubspec.yaml. App Check activation was disabled (sideloaded APK +
+// Play Integrity incompatibility), so the package provides no benefit.
+// Re-add the package + import only if Bro publishes to Play Store.
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:url_launcher/url_launcher.dart';
