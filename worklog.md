@@ -3202,3 +3202,60 @@ Stage Summary:
        old one was bundled in past APK builds. The new key only
        needs to be entered in the OneSignal Dashboard — no client
        app changes needed.
+
+---
+Task ID: Phase2.1
+Agent: main
+Task: Enforce App Check in firestore.rules + storage.rules.
+
+Work Log:
+- Pre-flight: detected UUID auto-commit f49109d had wiped .env
+  (4th recurrence). Restored .env from 29f5734, committed as cac4bae.
+  CI hybrid fix continues to catch this so no build break.
+- Read main.dart App Check activation (lines 100-150): kReleaseMode
+  gate already in place (Phase 1, Task 43.4). Play Integrity in
+  release, Debug provider fallback in dev only.
+- Read firestore.rules + storage.rules: confirmed App Check was
+  activated in code but NOT enforced in rules (no request.app check
+  anywhere). This is the documented 'activation without enforcement'
+  gap — App Check tokens are issued but rules don't verify them.
+- Added isVerifiedApp() helper to both rules files: returns
+  request.app != null.
+- Added && isVerifiedApp() to every allow rule in both files, with
+  ONE documented exception:
+    firestore.rules users/{userId} list (must stay public for
+    pre-auth username lookup — residual risk from Phase 1.3, can
+    only be fully fixed by Cloud Function migration)
+- Created scripts/phase2_1_syntax_check.py:
+    - brace balance check (handles strings + comments)
+    - helper-defined check
+    - every allow rule has isVerifiedApp() (handles multi-line
+      statements terminated by ';', strips // comments with
+      proper quote-state tracking to avoid false positives)
+    - Verified: 0 errors. 31 FS rules + 7 ST rules checked.
+- Committed as 372cc2b, pushed to origin/main.
+
+Stage Summary:
+- App Check enforcement is now in RULES, not just code activation.
+- An attacker who decompiles the APK and extracts Firebase creds
+  can no longer call Firestore/Storage directly from a script —
+  the rules require a valid App Check token.
+- CRITICAL follow-up action required from Bro AFTER deploying
+  these rules:
+    1. Deploy rules: firebase deploy --only firestore:rules,storage:rules
+    2. Verify a fresh app build still works (login, profile, browse,
+       storage image loads)
+    3. Firebase Console → App Check → Firestore → toggle Enforce ON
+    4. Firebase Console → App Check → Storage → toggle Enforce ON
+    5. Verify app still works after enforcement toggled ON
+    6. If anything breaks, toggle Console enforcement OFF immediately
+       and report back — rules will then degrade gracefully (allow
+       regardless of app token) while we investigate.
+- Residual risk: users/{userId} list query remains public (can't
+  require isVerifiedApp without breaking the login flow). Phase 2.9
+  (Cloud Function migration) is the only full fix.
+
+PHASE 2 STATUS: 1 of 9 done (2.1).
+NEXT: 2.2 (Full Firestore rules audit) — but Bro should test the
+build first and decide whether to enable Console enforcement before
+we add more rule changes on top.
