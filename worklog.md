@@ -3550,3 +3550,148 @@ NEXT: 2.4 (admin audit log — record admin actions for accountability)
 or 2.8 (client-side rate limiting). Both free, no Blaze needed.
 Suggest 2.4 first (accountability matters more than throttling for
 this app's threat model — admin actions are the high-value target).
+
+---
+Task ID: Phase2.4
+Agent: main
+Task: Admin audit log — record every admin write action for accountability.
+
+Work Log:
+- Pulled main (38043ff). Read worklog to understand Phase 2 state:
+  2.1 reverted, 2.2 + 2.5 + 2.6 complete.
+- Audit step 1: enumerated ALL admin write paths in code.
+  Found 5 source files that perform admin writes:
+    - firestore_content_service.dart (movies, genres, tags, collections,
+      app_settings/banner_config) — 14 methods: addMovie (3 paths),
+      updateMovie, deleteMovie, addGenre/updateGenre/deleteGenre,
+      addTag/updateTag/deleteTag, addCollection/updateCollection/
+      deleteCollection, saveBannerConfig.
+    - batch_import_service.dart (batch_imports audit + addMovie via
+      _contentService.addMovie with skipAdminCheck:true)
+    - admin_users_page.dart (users: ban/unban, forceLogout, roleChange,
+      VIP grant/revoke — 5 distinct actions)
+    - admin_notification_page.dart (notifications delete only — Phase
+      1.1 stopped writes)
+  Total: 22 distinct admin actions to audit-log.
+- Audit step 2: designed admin_audit collection schema.
+  Required fields: action (string), collection (string), adminUid
+  (non-empty string), timestamp (server timestamp), success (bool),
+  details (map, freeform, capped at 20 keys).
+  Optional fields: adminEmail (string), appVersion (string), docId
+  (string).
+  Security model:
+    - read: admin-only
+    - create: admin-only + schema-validated (isValidAuditEntry)
+    - update, delete: DENIED (if false) — immutable audit trail
+  Bro can still delete via Firebase Console directly (Console bypasses
+  rules) for compliance cleanup.
+- Audit step 3: created AdminAuditService singleton.
+  - record() method: reads adminUid + adminEmail from FirebaseAuth,
+    writes one doc to admin_audit collection.
+  - Catches all errors via debugPrint — NEVER throws (audit failures
+    don't break the main action).
+  - 22 AdminAuditAction constants + 8 AdminAuditCollection constants.
+  - recordFailure() convenience method: same as record() with
+    success=false + error field in details (truncated to 1000 chars).
+- Audit step 4: wired audit-log calls into all 22 admin action sites.
+  - FirestoreContentService.addMovie: added skipAuditLog parameter
+    (default false). BatchImportService passes skipAuditLog:true to
+    avoid creating hundreds of audit entries per batch (the
+    batch_imports collection already records the full breakdown).
+    Audit-logs all 3 return paths (duplicate-tmdbId update, duplicate-
+    slug update, new-doc create) with `via` field showing which path
+    was taken.
+  - updateMovie: audit-logs with title + fieldsChanged (list of keys).
+  - deleteMovie: audit-logs with title (captured from pre-delete
+    snapshot — doc no longer exists post-delete).
+  - Genre/Tag/Collection CRUD: audit-logs each with name (create) or
+    newName (update) or just docId (delete).
+  - saveBannerConfig: audit-logs with imageCount (not the URLs — too
+    long, count is enough for accountability).
+  - BatchImportService._recordAudit: writes ONE summary admin_audit
+    entry alongside the existing batch_imports doc. Summary includes
+    counts (created/updated/failed/skipped), durationMs, cancelled
+    flag, sourceFileName.
+  - BatchImportService.deleteImport: audit-logs the delete so there's
+    a trace even after the original batch_imports doc is gone.
+  - admin_users_page.dart: 5 user admin actions audit-logged:
+    * _toggleBan: user.ban or user.unban (based on previous state)
+    * _forceLogout: user.force_logout
+    * _changeRole: user.role_change with oldRole + newRole
+    * VIP grant: user.vip_grant with username, vipDays, expiry
+    * VIP revoke: user.vip_revoke with username
+  - admin_notification_page._deleteNotification: notification.delete.
+- Audit step 5: updated firestore.rules.
+  - Added isValidAuditEntry() helper: validates action/collection/
+    adminUid/timestamp/success/details required fields + types. Uses
+    keys().hasAny() pattern for optional field validation (docId,
+    adminEmail, appVersion — only validate if present).
+  - Added match /admin_audit/{auditId} block:
+    - read: isAdmin() (admin-only, for future audit-log viewer)
+    - create: isAdmin() && isValidAuditEntry()
+    - update, delete: if false (DENIED — immutable)
+  - Defense-in-depth: even if an attacker steals admin creds, they
+    cannot rewrite history to cover their tracks.
+- Audit step 6: created scripts/phase2_4_verify.py with 41 checks.
+  Verifies:
+    - firestore.rules: brace balance, App Check absent (Phase 2.1),
+      user_devices removed (Phase 2.2), notifications read isAdmin
+      (Phase 2.2), Phase 2.6 isValidMovie still wired (no regression),
+      admin_audit match block with correct read/create/update/delete
+      rules, isValidAuditEntry() helper with all required field checks.
+    - admin_audit_service.dart: all 22 AdminAuditAction constants, all
+      8 AdminAuditCollection constants, record() method, error
+      handling (returns null on failure), recordFailure() method,
+      singleton pattern.
+    - firestore_content_service.dart: import present, addMovie has
+      skipAuditLog parameter, 5 movie audit-log call sites (addMovie
+      3 paths + update + delete), 9 genre/tag/collection audit-log
+      call sites, saveBannerConfig audit-log call.
+    - batch_import_service.dart: import present, addMovie call site
+      passes skipAuditLog:true, _recordAudit writes summary entry,
+      deleteImport audit-logs.
+    - admin_users_page.dart: import present, all 6 user actions
+      audit-logged (ban + unban both checked separately).
+    - admin_notification_page.dart: import present, _deleteNotification
+      audit-logs.
+  All 41 checks PASS.
+- Audit step 7: updated scripts/phase2_2_audit_check.py to recognize
+  `if false` as a valid security gate (the explicit DENY pattern used
+  by Phase 2.4 immutable audit rules). Without this fix, the Phase 2.2
+  script was falsely flagging the admin_audit `allow update, delete:
+  if false` as "no security gate".
+- Re-ran all 4 Phase 2 verification scripts:
+    phase2_2_audit_check.py: PASS (no regression)
+    phase2_4_verify.py:        PASS (41/41)
+    phase2_5_verify.py:        PASS (no regression)
+    phase2_6_verify.py:        PASS (no regression)
+- Committed as be2e1ef, pushed to origin/main.
+
+Stage Summary:
+- 22 admin actions now audit-logged to admin_audit collection.
+- Audit log is IMMUTABLE — even admin cannot rewrite history through
+  the app. Defense-in-depth against compromised admin creds.
+- Audit failures NEVER break the main action — best-effort fire-and-
+  forget via unawaited() + try/catch in AdminAuditService.record().
+- Batch imports don't create per-movie audit entries (would be
+  hundreds per run); instead, ONE summary entry is written at the
+  end of the run. The batch_imports collection still records the
+  full breakdown.
+- Bro action required: after build succeeds, paste the updated
+  firestore.rules into Firebase Console → Firestore → Rules →
+  Publish. This activates the admin_audit collection rules.
+  No Dart-side config needed — AdminAuditService is wired into all
+  admin write paths and will start writing entries immediately on
+  the next admin action.
+- Audit log viewer UI is NOT included in this phase — Bro can view
+  entries via Firebase Console → Firestore → Data → admin_audit
+  collection. A dedicated viewer page is a candidate for Phase 3
+  if Bro wants one.
+- Note on doc size: each audit entry is small (~200 bytes typical).
+  At 100 admin actions/day, that's ~20 KB/day or ~7 MB/year — well
+  within Firestore free tier (1 GiB storage).
+
+PHASE 2 STATUS: 4 of 9 done (2.1 reverted, 2.2 + 2.5 + 2.6 + 2.4 complete).
+NEXT: 2.8 (client-side rate limiting) — optional, low priority for
+this app's threat model. Or wrap up Phase 2 and move to Phase 3
+(features). Bro's call.
