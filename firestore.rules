@@ -14,22 +14,6 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == userId;
     }
 
-    // Helper: Check if the request comes from a verified app (App Check).
-    //
-    // Phase 2.1 (2026-06-28): enforces that requests come from the genuine
-    // CM Movies APK with a valid App Check token (Play Integrity in release,
-    // Debug provider in dev — both registered in Firebase Console → App Check).
-    // Blocks requests from scripts, Postman, or random clients even if they
-    // somehow obtain valid Firebase credentials.
-    //
-    // Note: requires App Check enforcement to be enabled in Firebase Console
-    // (Project Settings → App Check → Firestore → Enforce). Without Console
-    // enforcement, request.app may be null even from genuine clients.
-    // Bro must toggle enforcement ON in the Console for this to bite.
-    function isVerifiedApp() {
-      return request.app != null;
-    }
-
     // Helper: Verify that admin-only fields are NOT being changed by a regular
     // user during a profile update. Prevents self-escalation:
     //   - granting oneself VIP / extending vipExpiry
@@ -67,37 +51,37 @@ service cloud.firestore {
     // to prevent reconnaissance of admin account emails.
     // Other config docs remain readable by authenticated users.
     match /config/admin_emails {
-      allow read: if isAdmin() && isVerifiedApp();
-      allow write: if isAdmin() && isVerifiedApp();
+      allow read: if isAdmin();
+      allow write: if isAdmin();
     }
 
     match /config/{configDoc} {
-      allow read: if request.auth != null && isVerifiedApp();
-      allow write: if isAdmin() && isVerifiedApp();
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
     }
 
     // MOVIES: Authenticated users can read, only admins can write
     match /movies/{movieId} {
-      allow read: if request.auth != null && isVerifiedApp();
-      allow create, update, delete: if isAdmin() && isVerifiedApp();
+      allow read: if request.auth != null;
+      allow create, update, delete: if isAdmin();
     }
 
     // GENRES: Authenticated users can read, only admins can write
     match /genres/{genreId} {
-      allow read: if request.auth != null && isVerifiedApp();
-      allow create, update, delete: if isAdmin() && isVerifiedApp();
+      allow read: if request.auth != null;
+      allow create, update, delete: if isAdmin();
     }
 
     // TAGS: Authenticated users can read, only admins can write
     match /tags/{tagId} {
-      allow read: if request.auth != null && isVerifiedApp();
-      allow create, update, delete: if isAdmin() && isVerifiedApp();
+      allow read: if request.auth != null;
+      allow create, update, delete: if isAdmin();
     }
 
     // COLLECTIONS: Authenticated users can read, only admins can write
     match /collections/{collectionId} {
-      allow read: if request.auth != null && isVerifiedApp();
-      allow create, update, delete: if isAdmin() && isVerifiedApp();
+      allow read: if request.auth != null;
+      allow create, update, delete: if isAdmin();
     }
 
     // USERS: Login flow needs username→email lookup BEFORE Firebase Auth
@@ -122,37 +106,32 @@ service cloud.firestore {
     match /users/{userId} {
       // Public list so username-based login can resolve username → email
       // before Firebase Auth sign-in completes.
-      // NOTE: cannot add isVerifiedApp() here — App Check token may not be
-      // attached to the unauthenticated Firestore call during pre-auth
-      // username lookup. The login flow is the only consumer of this
-      // public list; all other users collection access is gated by get/
-      // create/update rules below which DO require isVerifiedApp().
       allow list: if true;
       // Authenticated get — after login, the app reads the user's own
       // profile by UID (and admin reads other users' docs by UID).
-      allow get: if request.auth != null && isVerifiedApp();
+      allow get: if request.auth != null;
       // User can create their own profile on signup, but cannot set admin-only
       // fields to elevated values (prevents signup-time privilege escalation).
-      allow create: if isOwner(userId) && safeSignupFields() && isVerifiedApp();
+      allow create: if isOwner(userId) && safeSignupFields();
       // User can update their own profile but CANNOT modify admin-only fields.
       // Only admins can change those fields. Operator precedence: && binds
       // tighter than ||, so this parses as:
-      //   (isOwner(userId) && preservesAdminOnlyFields() && isVerifiedApp()) || isAdmin()
-      allow update: if isOwner(userId) && preservesAdminOnlyFields() && isVerifiedApp() || isAdmin() && isVerifiedApp();
+      //   (isOwner(userId) && preservesAdminOnlyFields()) || isAdmin()
+      allow update: if isOwner(userId) && preservesAdminOnlyFields() || isAdmin();
     }
 
     // NOTIFICATIONS: Admin can write, authenticated users can read their own notifications
     match /notifications/{notificationId} {
-      allow read: if request.auth != null && isVerifiedApp();
-      allow create: if isAdmin() && isVerifiedApp();
-      allow update, delete: if isAdmin() && isVerifiedApp();
+      allow read: if request.auth != null;
+      allow create: if isAdmin();
+      allow update, delete: if isAdmin();
     }
 
     // APP_SETTINGS: admin-managed global config (banner images, etc.)
     // Authenticated users can read; only admins can write.
     match /app_settings/{docId} {
-      allow read: if request.auth != null && isVerifiedApp();
-      allow write: if isAdmin() && isVerifiedApp();
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
     }
 
     // BATCH_IMPORTS: audit log of past Batch Import runs.
@@ -162,9 +141,9 @@ service cloud.firestore {
     // see. The actual movie writes are still gated by the /movies/ rules
     // above; this collection is purely for audit history.
     match /batch_imports/{importId} {
-      allow read: if isAdmin() && isVerifiedApp();
-      allow create: if isAdmin() && isVerifiedApp();
-      allow update, delete: if isAdmin() && isVerifiedApp();
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update, delete: if isAdmin();
     }
 
     // USER_DEVICES: device-tracking for device-limit feature.
@@ -177,30 +156,29 @@ service cloud.firestore {
     // their own device doc to someone else's uid, hijacking that user's
     // device record (e.g. to bypass the per-user device limit).
     match /user_devices/{deviceId} {
-      allow read: if (isAdmin() || (request.auth != null && resource.data.uid == request.auth.uid)) && isVerifiedApp();
-      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid && isVerifiedApp();
+      allow read: if isAdmin() || (request.auth != null && resource.data.uid == request.auth.uid);
+      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
       // User can update their own device doc, but cannot change the uid field
       // (prevents hijacking another user's device record by re-pointing uid).
-      // Parses as: (auth && ownsResource && uidUnchanged && verifiedApp) || (isAdmin() && verifiedApp)
+      // Parses as: (auth && ownsResource && uidUnchanged) || isAdmin()
       allow update: if request.auth != null
         && resource.data.uid == request.auth.uid
         && request.resource.data.uid == resource.data.uid
-        && isVerifiedApp()
-        || isAdmin() && isVerifiedApp();
-      allow delete: if (isAdmin() || (request.auth != null && resource.data.uid == request.auth.uid)) && isVerifiedApp();
+        || isAdmin();
+      allow delete: if isAdmin() || (request.auth != null && resource.data.uid == request.auth.uid);
     }
 
     // USER SUB-COLLECTIONS (bookmarks, watchlist, history)
     match /users/{userId}/bookmarks/{bookmarkId} {
-      allow read, write: if isOwner(userId) && isVerifiedApp();
+      allow read, write: if isOwner(userId);
     }
 
     match /users/{userId}/watchlist/{watchlistId} {
-      allow read, write: if isOwner(userId) && isVerifiedApp();
+      allow read, write: if isOwner(userId);
     }
 
     match /users/{userId}/history/{historyId} {
-      allow read, write: if isOwner(userId) && isVerifiedApp();
+      allow read, write: if isOwner(userId);
     }
   }
 }
