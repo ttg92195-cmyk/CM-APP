@@ -3046,3 +3046,39 @@ Stage Summary:
   Remaining: 43.3 (waiting for Bro to pick Option A vs B for users
   collection read rule) and 43.1 (OneSignal REST API key — largest,
   do last).
+
+---
+Task ID: 43-env-hybrid-fix
+Agent: main
+Task: c9e9aec permanent fix broke build — Bro has only 5 GitHub Secrets,
+not all 8. Switch to hybrid approach.
+
+Work Log:
+- User reported new CI failure: 8 keys present but 3 EMPTY
+  (TMDB_API_KEY, ONE_SIGNAL_APP_ID, ONE_SIGNAL_REST_API_KEY).
+- Root cause: Bro's GitHub Actions Secrets only has 5 Firebase keys
+  configured — TMDB_API_KEY + OneSignal keys are NOT in GitHub Secrets.
+  They exist ONLY in the committed .env.
+- c9e9aec's 'ignore committed .env entirely' approach was too strict.
+- Switched to hybrid: committed .env as baseline + secrets override.
+- Semantics tested locally in 3 scenarios, all correct:
+    1. healthy .env + 3 missing secrets → 8/8 OK
+    2. wiped .env + 3 missing secrets → verify_env.py catches (3 missing)
+    3. wiped .env + all 8 secrets present → 8/8 OK
+- Committed as 46d0478, pushed to origin/main.
+
+Stage Summary:
+- Build should pass on next CI run (committed .env is currently healthy
+  after 4af094b, providing the 3 missing TMDB/OneSignal values).
+- Once Bro adds the 3 missing GitHub Secrets (TMDB_API_KEY,
+  ONE_SIGNAL_APP_ID, ONE_SIGNAL_REST_API_KEY), the committed .env
+  becomes irrelevant to CI — wipes won't matter.
+- Recommended Bro action (optional but suggested):
+    1. Go to repo Settings → Secrets and variables → Actions
+    2. Add the 3 missing secrets using values from committed .env:
+       - TMDB_API_KEY = 2e928cd76f7f5ae46f6e022f5dcc2612
+       - ONE_SIGNAL_APP_ID = 97852ded-65ed-46d1-a22a-d84e8c5b9702
+       - ONE_SIGNAL_REST_API_KEY = os_v2_app_s6cs33lf5vdndirk3bhiyw4xakicsmkvbnfu4metad2j643bljqs6tbykor67gmgoxinq6qbsyar2dne2im3hhvy3autyufxlbrlhba
+    3. Future .env wipes will be 100% harmless
+- Phase 1 status unchanged: 4 of 6 fixes done. After this build passes,
+  ready to do Phase 1.3 (firestore.rules line 97).
