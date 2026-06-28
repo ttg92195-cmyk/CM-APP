@@ -3009,3 +3009,40 @@ Stage Summary:
     3. Tell me to update the workflow YAML
 - Phase 1 status unchanged: 4 of 6 fixes done (43.5, 43.4, 43.2a, 43.2b).
   Remaining: 43.3 (waiting for user option pick) and 43.1 (largest, last).
+
+---
+Task ID: 43-env-perm-fix
+Agent: main
+Task: Implement permanent CI fix so future .env wipes cannot break builds.
+
+Work Log:
+- Inspected .github/workflows/build.yml — found existing 'Create .env
+  file' step had a guard that detected wipes but still failed the build.
+- Replaced the entire step with a new 'Create .env file from secrets'
+  step that ALWAYS regenerates .env from scratch using all 8 GitHub
+  Actions Secrets, ignoring the committed .env.
+- Secrets are passed as env vars (not interpolated into script body)
+  to avoid shell injection risk from secret values.
+- verify_env.py unchanged — still catches missing/empty keys if any
+  secret is unset.
+- Validated YAML via python3 yaml.safe_load.
+- Simulated the heredoc locally with test values: all 8 keys written
+  correctly, verify_env.py reported 8/8 keys present, 0 missing,
+  0 empty, OK.
+- Committed as c9e9aec, pushed to origin/main.
+
+Stage Summary:
+- PERMANENT FIX deployed. Future .env wipes by UUID auto-commits
+  cannot break CI builds — the committed .env is now local-dev-only,
+  CI's source of truth is GitHub Actions Secrets (all 8 configured).
+- The committed .env is intentionally kept in the repo for local dev
+  convenience (Bro pulls it and can run locally without setup).
+- This concludes the recurring .env wipe saga:
+    Recurrence 1: 0c51c4c → fixed by 2032d76 (Task 41)
+    Recurrence 2: 5516658 → fixed by f55f4b3 (Task 41 rec)
+    Recurrence 3: 2344757 → fixed by 4af094b (Task 43 rec)
+    Permanent fix: c9e9aec (this commit)
+- Phase 1 status unchanged: 4 of 6 fixes done (43.5, 43.4, 43.2a, 43.2b).
+  Remaining: 43.3 (waiting for Bro to pick Option A vs B for users
+  collection read rule) and 43.1 (OneSignal REST API key — largest,
+  do last).
