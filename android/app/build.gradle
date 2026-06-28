@@ -3,6 +3,10 @@ plugins {
     id "kotlin-android"
     id "dev.flutter.flutter-gradle-plugin"
     id "com.google.gms.google-services"
+    // Phase 2.5: Crashlytics plugin — required for symbol upload +
+    // deobfuscated crash reports in release builds. Configured in
+    // android/settings.gradle.
+    id "com.google.firebase.crashlytics"
 }
 
 def keystoreProperties = new Properties()
@@ -76,6 +80,16 @@ android {
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // Phase 2.5: Crashlytics release config.
+            // - mappingFileUploadEnabled = true (default): uploads ProGuard
+            //   mapping file so deobfuscated stack traces appear in Console.
+            // - nativeSymbolUploadEnabled = true: uploads native symbol
+            //   files (libmpv/FFmpeg) so native crashes are readable.
+            // Both require the crashlytics Gradle plugin (see plugins block).
+            firebaseCrashlytics {
+                mappingFileUploadEnabled true
+                nativeSymbolUploadEnabled true
+            }
         }
     }
 }

@@ -21,6 +21,10 @@ plugins {
     id "org.jetbrains.kotlin.android" version "2.1.0" apply false
     id "dev.flutter.flutter-gradle-plugin" version "1.0.0" apply false
     id "com.google.gms.google-services" version "4.4.2" apply false
+    // Phase 2.5: Crashlytics Gradle plugin — uploads release mapping files +
+    // deobfuscates native crash stacks. Version 3.0.2 supports AGP 8.x.
+    // See: https://firebase.google.com/docs/crashlytics/get-started?platform=flutter
+    id "com.google.firebase.crashlytics" version "3.0.2" apply false
 }
 
 include ":app"

@@ -19,6 +19,8 @@ import 'package:cm_movies/app/core/services/fcm_notification_service.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
 import 'package:cm_movies/app/ui/screens/login_page.dart';
 import 'firebase_options.dart';
+// Phase 2.5: Crashlytics — crash + non-fatal error reporting.
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 // Task 32: flutter_localizations — gives us GlobalMaterialLocalizations,
 // GlobalWidgetsLocalizations, GlobalCupertinoLocalizations for automatic
 // locale-aware date/number formatting (DatePicker, TimePicker, etc.).
@@ -55,7 +57,16 @@ void main() async {
   // FIX: Global error handlers to prevent unhandled exceptions from crashing the app.
   // This is critical for the video player — media_kit's native engine can throw
   // errors that would otherwise kill the app process.
+  //
+  // Phase 2.5: forward all errors to Firebase Crashlytics so Bro can see them
+  // in the Firebase Console → Crashlytics dashboard. Fatal errors (those that
+  // propagate through FlutterError.onError AND terminate the app) are reported
+  // via recordFlutterFatalError. Non-fatal errors (caught but reported) go
+  // through recordFlutterError. Both include the full stack trace.
   FlutterError.onError = (FlutterErrorDetails details) {
+    // Report to Crashlytics BEFORE presenting — if presentation itself throws,
+    // Crashlytics still gets the original error.
+    FirebaseCrashlytics.instance.recordFlutterError(details);
     // Log the error but don't crash
     FlutterError.presentError(details);
     debugPrint('FlutterError: ${details.exceptionAsString()}');
@@ -66,9 +77,13 @@ void main() async {
   };
 
   // Catch any unhandled platform errors (e.g., from plugins)
+  // Phase 2.5: also forward to Crashlytics so platform-channel exceptions
+  // and plugin errors show up in the dashboard. Returns true to suppress
+  // the default crash behavior.
   PlatformDispatcher.instance.onError = (error, stack) {
     debugPrint('Platform error: $error');
     debugPrint('Stack: $stack');
+    FirebaseCrashlytics.instance.recordError(error, stack, fatal: false);
     return true; // Return true to prevent crash
   };
 
@@ -95,6 +110,20 @@ void main() async {
         cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
       );
 
+      // Phase 2.5: Configure Crashlytics collection.
+      // - Debug builds: collection DISABLED (avoid dashboard noise from
+      //   local dev crashes; developer can re-enable per-session if needed).
+      // - Release builds: collection ENABLED (real user crashes roll up
+      //   to Firebase Console → Crashlytics dashboard for triage).
+      // Tag the build mode + app version so the dashboard can filter by them.
+      await FirebaseCrashlytics.instance
+          .setCrashlyticsCollectionEnabled(!kDebugMode);
+      await FirebaseCrashlytics.instance
+          .setCustomKey('build_mode', kDebugMode ? 'debug' : 'release');
+      await FirebaseCrashlytics.instance
+          .setCustomKey('app_version', const String.fromEnvironment(
+              'APP_VERSION', defaultValue: 'unknown'));
+
       // Initialize OneSignal push notifications (free, no Cloud Functions needed)
       try {
         await FcmNotificationService().initialize();
@@ -103,6 +132,12 @@ void main() async {
       }
     } catch (e) {
       debugPrint('Firebase initialization error: $e');
+      // Firebase failed to init — record the error so Bro sees it in the
+      // dashboard. recordError is safe to call even before
+      // setCrashlyticsCollectionEnabled (it just queues the report until
+      // next launch if collection is disabled).
+      FirebaseCrashlytics.instance
+          .recordError(e, StackTrace.current, reason: 'Firebase init failure');
     }
 
     // Initialize Firebase App Check.
@@ -174,6 +209,11 @@ void main() async {
     // Catch any unhandled async errors — prevent app crash
     debugPrint('Unhandled async error: $error');
     debugPrint('Stack trace: $stackTrace');
+    // Phase 2.5: forward unhandled async errors to Crashlytics. These are
+    // typically the most severe (e.g., uncaught Future errors that would
+    // have crashed the app if runZonedGuarded weren't installed).
+    FirebaseCrashlytics.instance
+        .recordError(error, stackTrace, fatal: true);
     // Don't rethrow — keep the app alive
   });
 }

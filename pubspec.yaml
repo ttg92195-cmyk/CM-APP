@@ -43,6 +43,11 @@ dependencies:
   firebase_auth: ^5.3.1
   cloud_firestore: ^5.4.4
   firebase_app_check: ^0.3.0
+  # Phase 2.5: Crashlytics — crash + non-fatal error reporting to Firebase
+  # Console. Free, no Blaze plan needed. Compatible with firebase_core ^3.6.0.
+  # Disabled in debug builds via setCrashlyticsCollectionEnabled(!kDebugMode)
+  # to avoid dashboard noise from local development crashes.
+  firebase_crashlytics: ^4.1.0
   # OneSignal — free push notifications (no Cloud Functions / no Blaze plan needed)
   onesignal_flutter: ^5.2.0
   # System-level download progress notifications
