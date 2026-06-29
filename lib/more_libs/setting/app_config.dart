@@ -415,27 +415,68 @@ class AppConfig extends ChangeNotifier {
     lastProfileLoadErrorCode = null;
     lastProfileLoadErrorMessage = null;
     try {
-      // Phase 3.5 — Use a list query (where on documentId) instead of
-      // a direct get(). The firestore.rules for /users/{userId} are:
-      //   allow list: if true;              ← PUBLIC (no auth needed)
-      //   allow get:  if request.auth != null;  ← requires auth token
-      // After signInWithEmailAndPassword, the Firestore SDK may not
-      // have picked up the new auth token yet (race condition), causing
-      // .get() to fail with permission-denied even though the user IS
-      // authenticated. The list rule is public, so a where-based query
-      // succeeds regardless of auth state propagation.
+      // Phase 3.8 — Dual-strategy profile load.
       //
-      // Security: this does NOT weaken security because the list rule
-      // is already public for username lookup. An attacker can already
-      // query users by username; querying by documentId is equivalent.
-      // The list-of-one returns the same doc that .get() would return.
-      final query = await _firestore
-          .collection('users')
-          .where(FieldPath.documentId, isEqualTo: uid)
-          .limit(1)
-          .get();
-      final exists = query.docs.isNotEmpty;
-      final data = exists ? query.docs.first.data() : null;
+      // HISTORY:
+      //   - Phase 3.5: switched from .doc(uid).get() to a list query
+      //     (where on documentId) because .get() was failing with
+      //     permission-denied due to Firestore SDK not having picked
+      //     up the new auth token yet (race condition).
+      //   - Phase 3.8 (this change): Bro reported that even the list
+      //     query now fails with permission-denied. Root cause is
+      //     STILL auth-state propagation delay — after
+      //     signInWithEmailAndPassword completes, the Firestore SDK
+      //     needs additional time to pick up the new auth credentials
+      //     before it can serve authenticated requests.
+      //
+      // NEW STRATEGY:
+      //   Try BOTH approaches in sequence. If the first fails with
+      //   permission-denied, fall back to the other. This works
+      //   regardless of which rule (list vs get) is deployed.
+      //     1. Direct .doc(uid).get() — uses authenticated get rule.
+      //     2. List query .where(FieldPath.documentId).get() — uses
+      //        public list rule.
+      //   The outer retry loop in loginUser() handles auth propagation
+      //   delay by retrying on permission-denied (Phase 3.8 also added
+      //   permission-denied to the retryable error list).
+      Map<String, dynamic>? data;
+      bool exists = false;
+      Object? firstError;
+
+      // Strategy 1: Direct .doc(uid).get() — most natural approach,
+      // works once auth state has propagated.
+      try {
+        final doc = await _firestore.collection('users').doc(uid).get();
+        exists = doc.exists;
+        data = exists ? doc.data() : null;
+      } catch (e) {
+        firstError = e;
+        debugPrint('_loadUserProfile: direct get() failed: $e');
+        // Fall through to Strategy 2.
+      }
+
+      // Strategy 2: List query with documentId filter — uses public
+      // list rule. Only try if Strategy 1 failed.
+      if (data == null && !exists) {
+        try {
+          final query = await _firestore
+              .collection('users')
+              .where(FieldPath.documentId, isEqualTo: uid)
+              .limit(1)
+              .get();
+          exists = query.docs.isNotEmpty;
+          data = exists ? query.docs.first.data() : null;
+        } catch (e) {
+          debugPrint('_loadUserProfile: list query failed: $e');
+          // If both strategies failed, throw the first error so the
+          // outer catch block can record the diagnostic.
+          if (firstError != null) {
+            throw firstError!;
+          }
+          throw e;
+        }
+      }
+
       if (exists && data != null) {
         _currentUser = {
           'uid': uid,
@@ -757,28 +798,59 @@ class AppConfig extends ChangeNotifier {
         debugPrint('getIdToken refresh failed (non-fatal): $e');
       }
 
-      // Phase 3.7 — Retry _loadUserProfile up to 3 times on transient
-      // errors (e.g. 'unavailable'). Bro's first test showed 'unavailable'
-      // on cold login, which is a transient Firestore backend condition.
-      // Retrying with a small backoff resolves it without surfacing the
-      // error to the user.
-      for (int attempt = 1; attempt <= 3; attempt++) {
+      // Phase 3.8 — Brief delay to let Firestore SDK propagate the
+      // new auth token to its internal request handlers. Even after
+      // getIdToken(true) returns, the Firestore SDK's internal auth
+      // listener may not have fired yet, causing the first profile
+      // read to use a stale (anonymous) auth state. 800ms is enough
+      // for the SDK's auth-state-changed event to propagate on a
+      // typical mobile connection without being perceptible to the
+      // user as a "login delay".
+      await Future.delayed(const Duration(milliseconds: 800));
+
+      // Phase 3.8 — Retry _loadUserProfile up to 5 times on transient
+      // errors AND on permission-denied (auth propagation delay).
+      //
+      // HISTORY:
+      //   - Phase 3.7: added retry loop for 'unavailable' / 'network-*'.
+      //   - Phase 3.8: ADDED 'permission-denied' to the retryable list.
+      //     After signInWithEmailAndPassword completes, the Firestore
+      //     SDK needs additional time to propagate the new auth token
+      //     to its internal request handlers. Even with getIdToken(true)
+      //     + dual-strategy _loadUserProfile, the first attempt can
+      //     still fail with permission-denied. Retrying with progressive
+      //     backoff (500ms, 1s, 1.5s, 2s) gives the SDK time to catch
+      //     up. 5 attempts × ~2s max backoff = ~7s total wait, which is
+      //     within Bro's UX tolerance for login.
+      for (int attempt = 1; attempt <= 5; attempt++) {
         // Load user profile from Firestore
         await _loadUserProfile(user.uid);
         if (_currentUser != null) {
           // Success — bail out of the retry loop.
           break;
         }
-        // If the failure was a transient error (unavailable, network),
-        // retry. If it was permission-denied or force-logout, the
-        // diagnostic is already set — surface it immediately.
+        // Retryable errors:
+        //   - unavailable, network-error, network-request-failed:
+        //     transient backend/network conditions.
+        //   - permission-denied: auth token propagation delay — the
+        //     user IS authenticated (Firebase Auth succeeded) but the
+        //     Firestore SDK hasn't picked up the new credentials yet.
+        //     Retrying with backoff gives the SDK time to catch up.
+        // Non-retryable (surface immediately):
+        //   - force-logout: admin set the flag, retrying won't help.
+        //   - profile-load-error: generic non-Firebase error.
         final code = lastProfileLoadErrorCode ?? '';
-        if (code == 'unavailable' || code == 'network-error' || code == 'network-request-failed') {
+        if (code == 'unavailable' ||
+            code == 'network-error' ||
+            code == 'network-request-failed' ||
+            code == 'permission-denied') {
           debugPrint('Profile load attempt $attempt failed with $code — retrying...');
+          // Progressive backoff: 500ms, 1000ms, 1500ms, 2000ms.
+          // Auth propagation typically completes within 1-2 seconds.
           await Future.delayed(Duration(milliseconds: 500 * attempt));
           continue;
         }
-        // Non-transient error — stop retrying.
+        // Non-retryable error — stop retrying.
         break;
       }
       if (_currentUser == null) {
