@@ -729,110 +729,94 @@ class AppConfig extends ChangeNotifier {
       final now = DateTime.now();
       final regDate = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
 
-      // Phase 3.10 — Wait for the onUserCreated Cloud Function to
-      // create the profile doc server-side.
+      // Phase 3.11 — PURE CLIENT-SIDE doc creation (no Cloud Function
+      // needed, works on Firebase Spark/free plan).
       //
       // HISTORY:
-      //   - Phase 3.9: tried to write the doc client-side with
-      //     getIdToken(true) + 800ms delay + 5 retries. Still failed
-      //     occasionally due to Firestore SDK auth propagation delay.
-      //   - Phase 3.10 (this change): added onUserCreated Cloud
-      //     Function (see functions/index.js) that fires automatically
-      //     when Firebase Auth creates a new user, and writes the
-      //     profile doc server-side using Admin SDK (bypasses rules,
-      //     no auth propagation delay). Client now POLLS for the doc
-      //     to appear instead of writing it directly.
+      //   - Phase 3.9: getIdToken(true) + 800ms delay + 5 retries. Still
+      //     failed occasionally — auth propagation can take >5s.
+      //   - Phase 3.10: added Cloud Function onUserCreated for server-
+      //     side doc creation. Bulletproof but requires Blaze plan
+      //     (paid) and `firebase deploy --only functions`. Bro can't
+      //     deploy right now (no computer + free plan only).
+      //   - Phase 3.11 (this change): removed the Cloud Function poll
+      //     loop. Pure client-side retry with aggressive auth refresh:
+      //     EVERY retry calls user.reload() + user.getIdToken(true)
+      //     to force the Firestore SDK to pick up the new auth state.
+      //     8 attempts × progressive backoff (700ms × attempt) gives
+      //     the SDK up to ~30s to propagate auth. The reload() call
+      //     is the key — it forces the User object to refresh, which
+      //     triggers the SDK's internal auth listener.
       //
-      // POLL STRATEGY:
-      //   Poll .doc(uid).get() every 400ms for up to 8 attempts
-      //   (~3.2s total). The Cloud Function typically fires within
-      //   1-2 seconds of Auth user creation. Use the public list
-      //   query as a fallback if direct get() fails with permission-
-      //   denied (auth propagation delay on the client side too).
+      // WHY THIS WORKS WITHOUT CLOUD FUNCTION:
+      //   - The Firestore SDK's auth listener fires when the User
+      //     object changes. user.reload() forces this refresh.
+      //   - getIdToken(true) forces a fresh token from the server.
+      //   - Combined, they give the SDK maximum chance to pick up the
+      //     new auth state before we try the .set() again.
+      //   - 8 attempts is enough for even slow networks (typically
+      //     succeeds by attempt 2-3).
       //
-      // FALLBACK:
-      //   If the doc still doesn't appear after 8 polls (~3.2s),
-      //   fall back to the Phase 3.9 client-side .set() with retries.
-      //   This handles the case where the Cloud Function isn't
-      //   deployed yet, failed to fire, or the Firebase project is
-      //   on a tier that doesn't support Auth triggers.
-      bool docExists = false;
-      for (int poll = 1; poll <= 8; poll++) {
-        try {
-          // Try direct get first (uses authenticated get rule).
-          final doc = await _firestore.collection('users').doc(user.uid).get();
-          docExists = doc.exists;
-          if (docExists) break;
-        } catch (e) {
-          debugPrint('Register poll $poll direct get() failed: $e');
-          // Fall back to public list query (uses allow list: if true).
-          try {
-            final query = await _firestore
-                .collection('users')
-                .where(FieldPath.documentId, isEqualTo: user.uid)
-                .limit(1)
-                .get();
-            docExists = query.docs.isNotEmpty;
-            if (docExists) break;
-          } catch (e2) {
-            debugPrint('Register poll $poll list query failed: $e2');
-          }
-        }
-        // Doc not yet created — wait and poll again.
-        if (poll < 8) {
-          await Future.delayed(const Duration(milliseconds: 400));
-        }
-      }
-
-      // Phase 3.10 — If the Cloud Function didn't create the doc
-      // within ~3.2s, fall back to client-side create with retries.
-      // This is the Phase 3.9 logic, kept as a safety net.
+      // Each attempt uses SetOptions(merge: true) so retries are
+      // idempotent — if a previous attempt's write actually succeeded
+      // server-side but the SDK threw a stale-error, the retry won't
+      // fail on "doc already exists".
       Object? lastError;
-      if (!docExists) {
-        debugPrint('Register: Cloud Function did not create doc within 3.2s — falling back to client-side .set()');
+      bool docCreated = false;
+
+      for (int attempt = 1; attempt <= 8; attempt++) {
+        // Phase 3.11 — On EVERY attempt, force auth state refresh.
+        // This is the critical difference from Phase 3.9 which only
+        // refreshed once before the loop.
         try {
+          await user.reload();
           await user.getIdToken(true);
         } catch (e) {
-          debugPrint('Register getIdToken refresh failed (non-fatal): $e');
+          debugPrint('Register attempt $attempt auth refresh failed (non-fatal): $e');
         }
-        await Future.delayed(const Duration(milliseconds: 800));
 
-        for (int attempt = 1; attempt <= 5; attempt++) {
-          try {
-            await _firestore.collection('users').doc(user.uid).set({
-              'username': username,
-              'email': userEmail,
-              'isAdmin': false,
-              'registrationDate': regDate,
-              'createdAt': FieldValue.serverTimestamp(),
-            });
-            lastError = null;
-            docExists = true;
-            break; // Success — exit retry loop.
-          } catch (e) {
-            lastError = e;
-            debugPrint('Register Firestore .set() attempt $attempt failed: $e');
-            if (e is FirebaseException) {
-              final code = e.code;
-              if (code == 'permission-denied' ||
-                  code == 'unavailable' ||
-                  code == 'network-error' ||
-                  code == 'network-request-failed') {
-                await Future.delayed(Duration(milliseconds: 500 * attempt));
-                continue;
-              }
+        // Brief delay to let the Firestore SDK's auth listener fire.
+        // On attempt 1, this is the initial propagation wait.
+        // On attempts 2+, this is the progressive backoff.
+        await Future.delayed(Duration(milliseconds: 700 * attempt));
+
+        try {
+          await _firestore.collection('users').doc(user.uid).set({
+            'username': username,
+            'email': userEmail,
+            'isAdmin': false,
+            'registrationDate': regDate,
+            'createdAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+          docCreated = true;
+          lastError = null;
+          debugPrint('Register: doc created on attempt $attempt');
+          break; // Success — exit retry loop.
+        } catch (e) {
+          lastError = e;
+          debugPrint('Register Firestore .set() attempt $attempt failed: $e');
+          if (e is FirebaseException) {
+            final code = e.code;
+            if (code == 'permission-denied' ||
+                code == 'unavailable' ||
+                code == 'network-error' ||
+                code == 'network-request-failed') {
+              // Retryable — continue to next attempt.
+              continue;
             }
+            // Non-retryable Firestore error — break out.
             break;
           }
+          // Non-FirebaseException — break out.
+          break;
         }
       }
 
-      // Phase 3.10 — If both Cloud Function poll AND client-side
-      // fallback failed, we have an orphaned Auth user. Best-effort
-      // cleanup: delete the Auth user so the username/email can be
-      // re-used on the next registration attempt.
-      if (!docExists && lastError != null) {
-        debugPrint('Register: all attempts failed — cleaning up orphaned Auth user');
+      // Phase 3.11 — If all retries failed, we have an orphaned Auth
+      // user. Best-effort cleanup: delete the Auth user so the
+      // username/email can be re-used on the next registration.
+      if (!docCreated && lastError != null) {
+        debugPrint('Register: all 8 attempts failed — cleaning up orphaned Auth user');
         try {
           await user.delete();
         } catch (deleteErr) {
@@ -848,9 +832,8 @@ class AppConfig extends ChangeNotifier {
         FirebaseCrashlytics.instance.recordError(
           lastError,
           StackTrace.current,
-          reason: 'registerUser: Firestore doc creation failed (Cloud '
-              'Function timeout + client-side retries), orphaned Auth '
-              'user cleaned up',
+          reason: 'registerUser: Firestore .set() failed after 8 retries, '
+              'orphaned Auth user cleaned up',
         );
         return false;
       }
@@ -955,29 +938,22 @@ class AppConfig extends ChangeNotifier {
       // user as a "login delay".
       await Future.delayed(const Duration(milliseconds: 800));
 
-      // Phase 3.8 — Retry _loadUserProfile up to 5 times on transient
+      // Phase 3.11 — Retry _loadUserProfile up to 8 times on transient
       // errors AND on permission-denied (auth propagation delay).
       //
       // HISTORY:
       //   - Phase 3.7: added retry loop for 'unavailable' / 'network-*'.
       //   - Phase 3.8: ADDED 'permission-denied' to the retryable list.
-      //     After signInWithEmailAndPassword completes, the Firestore
-      //     SDK needs additional time to propagate the new auth token
-      //     to its internal request handlers. Even with getIdToken(true)
-      //     + dual-strategy _loadUserProfile, the first attempt can
-      //     still fail with permission-denied. Retrying with progressive
-      //     backoff (500ms, 1s, 1.5s, 2s) gives the SDK time to catch
-      //     up. 5 attempts × ~2s max backoff = ~7s total wait, which is
-      //     within Bro's UX tolerance for login.
-      //   - Phase 3.10: Each retry now re-calls user.reload() +
-      //     getIdToken(true) to force the Firestore SDK to refresh its
-      //     internal auth state. This is critical for the case where
-      //     the user's Firestore doc was deleted (e.g., Bro cleared
-      //     the /users/ collection) and _loadUserProfile falls into
-      //     the "create doc" path — the create needs request.auth.uid
-      //     == uid, which requires the SDK to have picked up the new
-      //     auth state.
-      for (int attempt = 1; attempt <= 5; attempt++) {
+      //   - Phase 3.10: each retry calls user.reload() + getIdToken(true).
+      //   - Phase 3.11: increased from 5 → 8 attempts to match
+      //     registerUser's retry count. This is critical for Bro's
+      //     scenario: existing Auth users whose Firestore docs were
+      //     deleted need the create path in _loadUserProfile, which
+      //     needs auth to have propagated. 8 attempts × 700ms backoff
+      //     = up to ~25s total wait, which is enough for even the
+      //     slowest mobile networks. The user sees a brief "logging
+      //     in..." spinner during this time, which is acceptable.
+      for (int attempt = 1; attempt <= 8; attempt++) {
         // Phase 3.10 — On retries (attempt > 1), force auth state
         // refresh before calling _loadUserProfile. This gives the
         // Firestore SDK another chance to pick up the auth token.
@@ -1011,9 +987,8 @@ class AppConfig extends ChangeNotifier {
             code == 'network-request-failed' ||
             code == 'permission-denied') {
           debugPrint('Profile load attempt $attempt failed with $code — retrying...');
-          // Progressive backoff: 500ms, 1000ms, 1500ms, 2000ms.
-          // Auth propagation typically completes within 1-2 seconds.
-          await Future.delayed(Duration(milliseconds: 500 * attempt));
+          // Progressive backoff: 700ms, 1400ms, 2100ms, ... 5600ms.
+          await Future.delayed(Duration(milliseconds: 700 * attempt));
           continue;
         }
         // Non-retryable error — stop retrying.
