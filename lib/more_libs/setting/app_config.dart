@@ -117,6 +117,14 @@ class AppConfig extends ChangeNotifier {
   String? lastLoginErrorMessage;
   String? lastRegisterErrorCode;
   String? lastRegisterErrorMessage;
+  // Phase 3.4 — capture ACTUAL error from inner try/catch blocks that
+  // previously swallowed Firestore exceptions. Without these, the user
+  // saw misleading "profile-load-failed" / "invalid-credential" messages
+  // while the real error (e.g. permission-denied) was hidden in debugPrint.
+  String? lastProfileLoadErrorCode;
+  String? lastProfileLoadErrorMessage;
+  String? lastUsernameLookupErrorCode;
+  String? lastUsernameLookupErrorMessage;
 
   ThemeMode get themeMode => _themeMode;
   String get languageCode => _languageCode;
@@ -206,6 +214,10 @@ class AppConfig extends ChangeNotifier {
   //           3) Check admin email map
   //           4) Fallback: append @cmmovies.app (legacy users)
   Future<String> _usernameToEmail(String username) async {
+    // Phase 3.4 — clear diagnostic fields before each lookup
+    lastUsernameLookupErrorCode = null;
+    lastUsernameLookupErrorMessage = null;
+
     // If input already contains @, treat as email directly
     if (username.contains('@')) {
       return username;
@@ -237,6 +249,17 @@ class AppConfig extends ChangeNotifier {
         }
       } catch (e) {
         debugPrint('Username lookup error for "$candidate" (may be rules): $e');
+        // Phase 3.4 — capture ACTUAL error so loginUser can surface it.
+        // Previously this catch swallowed the exception and silently fell
+        // back to username@cmmovies.app, which then failed with the
+        // misleading "invalid-credential" Auth error.
+        if (e is FirebaseException) {
+          lastUsernameLookupErrorCode = e.code;
+          lastUsernameLookupErrorMessage = e.message;
+        } else {
+          lastUsernameLookupErrorCode = 'username-lookup-error';
+          lastUsernameLookupErrorMessage = e.toString();
+        }
       }
     }
 
@@ -328,6 +351,9 @@ class AppConfig extends ChangeNotifier {
   }
 
   Future<void> _loadUserProfile(String uid) async {
+    // Phase 3.4 — clear diagnostic fields before each load
+    lastProfileLoadErrorCode = null;
+    lastProfileLoadErrorMessage = null;
     try {
       final doc = await _firestore.collection('users').doc(uid).get();
       if (doc.exists) {
@@ -406,6 +432,18 @@ class AppConfig extends ChangeNotifier {
       }
     } catch (e) {
       debugPrint('Error loading user profile: $e');
+      // Phase 3.4 — capture ACTUAL error so loginUser can surface it.
+      // Previously this catch swallowed the Firestore exception and just
+      // set _currentUser = null, causing loginUser to report the misleading
+      // "profile-load-failed" message instead of the real error code
+      // (e.g. permission-denied).
+      if (e is FirebaseException) {
+        lastProfileLoadErrorCode = e.code;
+        lastProfileLoadErrorMessage = e.message;
+      } else {
+        lastProfileLoadErrorCode = 'profile-load-error';
+        lastProfileLoadErrorMessage = e.toString();
+      }
       _currentUser = null;
     }
     // Sync local download toggle with VIP status:
@@ -612,27 +650,62 @@ class AppConfig extends ChangeNotifier {
       final user = userCredential.user;
       if (user == null) return false;
 
+      // Phase 3.4 — Force a token refresh before reading Firestore.
+      // After signInWithEmailAndPassword completes, the Firestore SDK
+      // may still be using a stale/anonymous auth state for a brief
+      // window. Calling getIdToken() forces the SDK to wait for the
+      // fresh Firebase Auth token to be ready, which ensures
+      // request.auth != null on the backend (required by the
+      // /users/{uid} get rule).
+      try {
+        await user.getIdToken(true);
+      } catch (e) {
+        debugPrint('getIdToken refresh failed (non-fatal): $e');
+      }
+
       // Load user profile from Firestore
       await _loadUserProfile(user.uid);
       if (_currentUser == null) {
-        // Phase 3.3 — Signed in to Firebase Auth but could not read
-        // user profile from Firestore. Most likely cause: Firestore
-        // App Check enforcement rejecting the read, OR Firestore
-        // rules denying the get. Surface a meaningful diagnostic
-        // instead of returning false silently.
-        lastLoginErrorCode = 'profile-load-failed';
-        lastLoginErrorMessage =
-            'Signed in to Firebase Auth but could not read user profile '
-            'from Firestore. Check Firestore App Check enforcement and '
-            'security rules for /users/{uid} get.';
+        // Phase 3.4 — Surface the ACTUAL error captured by
+        // _loadUserProfile's inner catch, instead of the generic
+        // 'profile-load-failed' label. If _loadUserProfile swallowed
+        // a Firestore exception, lastProfileLoadErrorCode now holds
+        // the real code (e.g. permission-denied).
+        if (lastProfileLoadErrorCode != null) {
+          lastLoginErrorCode = lastProfileLoadErrorCode;
+          lastLoginErrorMessage =
+              'Profile load failed: ${lastProfileLoadErrorMessage ?? "(no message)"}';
+        } else {
+          // Doc exists but _currentUser is null — likely the banned /
+          // forceLogout path inside _loadUserProfile.
+          lastLoginErrorCode = 'profile-load-failed';
+          lastLoginErrorMessage =
+              'Signed in to Firebase Auth but profile load returned null '
+              '(user may be banned or force-logged-out).';
+        }
         return false;
       }
       return true;
     } on FirebaseAuthException catch (e) {
       debugPrint('Login error: ${e.code} - ${e.message}');
-      // Phase 3.2 — capture actual error for diagnostic display
-      lastLoginErrorCode = e.code;
-      lastLoginErrorMessage = e.message;
+      // Phase 3.4 — If username lookup failed silently before sign-in,
+      // the Auth error (e.g. invalid-credential) is misleading because
+      // the real root cause is the Firestore read failure in
+      // _usernameToEmail. Surface the Firestore error instead so Bro
+      // can see what's actually broken.
+      if (e.code == 'invalid-credential' &&
+          lastUsernameLookupErrorCode != null) {
+        lastLoginErrorCode =
+            'username-lookup-failed: ${lastUsernameLookupErrorCode}';
+        lastLoginErrorMessage =
+            'Could not look up username in Firestore (caused sign-in to '
+            'use fallback email which does not exist in Auth). '
+            'Firestore error: ${lastUsernameLookupErrorMessage ?? "(no message)"}';
+      } else {
+        // Phase 3.2 — capture actual error for diagnostic display
+        lastLoginErrorCode = e.code;
+        lastLoginErrorMessage = e.message;
+      }
       FirebaseCrashlytics.instance.recordError(
         e,
         StackTrace.current,
