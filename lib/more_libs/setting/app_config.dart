@@ -350,7 +350,19 @@ class AppConfig extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Phase 3.6 — Guard against concurrent _loadUserProfile calls.
+  // Both _auth.authStateChanges().listen and loginUser() call this fn
+  // after signInWithEmailAndPassword, causing a race on _currentUser.
+  // If the listener call fails (e.g. transient Firestore unavailability),
+  // it can null out _currentUser AFTER loginUser's call succeeded.
+  bool _isLoadingProfile = false;
+
   Future<void> _loadUserProfile(String uid) async {
+    if (_isLoadingProfile) {
+      debugPrint('_loadUserProfile already in progress, skipping duplicate call');
+      return;
+    }
+    _isLoadingProfile = true;
     // Phase 3.4 — clear diagnostic fields before each load
     lastProfileLoadErrorCode = null;
     lastProfileLoadErrorMessage = null;
@@ -398,12 +410,20 @@ class AppConfig extends ChangeNotifier {
           return;
         }
 
-        // Check force logout flag set by admin
+        // Check force logout flag set by admin.
+        // Phase 3.6 — DO NOT try to clear the flag from the client.
+        // firestore.rules preservesAdminOnlyFields() blocks users from
+        // changing forceLogout, so the previous .update({forceLogout:false})
+        // call threw permission-denied, which _loadUserProfile's catch
+        // block swallowed by setting _currentUser=null, causing loginUser
+        // to return false with a misleading 'profile-load-failed' error.
+        // Now we just sign out and surface a clear diagnostic. The flag
+        // stays true until the admin clears it via Firebase Console
+        // (or a future Cloud Function).
         if (data['forceLogout'] == true) {
-          // Clear the flag and logout
-          await _firestore.collection('users').doc(uid).update({
-            'forceLogout': false,
-          });
+          lastProfileLoadErrorCode = 'force-logout';
+          lastProfileLoadErrorMessage =
+              'Account force-logged-out by admin. Contact support.';
           await _clearLocalUserData();
           await _auth.signOut();
           _currentUser = null;
@@ -464,6 +484,9 @@ class AppConfig extends ChangeNotifier {
         lastProfileLoadErrorMessage = e.toString();
       }
       _currentUser = null;
+    } finally {
+      // Phase 3.6 — release the guard so future calls can proceed.
+      _isLoadingProfile = false;
     }
     // Sync local download toggle with VIP status:
     // VIP/Admin → auto-enable; non-VIP → auto-disable
