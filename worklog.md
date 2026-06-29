@@ -4446,3 +4446,52 @@ Stage Summary:
 
 PHASE 3 STATUS: 3.3 complete on code side. Awaiting Bro to turn
 off App Check Enforce in Firebase Console + test new build.
+
+---
+Task ID: Phase 3.4
+Agent: Main Agent
+Task: Surface actual Firestore errors during login instead of misleading messages
+
+Work Log:
+- Bro reported: register auto-login works, but login fails with two different
+  misleading errors:
+    Gmail login   → 'profile-load-failed'
+    Username login → 'invalid-credential'
+- Read app_config.dart _loadUserProfile (line 330-415) and _usernameToEmail
+  (line 208+). Found that both have INNER try/catch blocks that swallow
+  Firestore exceptions (debugPrint only) and fall through silently:
+    _loadUserProfile: catches Firestore error, sets _currentUser=null,
+      returns. loginUser then sees _currentUser==null and reports the
+      generic 'profile-load-failed' instead of the real error.
+    _usernameToEmail: catches Firestore error, falls back to
+      'username@cmmovies.app', which then fails in Auth with
+      'invalid-credential' (misleading — real issue was the lookup).
+- Added 4 new diagnostic fields: lastProfileLoadErrorCode/Message,
+  lastUsernameLookupErrorCode/Message.
+- Modified _loadUserProfile's inner catch to capture the ACTUAL error
+  (FirebaseException.code+message, or 'profile-load-error' for non-FB
+  exceptions) before nulling _currentUser.
+- Modified _usernameToEmail's inner catch to do the same.
+- Modified loginUser to:
+  1. Call await user.getIdToken(true) before _loadUserProfile — forces
+     Firestore SDK to wait for fresh Auth token, eliminates race window
+     where request.auth might be null right after signInWithEmailAndPassword.
+  2. Surface lastProfileLoadErrorCode (if set) instead of generic
+     'profile-load-failed' label.
+  3. In FirebaseAuthException catch, detect 'invalid-credential' +
+     lastUsernameLookupErrorCode != null pattern and surface
+     'username-lookup-failed: <real code>' instead.
+- Wrote /home/z/my-project/scripts/phase3_4_verify.py — 16/16 PASS.
+- Committed (6025430) and pushed to origin/main. CI build triggered.
+
+Stage Summary:
+- Root cause of misleading login messages: inner try/catch blocks in
+  _loadUserProfile and _usernameToEmail swallowed Firestore exceptions.
+- Real underlying issue (still TBD): Firestore reads are failing for
+  some reason even though writes succeed during register. Possible
+  causes: App Check enforcement still propagating, deployed rules
+  differ from GitHub rules, or auth token race condition.
+- Next step: Bro installs the Phase 3.4 APK and retries login. The
+  SnackBar will now show the ACTUAL Firestore error code (e.g.
+  permission-denied) instead of the misleading labels, which will
+  pinpoint the real root cause.
