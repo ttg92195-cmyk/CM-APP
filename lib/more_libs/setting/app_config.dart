@@ -564,6 +564,22 @@ class AppConfig extends ChangeNotifier {
         reason: 'registerUser FirebaseAuthException: ${e.code}',
       );
       return false;
+    } on FirebaseException catch (e) {
+      // Phase 3.3 — Firestore / Storage exceptions have a different
+      // type than FirebaseAuthException. Without this block, they
+      // fall into the generic catch below and get reported as
+      // 'non-auth-exception' (which is what Bro saw: "[code: non-
+      // auth-exception | [cloud_firestore/permission-denied] ...]").
+      // Now they get the actual code (e.g., 'permission-denied').
+      debugPrint('Register error (Firestore): ${e.code} - ${e.message}');
+      lastRegisterErrorCode = e.code;
+      lastRegisterErrorMessage = e.message;
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        StackTrace.current,
+        reason: 'registerUser FirebaseException: ${e.code}',
+      );
+      return false;
     } catch (e, st) {
       debugPrint('Register error: $e');
       // Phase 3.2 — capture non-Auth exceptions too (e.g., Firestore
@@ -598,7 +614,20 @@ class AppConfig extends ChangeNotifier {
 
       // Load user profile from Firestore
       await _loadUserProfile(user.uid);
-      return _currentUser != null;
+      if (_currentUser == null) {
+        // Phase 3.3 — Signed in to Firebase Auth but could not read
+        // user profile from Firestore. Most likely cause: Firestore
+        // App Check enforcement rejecting the read, OR Firestore
+        // rules denying the get. Surface a meaningful diagnostic
+        // instead of returning false silently.
+        lastLoginErrorCode = 'profile-load-failed';
+        lastLoginErrorMessage =
+            'Signed in to Firebase Auth but could not read user profile '
+            'from Firestore. Check Firestore App Check enforcement and '
+            'security rules for /users/{uid} get.';
+        return false;
+      }
+      return true;
     } on FirebaseAuthException catch (e) {
       debugPrint('Login error: ${e.code} - ${e.message}');
       // Phase 3.2 — capture actual error for diagnostic display
@@ -608,6 +637,19 @@ class AppConfig extends ChangeNotifier {
         e,
         StackTrace.current,
         reason: 'loginUser FirebaseAuthException: ${e.code}',
+      );
+      return false;
+    } on FirebaseException catch (e) {
+      // Phase 3.3 — Firestore read during _loadUserProfile can throw
+      // [cloud_firestore/permission-denied] if App Check enforcement
+      // is on. Catch it here so the error code is accurate.
+      debugPrint('Login error (Firestore): ${e.code} - ${e.message}');
+      lastLoginErrorCode = e.code;
+      lastLoginErrorMessage = e.message;
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        StackTrace.current,
+        reason: 'loginUser FirebaseException: ${e.code}',
       );
       return false;
     } catch (e, st) {
