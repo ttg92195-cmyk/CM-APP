@@ -18,6 +18,11 @@ class AppConfig extends ChangeNotifier {
   static const String _videoPlayerKey = 'video_player_mode';
   static const String _downloadsNotifKey = 'downloads_notification';
   static const String _notificationKey = 'notification_enabled';
+  // Phase 3.13 — Pending username/email persistence so /users/ doc gets
+  // the CORRECT username even when doc creation is deferred to background.
+  // See _persistPendingSignup / _consumePendingSignup below.
+  static const String _pendingUsernameKey = 'pending_signup_username';
+  static const String _pendingEmailKey = 'pending_signup_email';
 
   // L3: Session timeout — auto-logout after inactivity
   static const Duration sessionTimeout = Duration(minutes: 30);
@@ -523,39 +528,57 @@ class AppConfig extends ChangeNotifier {
       } else {
         // Firestore doc doesn't exist yet, create from Firebase Auth user.
         //
-        // Phase 3.12 — ROOT CAUSE FIX for "login fails after /users/ deleted".
+        // Phase 3.13 — NON-BLOCKING doc creation + pending username
+        // preservation.
         //
         // HISTORY:
-        //   - Phase 3.10: added user.reload() + getIdToken(true) before .set()
-        //   - Phase 3.11: increased outer retry loop to 8 attempts
-        //   - BUT: _loadUserProfile's else-branch still failed because the
-        //     .set() call failed with permission-denied, and the catch block
-        //     nulled _currentUser. The outer retry loop re-called
-        //     _loadUserProfile, which re-tried Strategy 1 (get) → fail,
-        //     Strategy 2 (list) → succeed but doc doesn't exist → else-branch
-        //     → .set() → fail again. The loop never made progress because
-        //     each attempt repeated the SAME sequence.
+        //   - Phase 3.12: moved retry INSIDE _loadUserProfile else-branch,
+        //     set _currentUser from Auth data BEFORE .set(), didn't null
+        //     _currentUser on .set() failure. This fixed Email login but
+        //     Username login STILL failed because:
+        //       (a) The retry loop was BLOCKING — login took up to 25s
+        //           waiting for .set() to succeed.
+        //       (b) When .set() failed after 8 retries, the doc was never
+        //           created. So /users/ stayed empty, and _usernameToEmail
+        //           couldn't resolve Username → Email on the next login.
+        //       (c) Even when .set() succeeded, the username stored was
+        //           email.split('@').first — NOT the username Bro typed
+        //           during registration. So Username login with the
+        //           original username still couldn't find the doc.
         //
-        // Phase 3.12 FIX (this change):
-        //   1. Move the retry loop INSIDE _loadUserProfile's else-branch.
-        //      Each retry calls user.reload() + getIdToken(true) + delay
-        //      BEFORE the .set(), giving the Firestore SDK maximum chance
-        //      to pick up the new auth state.
-        //   2. CRITICAL: If .set() fails after all retries, DON'T null
-        //      _currentUser. Set it from Firebase Auth data anyway, so
-        //      the user can use the app. The profile doc will be created
-        //      on the next app launch (or next login) when auth has fully
-        //      propagated. This unblocks Bro's login immediately.
+        // Phase 3.13 FIX (this change):
+        //   1. Read pending username/email from SharedPreferences (written
+        //      by registerUser). If present, use the ORIGINAL username
+        //      Bro typed — not email.split('@').first.
+        //   2. Set _currentUser IMMEDIATELY from Auth data + (pending or
+        //      fallback) username. Login returns SUCCESS right away.
+        //   3. Kick off .set() in the BACKGROUND (non-blocking) with 15
+        //      retries and exponential backoff (1s, 2s, 4s, 8s, 16s, 30s,
+        //      30s, ...). Total wait up to ~5 min — but the user doesn't
+        //      wait because login already returned.
+        //   4. After background .set() succeeds, clear the pending
+        //      username/email from SharedPreferences.
+        //   5. If background .set() fails after all 15 retries, the
+        //      pending username/email STAYS in SharedPreferences so the
+        //      next login can try again.
         final user = _auth.currentUser;
         if (user != null) {
           final email = user.email ?? '';
-          // Extract username from email - handle both internal and external emails
+
+          // Phase 3.13 — Check SharedPreferences for a pending username
+          // from a previous registration. If present, use it. Otherwise,
+          // fall back to extracting from email.
+          final pendingSignup = await _consumePendingSignup();
           String username;
-          if (email.endsWith('@cmmovies.app')) {
+          if (pendingSignup != null && pendingSignup['email'] == email) {
+            // Pending signup matches this Auth user's email — use the
+            // original username Bro typed during registration.
+            username = pendingSignup['username']!;
+            debugPrint('_loadUserProfile: using pending username "$username" for email $email');
+          } else if (email.endsWith('@cmmovies.app')) {
             username = email.replaceAll('@cmmovies.app', '');
           } else {
             // For external emails (like gmail), check if admin
-            // Look up admin username from cached admin email map
             await _loadAdminEmailMap();
             final adminEntry = _adminEmailMap.entries.where((e) => e.value.toLowerCase() == email.toLowerCase()).toList();
             username = adminEntry.isNotEmpty ? adminEntry.first.key : email.split('@').first;
@@ -563,10 +586,8 @@ class AppConfig extends ChangeNotifier {
           final now = DateTime.now();
           final regDate = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
 
-          // Phase 3.12 — Set _currentUser FROM FIREBASE AUTH DATA first,
-          // BEFORE trying to create the Firestore doc. This way, even if
-          // the .set() fails, the user is still logged in and can use
-          // the app. The profile doc will be created later.
+          // Set _currentUser IMMEDIATELY from Auth data. Login returns
+          // SUCCESS right away — the user doesn't wait for .set().
           _currentUser = {
             'uid': uid,
             'username': username,
@@ -576,72 +597,19 @@ class AppConfig extends ChangeNotifier {
             'email': email,
           };
 
-          // Phase 3.12 — Retry the Firestore .set() up to 8 times with
-          // auth refresh on each attempt. This is the SAME pattern as
-          // registerUser, moved here so _loadUserProfile can self-heal
-          // without relying on the outer loginUser retry loop.
-          bool docCreated = false;
-          Object? createError;
-          for (int attempt = 1; attempt <= 8; attempt++) {
-            // Force auth state refresh on EVERY attempt.
-            try {
-              await user.reload();
-              await user.getIdToken(true);
-            } catch (e) {
-              debugPrint('_loadUserProfile create attempt $attempt auth refresh failed (non-fatal): $e');
-            }
-            // Progressive delay: 700ms × attempt.
-            await Future.delayed(Duration(milliseconds: 700 * attempt));
-
-            try {
-              await _firestore.collection('users').doc(uid).set({
-                'username': username,
-                'email': email,
-                'isAdmin': false,
-                'registrationDate': regDate,
-                'createdAt': FieldValue.serverTimestamp(),
-              }, SetOptions(merge: true));
-              docCreated = true;
-              createError = null;
-              debugPrint('_loadUserProfile: doc created on attempt $attempt');
-              break; // Success.
-            } catch (e) {
-              createError = e;
-              debugPrint('_loadUserProfile create attempt $attempt failed: $e');
-              if (e is FirebaseException) {
-                final code = e.code;
-                if (code == 'permission-denied' ||
-                    code == 'unavailable' ||
-                    code == 'network-error' ||
-                    code == 'network-request-failed') {
-                  continue; // Retryable.
-                }
-                break; // Non-retryable Firestore error.
-              }
-              break; // Non-FirebaseException.
-            }
-          }
-
-          // Phase 3.12 — CRITICAL: If .set() failed after all retries,
-          // DON'T throw and DON'T null _currentUser. The user is
-          // authenticated (Firebase Auth succeeded) and _currentUser
-          // is already set from Auth data. Just log the error and
-          // continue — the user can use the app, and the profile doc
-          // will be created on a future launch/login when auth
-          // propagation is complete.
-          if (!docCreated && createError != null) {
-            debugPrint('_loadUserProfile: doc creation failed after 8 retries — '
-                'continuing with Auth-only profile. Error: $createError');
-            // Record to Crashlytics for visibility, but don't crash.
-            FirebaseCrashlytics.instance.recordError(
-              createError,
-              StackTrace.current,
-              reason: '_loadUserProfile: Firestore doc creation failed after '
-                  '8 retries, continuing with Auth-only profile',
-            );
-            // DON'T set lastProfileLoadErrorCode — we want loginUser
-            // to see _currentUser != null and treat this as success.
-          }
+          // Phase 3.13 — Kick off doc creation in the BACKGROUND.
+          // Non-blocking: we don't await this. Login returns success
+          // immediately. The background task retries .set() up to 15
+          // times with exponential backoff. If it succeeds, the doc
+          // exists for future Username logins. If it fails, the pending
+          // signup stays in SharedPreferences for the next login.
+          _createUserDocInBackground(
+            uid: uid,
+            username: username,
+            email: email,
+            regDate: regDate,
+            clearPendingOnSuccess: pendingSignup != null,
+          );
         }
       }
     } catch (e) {
@@ -668,6 +636,194 @@ class AppConfig extends ChangeNotifier {
     await _syncDownloadToggleWithVipStatus();
     _isLoadingAuth = false;
     notifyListeners();
+  }
+
+  // ============================================================
+  // Phase 3.13 — Pending signup persistence + background doc creation
+  // ============================================================
+  //
+  // PROBLEM: When registerUser's .set() fails (permission-denied due to
+  // auth propagation delay), the /users/{uid} doc is never created.
+  // On the next Email login, _loadUserProfile else-branch creates the
+  // doc, but the username field becomes email.split('@').first — NOT
+  // the username Bro typed during registration. So Username login with
+  // the original username fails because the doc has a different username.
+  //
+  // SOLUTION: Persist the original username + email to SharedPreferences
+  // during registration. On the next login, _loadUserProfile reads the
+  // pending signup and uses the ORIGINAL username for the doc.
+  //
+  // Additionally, doc creation is now NON-BLOCKING. The .set() retry
+  // loop runs in the background with 15 retries + exponential backoff.
+  // Login/register returns immediately — the user doesn't wait.
+  // ============================================================
+
+  /// Persist the username + email from a registration attempt to
+  /// SharedPreferences. Called by registerUser BEFORE creating the
+  /// Auth user, so even if registration fails partway through, the
+  /// pending signup is preserved for the next login to use.
+  Future<void> _persistPendingSignup(String username, String email) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_pendingUsernameKey, username);
+      await prefs.setString(_pendingEmailKey, email);
+      debugPrint('_persistPendingSignup: stored username="$username" email="$email"');
+    } catch (e) {
+      debugPrint('_persistPendingSignup failed (non-fatal): $e');
+    }
+  }
+
+  /// Read AND REMOVE the pending signup from SharedPreferences.
+  /// Returns a Map with 'username' and 'email' keys, or null if no
+  /// pending signup exists. The signup is removed because it's
+  /// "consumed" by _loadUserProfile — once we use it to create the
+  /// doc, we don't need it anymore. If the doc creation fails, the
+  /// background task will re-persist the signup (see
+  /// _createUserDocInBackground).
+  Future<Map<String, String>?> _consumePendingSignup() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final username = prefs.getString(_pendingUsernameKey);
+      final email = prefs.getString(_pendingEmailKey);
+      if (username == null || email == null) return null;
+      // Don't remove yet — the background .set() might fail. The
+      // background task will remove on success or re-persist on
+      // failure. We just READ it here.
+      return {'username': username, 'email': email};
+    } catch (e) {
+      debugPrint('_consumePendingSignup failed (non-fatal): $e');
+      return null;
+    }
+  }
+
+  /// Clear the pending signup from SharedPreferences. Called by
+  /// _createUserDocInBackground after the doc is successfully created.
+  Future<void> _clearPendingSignup() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_pendingUsernameKey);
+      await prefs.remove(_pendingEmailKey);
+      debugPrint('_clearPendingSignup: cleared pending signup');
+    } catch (e) {
+      debugPrint('_clearPendingSignup failed (non-fatal): $e');
+    }
+  }
+
+  /// Track in-flight background doc creation to prevent duplicate
+  /// background tasks from stacking up if _loadUserProfile is called
+  /// multiple times in quick succession.
+  bool _isBackgroundDocCreationInProgress = false;
+
+  /// Create the /users/{uid} doc in the BACKGROUND. Non-blocking —
+  /// the caller does NOT await this. 15 retries with exponential
+  /// backoff (1s, 2s, 4s, 8s, 16s, 30s, 30s, ... 30s). Total wait
+  /// up to ~6 min. Each retry calls user.reload() + getIdToken(true)
+  /// to give the Firestore SDK maximum chance to pick up the auth
+  /// state.
+  Future<void> _createUserDocInBackground({
+    required String uid,
+    required String username,
+    required String email,
+    required String regDate,
+    required bool clearPendingOnSuccess,
+  }) async {
+    // Prevent duplicate background tasks.
+    if (_isBackgroundDocCreationInProgress) {
+      debugPrint('_createUserDocInBackground: already in progress, skipping');
+      return;
+    }
+    _isBackgroundDocCreationInProgress = true;
+
+    // Fire-and-forget — don't await. The caller (loginUser/registerUser)
+    // returns immediately. This Future runs to completion in the
+    // background, retrying .set() until it succeeds or all 15 attempts
+    // are exhausted.
+    () async {
+      final user = _auth.currentUser;
+      if (user == null || user.uid != uid) {
+        // User signed out between the call and the background task
+        // starting. Can't create the doc without auth. Abort — the
+        // pending signup stays in SharedPreferences for next login.
+        _isBackgroundDocCreationInProgress = false;
+        return;
+      }
+
+      // Exponential backoff schedule: 1s, 2s, 4s, 8s, 16s, 30s, then
+      // 30s for the remaining attempts. Total max wait ~6 min.
+      final delays = <int>[
+        1000, 2000, 4000, 8000, 16000,
+        30000, 30000, 30000, 30000, 30000,
+        30000, 30000, 30000, 30000, 30000,
+      ];
+
+      Object? lastError;
+      bool docCreated = false;
+
+      for (int attempt = 1; attempt <= 15; attempt++) {
+        // Force auth state refresh on EVERY attempt.
+        try {
+          await user.reload();
+          await user.getIdToken(true);
+        } catch (e) {
+          debugPrint('_createUserDocInBackground attempt $attempt auth refresh failed (non-fatal): $e');
+        }
+
+        // Wait before the attempt (except the first, where the caller
+        // has already waited ~800ms in loginUser).
+        if (attempt > 1) {
+          await Future.delayed(Duration(milliseconds: delays[attempt - 2]));
+        }
+
+        try {
+          await _firestore.collection('users').doc(uid).set({
+            'username': username,
+            'email': email,
+            'isAdmin': false,
+            'registrationDate': regDate,
+            'createdAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+          docCreated = true;
+          lastError = null;
+          debugPrint('_createUserDocInBackground: doc created on attempt $attempt');
+          break; // Success.
+        } catch (e) {
+          lastError = e;
+          debugPrint('_createUserDocInBackground attempt $attempt failed: $e');
+          if (e is FirebaseException) {
+            final code = e.code;
+            if (code == 'permission-denied' ||
+                code == 'unavailable' ||
+                code == 'network-error' ||
+                code == 'network-request-failed') {
+              continue; // Retryable.
+            }
+            break; // Non-retryable Firestore error.
+          }
+          break; // Non-FirebaseException.
+        }
+      }
+
+      if (docCreated) {
+        // Doc created successfully — clear the pending signup so it
+        // doesn't get reused on the next login.
+        if (clearPendingOnSuccess) {
+          await _clearPendingSignup();
+        }
+      } else if (lastError != null) {
+        // All retries failed. The pending signup STAYS in
+        // SharedPreferences so the next login can try again.
+        debugPrint('_createUserDocInBackground: doc creation failed after 15 retries — '
+            'pending signup preserved for next login. Error: $lastError');
+        FirebaseCrashlytics.instance.recordError(
+          lastError,
+          StackTrace.current,
+          reason: '_createUserDocInBackground: Firestore doc creation failed '
+              'after 15 retries, pending signup preserved',
+        );
+      }
+
+      _isBackgroundDocCreationInProgress = false;
+    }();
   }
 
   Future<void> _loadTranslations() async {
@@ -774,6 +930,14 @@ class AppConfig extends ChangeNotifier {
       // Use provided email, or auto-generate from username
       final userEmail = email ?? await _usernameToEmail(username);
 
+      // Phase 3.13 — Persist the username + email to SharedPreferences
+      // BEFORE creating the Auth user. This way, even if the .set()
+      // fails during registration AND on the next login, the original
+      // username Bro typed is preserved. The next Email login will
+      // read this pending signup and use the ORIGINAL username (not
+      // email.split('@').first) when creating the /users/{uid} doc.
+      await _persistPendingSignup(username, userEmail);
+
       // Create user in Firebase Auth
       final userCredential = await _auth.createUserWithEmailAndPassword(
         email: userEmail,
@@ -787,113 +951,27 @@ class AppConfig extends ChangeNotifier {
       final now = DateTime.now();
       final regDate = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
 
-      // Phase 3.11 — PURE CLIENT-SIDE doc creation (no Cloud Function
-      // needed, works on Firebase Spark/free plan).
+      // Phase 3.13 — NON-BLOCKING doc creation.
       //
       // HISTORY:
-      //   - Phase 3.9: getIdToken(true) + 800ms delay + 5 retries. Still
-      //     failed occasionally — auth propagation can take >5s.
-      //   - Phase 3.10: added Cloud Function onUserCreated for server-
-      //     side doc creation. Bulletproof but requires Blaze plan
-      //     (paid) and `firebase deploy --only functions`. Bro can't
-      //     deploy right now (no computer + free plan only).
-      //   - Phase 3.11: removed the Cloud Function poll loop. Pure
-      //     client-side retry with aggressive auth refresh on every
-      //     attempt.
-      //   - Phase 3.12 (this change): If .set() fails after 8 retries,
-      //     DON'T delete the Auth user. Instead, set _currentUser from
-      //     Auth data and return SUCCESS. The profile doc will be
-      //     created on next login via _loadUserProfile's else-branch
-      //     (which now has its own retry loop, see Phase 3.12 there).
-      //     Previously, registerUser deleted the Auth user on .set()
-      //     failure, which meant the user had to re-register every
-      //     time — and re-registration would fail the same way. Now,
-      //     the Auth user persists, and the next login will auto-heal
-      //     the missing profile doc.
-      Object? lastError;
-      bool docCreated = false;
-
-      for (int attempt = 1; attempt <= 8; attempt++) {
-        // Phase 3.11 — On EVERY attempt, force auth state refresh.
-        // This is the critical difference from Phase 3.9 which only
-        // refreshed once before the loop.
-        try {
-          await user.reload();
-          await user.getIdToken(true);
-        } catch (e) {
-          debugPrint('Register attempt $attempt auth refresh failed (non-fatal): $e');
-        }
-
-        // Brief delay to let the Firestore SDK's auth listener fire.
-        // On attempt 1, this is the initial propagation wait.
-        // On attempts 2+, this is the progressive backoff.
-        await Future.delayed(Duration(milliseconds: 700 * attempt));
-
-        try {
-          await _firestore.collection('users').doc(user.uid).set({
-            'username': username,
-            'email': userEmail,
-            'isAdmin': false,
-            'registrationDate': regDate,
-            'createdAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
-          docCreated = true;
-          lastError = null;
-          debugPrint('Register: doc created on attempt $attempt');
-          break; // Success — exit retry loop.
-        } catch (e) {
-          lastError = e;
-          debugPrint('Register Firestore .set() attempt $attempt failed: $e');
-          if (e is FirebaseException) {
-            final code = e.code;
-            if (code == 'permission-denied' ||
-                code == 'unavailable' ||
-                code == 'network-error' ||
-                code == 'network-request-failed') {
-              // Retryable — continue to next attempt.
-              continue;
-            }
-            // Non-retryable Firestore error — break out.
-            break;
-          }
-          // Non-FirebaseException — break out.
-          break;
-        }
-      }
-
-      // Phase 3.12 — If all retries failed, DON'T delete the Auth user.
-      // Set _currentUser from Auth data and return SUCCESS. The profile
-      // doc will be created on next login via _loadUserProfile's
-      // else-branch (which has its own retry loop + Auth-only fallback).
+      //   - Phase 3.9-3.11: blocking .set() retry loops (5-8 attempts).
+      //     Registration took up to 25s waiting for .set() to succeed.
+      //   - Phase 3.12: if .set() failed after 8 retries, kept the Auth
+      //     user and returned success. But the doc was still missing,
+      //     and the username was lost (next login used email.split).
+      //   - Phase 3.13 (this change): kick off .set() in the BACKGROUND
+      //     with 15 retries + exponential backoff. Registration returns
+      //     IMMEDIATELY. The pending signup in SharedPreferences ensures
+      //     the original username is preserved for the next login's
+      //     doc creation, even if this background task fails.
       //
-      // Previously (Phase 3.11), we deleted the Auth user on .set()
-      // failure. This was WRONG because:
-      //   1. The user just registered — they know the credentials.
-      //   2. Deleting the Auth user means they have to re-register.
-      //   3. Re-registration would fail the same way (auth propagation
-      //      delay is not specific to this session).
-      //   4. The username/email would be "taken" in Auth but the user
-      //      can't log in (no profile doc), creating a permanent lockout.
-      //
-      // Now: keep the Auth user, set _currentUser, return success.
-      // The user can use the app immediately. The profile doc will be
-      // created on next login (or even this session's _loadUserProfile
-      // if called again).
-      if (!docCreated && lastError != null) {
-        debugPrint('Register: doc creation failed after 8 retries — '
-            'continuing with Auth-only profile. Doc will be created on next login.');
-        FirebaseCrashlytics.instance.recordError(
-          lastError,
-          StackTrace.current,
-          reason: 'registerUser: Firestore .set() failed after 8 retries, '
-              'continuing with Auth-only profile (doc will auto-heal on next login)',
-        );
-        // DON'T delete the Auth user. DON'T set lastRegisterErrorCode.
-        // Fall through to set _currentUser and return true.
-      }
+      // The Auth user is already created — registration succeeds. The
+      // doc will be created in the background. If it fails, the pending
+      // signup stays in SharedPreferences and the next login will try
+      // again via _loadUserProfile's else-branch.
 
-      // Update current user (from Auth data — works regardless of
-      // whether the Firestore doc was created).
+      // Set _currentUser IMMEDIATELY from Auth data + the username Bro
+      // typed. Registration returns SUCCESS right away.
       _currentUser = {
         'uid': user.uid,
         'username': username,
@@ -902,6 +980,15 @@ class AppConfig extends ChangeNotifier {
         'registrationDate': regDate,
         'email': userEmail,
       };
+
+      // Kick off doc creation in the BACKGROUND (non-blocking).
+      _createUserDocInBackground(
+        uid: user.uid,
+        username: username,
+        email: userEmail,
+        regDate: regDate,
+        clearPendingOnSuccess: true,
+      );
 
       notifyListeners();
       return true;
@@ -1085,6 +1172,20 @@ class AppConfig extends ChangeNotifier {
             'Could not look up username in Firestore (caused sign-in to '
             'use fallback email which does not exist in Auth). '
             'Firestore error: ${lastUsernameLookupErrorMessage ?? "(no message)"}';
+      } else if ((e.code == 'invalid-credential' || e.code == 'user-not-found') &&
+          !username.contains('@') &&
+          lastUsernameLookupErrorCode == null) {
+        // Phase 3.13 — Username login failed because /users/ doc doesn't
+        // exist for this username (lookup returned no docs, no error).
+        // _usernameToEmail fell back to "username@cmmovies.app" which
+        // doesn't exist in Auth. Guide Bro to login with Email instead.
+        lastLoginErrorCode = 'username-not-found';
+        lastLoginErrorMessage =
+            'Username "$username" was not found. If you registered with '
+            'an email address, please login with your email instead. '
+            '(The /users/ profile doc will be created automatically on '
+            'your next successful Email login, after which Username '
+            'login will also work.)';
       } else {
         // Phase 3.2 — capture actual error for diagnostic display
         lastLoginErrorCode = e.code;
