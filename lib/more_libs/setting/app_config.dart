@@ -523,33 +523,31 @@ class AppConfig extends ChangeNotifier {
       } else {
         // Firestore doc doesn't exist yet, create from Firebase Auth user.
         //
-        // Phase 3.10 — This branch handles TWO cases:
-        //   1. New signup where the onUserCreated Cloud Function hasn't
-        //      fired yet (rare — client polls for it in registerUser).
-        //   2. EXISTING Auth user whose Firestore doc was deleted (e.g.,
-        //      Bro accidentally cleared the /users/ collection). The
-        //      Cloud Function does NOT fire on login, so we must create
-        //      the doc client-side here.
+        // Phase 3.12 — ROOT CAUSE FIX for "login fails after /users/ deleted".
         //
-        // For case 2, the create can fail with permission-denied if the
-        // Firestore SDK hasn't propagated the new auth state yet. The
-        // outer retry loop in loginUser() handles this by retrying
-        // _loadUserProfile up to 5 times. Each retry, we re-call
-        // user.reload() + getIdToken(true) to force the Firestore SDK
-        // to refresh its internal auth state.
+        // HISTORY:
+        //   - Phase 3.10: added user.reload() + getIdToken(true) before .set()
+        //   - Phase 3.11: increased outer retry loop to 8 attempts
+        //   - BUT: _loadUserProfile's else-branch still failed because the
+        //     .set() call failed with permission-denied, and the catch block
+        //     nulled _currentUser. The outer retry loop re-called
+        //     _loadUserProfile, which re-tried Strategy 1 (get) → fail,
+        //     Strategy 2 (list) → succeed but doc doesn't exist → else-branch
+        //     → .set() → fail again. The loop never made progress because
+        //     each attempt repeated the SAME sequence.
+        //
+        // Phase 3.12 FIX (this change):
+        //   1. Move the retry loop INSIDE _loadUserProfile's else-branch.
+        //      Each retry calls user.reload() + getIdToken(true) + delay
+        //      BEFORE the .set(), giving the Firestore SDK maximum chance
+        //      to pick up the new auth state.
+        //   2. CRITICAL: If .set() fails after all retries, DON'T null
+        //      _currentUser. Set it from Firebase Auth data anyway, so
+        //      the user can use the app. The profile doc will be created
+        //      on the next app launch (or next login) when auth has fully
+        //      propagated. This unblocks Bro's login immediately.
         final user = _auth.currentUser;
         if (user != null) {
-          // Phase 3.10 — Force auth state refresh before attempting
-          // the create. user.reload() refreshes the User object, and
-          // getIdToken(true) forces a token refresh which propagates
-          // to the Firestore SDK's internal auth listener.
-          try {
-            await user.reload();
-            await user.getIdToken(true);
-          } catch (e) {
-            debugPrint('_loadUserProfile: auth refresh failed (non-fatal): $e');
-          }
-
           final email = user.email ?? '';
           // Extract username from email - handle both internal and external emails
           String username;
@@ -565,6 +563,10 @@ class AppConfig extends ChangeNotifier {
           final now = DateTime.now();
           final regDate = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
 
+          // Phase 3.12 — Set _currentUser FROM FIREBASE AUTH DATA first,
+          // BEFORE trying to create the Firestore doc. This way, even if
+          // the .set() fails, the user is still logged in and can use
+          // the app. The profile doc will be created later.
           _currentUser = {
             'uid': uid,
             'username': username,
@@ -574,16 +576,72 @@ class AppConfig extends ChangeNotifier {
             'email': email,
           };
 
-          // Create Firestore doc. Use {merge: true} so this is
-          // idempotent — if the Cloud Function already created the
-          // doc between our read and write, we don't overwrite.
-          await _firestore.collection('users').doc(uid).set({
-            'username': username,
-            'email': email,
-            'isAdmin': false,
-            'registrationDate': regDate,
-            'createdAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
+          // Phase 3.12 — Retry the Firestore .set() up to 8 times with
+          // auth refresh on each attempt. This is the SAME pattern as
+          // registerUser, moved here so _loadUserProfile can self-heal
+          // without relying on the outer loginUser retry loop.
+          bool docCreated = false;
+          Object? createError;
+          for (int attempt = 1; attempt <= 8; attempt++) {
+            // Force auth state refresh on EVERY attempt.
+            try {
+              await user.reload();
+              await user.getIdToken(true);
+            } catch (e) {
+              debugPrint('_loadUserProfile create attempt $attempt auth refresh failed (non-fatal): $e');
+            }
+            // Progressive delay: 700ms × attempt.
+            await Future.delayed(Duration(milliseconds: 700 * attempt));
+
+            try {
+              await _firestore.collection('users').doc(uid).set({
+                'username': username,
+                'email': email,
+                'isAdmin': false,
+                'registrationDate': regDate,
+                'createdAt': FieldValue.serverTimestamp(),
+              }, SetOptions(merge: true));
+              docCreated = true;
+              createError = null;
+              debugPrint('_loadUserProfile: doc created on attempt $attempt');
+              break; // Success.
+            } catch (e) {
+              createError = e;
+              debugPrint('_loadUserProfile create attempt $attempt failed: $e');
+              if (e is FirebaseException) {
+                final code = e.code;
+                if (code == 'permission-denied' ||
+                    code == 'unavailable' ||
+                    code == 'network-error' ||
+                    code == 'network-request-failed') {
+                  continue; // Retryable.
+                }
+                break; // Non-retryable Firestore error.
+              }
+              break; // Non-FirebaseException.
+            }
+          }
+
+          // Phase 3.12 — CRITICAL: If .set() failed after all retries,
+          // DON'T throw and DON'T null _currentUser. The user is
+          // authenticated (Firebase Auth succeeded) and _currentUser
+          // is already set from Auth data. Just log the error and
+          // continue — the user can use the app, and the profile doc
+          // will be created on a future launch/login when auth
+          // propagation is complete.
+          if (!docCreated && createError != null) {
+            debugPrint('_loadUserProfile: doc creation failed after 8 retries — '
+                'continuing with Auth-only profile. Error: $createError');
+            // Record to Crashlytics for visibility, but don't crash.
+            FirebaseCrashlytics.instance.recordError(
+              createError,
+              StackTrace.current,
+              reason: '_loadUserProfile: Firestore doc creation failed after '
+                  '8 retries, continuing with Auth-only profile',
+            );
+            // DON'T set lastProfileLoadErrorCode — we want loginUser
+            // to see _currentUser != null and treat this as success.
+          }
         }
       }
     } catch (e) {
@@ -739,28 +797,19 @@ class AppConfig extends ChangeNotifier {
       //     side doc creation. Bulletproof but requires Blaze plan
       //     (paid) and `firebase deploy --only functions`. Bro can't
       //     deploy right now (no computer + free plan only).
-      //   - Phase 3.11 (this change): removed the Cloud Function poll
-      //     loop. Pure client-side retry with aggressive auth refresh:
-      //     EVERY retry calls user.reload() + user.getIdToken(true)
-      //     to force the Firestore SDK to pick up the new auth state.
-      //     8 attempts × progressive backoff (700ms × attempt) gives
-      //     the SDK up to ~30s to propagate auth. The reload() call
-      //     is the key — it forces the User object to refresh, which
-      //     triggers the SDK's internal auth listener.
-      //
-      // WHY THIS WORKS WITHOUT CLOUD FUNCTION:
-      //   - The Firestore SDK's auth listener fires when the User
-      //     object changes. user.reload() forces this refresh.
-      //   - getIdToken(true) forces a fresh token from the server.
-      //   - Combined, they give the SDK maximum chance to pick up the
-      //     new auth state before we try the .set() again.
-      //   - 8 attempts is enough for even slow networks (typically
-      //     succeeds by attempt 2-3).
-      //
-      // Each attempt uses SetOptions(merge: true) so retries are
-      // idempotent — if a previous attempt's write actually succeeded
-      // server-side but the SDK threw a stale-error, the retry won't
-      // fail on "doc already exists".
+      //   - Phase 3.11: removed the Cloud Function poll loop. Pure
+      //     client-side retry with aggressive auth refresh on every
+      //     attempt.
+      //   - Phase 3.12 (this change): If .set() fails after 8 retries,
+      //     DON'T delete the Auth user. Instead, set _currentUser from
+      //     Auth data and return SUCCESS. The profile doc will be
+      //     created on next login via _loadUserProfile's else-branch
+      //     (which now has its own retry loop, see Phase 3.12 there).
+      //     Previously, registerUser deleted the Auth user on .set()
+      //     failure, which meant the user had to re-register every
+      //     time — and re-registration would fail the same way. Now,
+      //     the Auth user persists, and the next login will auto-heal
+      //     the missing profile doc.
       Object? lastError;
       bool docCreated = false;
 
@@ -812,33 +861,39 @@ class AppConfig extends ChangeNotifier {
         }
       }
 
-      // Phase 3.11 — If all retries failed, we have an orphaned Auth
-      // user. Best-effort cleanup: delete the Auth user so the
-      // username/email can be re-used on the next registration.
+      // Phase 3.12 — If all retries failed, DON'T delete the Auth user.
+      // Set _currentUser from Auth data and return SUCCESS. The profile
+      // doc will be created on next login via _loadUserProfile's
+      // else-branch (which has its own retry loop + Auth-only fallback).
+      //
+      // Previously (Phase 3.11), we deleted the Auth user on .set()
+      // failure. This was WRONG because:
+      //   1. The user just registered — they know the credentials.
+      //   2. Deleting the Auth user means they have to re-register.
+      //   3. Re-registration would fail the same way (auth propagation
+      //      delay is not specific to this session).
+      //   4. The username/email would be "taken" in Auth but the user
+      //      can't log in (no profile doc), creating a permanent lockout.
+      //
+      // Now: keep the Auth user, set _currentUser, return success.
+      // The user can use the app immediately. The profile doc will be
+      // created on next login (or even this session's _loadUserProfile
+      // if called again).
       if (!docCreated && lastError != null) {
-        debugPrint('Register: all 8 attempts failed — cleaning up orphaned Auth user');
-        try {
-          await user.delete();
-        } catch (deleteErr) {
-          debugPrint('Register: failed to delete orphaned Auth user: $deleteErr');
-        }
-        if (lastError is FirebaseException) {
-          lastRegisterErrorCode = lastError.code;
-          lastRegisterErrorMessage = lastError.message;
-        } else {
-          lastRegisterErrorCode = 'firestore-write-failed';
-          lastRegisterErrorMessage = lastError.toString();
-        }
+        debugPrint('Register: doc creation failed after 8 retries — '
+            'continuing with Auth-only profile. Doc will be created on next login.');
         FirebaseCrashlytics.instance.recordError(
           lastError,
           StackTrace.current,
           reason: 'registerUser: Firestore .set() failed after 8 retries, '
-              'orphaned Auth user cleaned up',
+              'continuing with Auth-only profile (doc will auto-heal on next login)',
         );
-        return false;
+        // DON'T delete the Auth user. DON'T set lastRegisterErrorCode.
+        // Fall through to set _currentUser and return true.
       }
 
-      // Update current user
+      // Update current user (from Auth data — works regardless of
+      // whether the Firestore doc was created).
       _currentUser = {
         'uid': user.uid,
         'username': username,
