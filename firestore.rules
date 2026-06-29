@@ -286,6 +286,15 @@ service cloud.firestore {
     // username→email lookup (list) is public; reading a single doc by
     // ID requires authentication. This preserves the login flow while
     // removing the unauthenticated get-by-UID attack surface.
+    //
+    // Phase 3.10 (2026-06-29): The onUserCreated Cloud Function
+    // (functions/index.js) creates the user doc server-side using
+    // Admin SDK, which BYPASSES these rules entirely. The `create`
+    // rule below is the FALLBACK path for client-side creates when
+    // the Cloud Function is unavailable (not deployed, failed to
+    // fire, etc.). The Admin SDK write happens regardless of this
+    // rule, but the rule is kept permissive enough to allow the
+    // client fallback to succeed once auth has propagated.
     match /users/{userId} {
       // Public list so username-based login can resolve username → email
       // before Firebase Auth sign-in completes.

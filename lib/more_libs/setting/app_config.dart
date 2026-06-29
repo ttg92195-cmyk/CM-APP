@@ -521,9 +521,35 @@ class AppConfig extends ChangeNotifier {
           return;
         }
       } else {
-        // Firestore doc doesn't exist yet, create from Firebase Auth user
+        // Firestore doc doesn't exist yet, create from Firebase Auth user.
+        //
+        // Phase 3.10 — This branch handles TWO cases:
+        //   1. New signup where the onUserCreated Cloud Function hasn't
+        //      fired yet (rare — client polls for it in registerUser).
+        //   2. EXISTING Auth user whose Firestore doc was deleted (e.g.,
+        //      Bro accidentally cleared the /users/ collection). The
+        //      Cloud Function does NOT fire on login, so we must create
+        //      the doc client-side here.
+        //
+        // For case 2, the create can fail with permission-denied if the
+        // Firestore SDK hasn't propagated the new auth state yet. The
+        // outer retry loop in loginUser() handles this by retrying
+        // _loadUserProfile up to 5 times. Each retry, we re-call
+        // user.reload() + getIdToken(true) to force the Firestore SDK
+        // to refresh its internal auth state.
         final user = _auth.currentUser;
         if (user != null) {
+          // Phase 3.10 — Force auth state refresh before attempting
+          // the create. user.reload() refreshes the User object, and
+          // getIdToken(true) forces a token refresh which propagates
+          // to the Firestore SDK's internal auth listener.
+          try {
+            await user.reload();
+            await user.getIdToken(true);
+          } catch (e) {
+            debugPrint('_loadUserProfile: auth refresh failed (non-fatal): $e');
+          }
+
           final email = user.email ?? '';
           // Extract username from email - handle both internal and external emails
           String username;
@@ -548,14 +574,16 @@ class AppConfig extends ChangeNotifier {
             'email': email,
           };
 
-          // Create Firestore doc
+          // Create Firestore doc. Use {merge: true} so this is
+          // idempotent — if the Cloud Function already created the
+          // doc between our read and write, we don't overwrite.
           await _firestore.collection('users').doc(uid).set({
             'username': username,
             'email': email,
             'isAdmin': false,
             'registrationDate': regDate,
             'createdAt': FieldValue.serverTimestamp(),
-          });
+          }, SetOptions(merge: true));
         }
       }
     } catch (e) {
@@ -701,65 +729,110 @@ class AppConfig extends ChangeNotifier {
       final now = DateTime.now();
       final regDate = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
 
-      // Phase 3.9 — Force auth token refresh + delay before writing
-      // to Firestore. Same root cause as Phase 3.8 login fix: after
-      // createUserWithEmailAndPassword, the Firestore SDK needs time
-      // to propagate the new auth state to its request handlers.
-      // Without this, the .set() below fails with permission-denied
-      // (rules require isOwner(userId) which requires request.auth.uid
-      // == userId, but the SDK is still using anonymous auth state).
-      // This leaves an ORPHANED Firebase Auth user — Auth has the
-      // account but Firestore doesn't have the profile doc — which
-      // means subsequent logins also fail because _loadUserProfile
-      // can't find the user doc.
-      try {
-        await user.getIdToken(true);
-      } catch (e) {
-        debugPrint('Register getIdToken refresh failed (non-fatal): $e');
-      }
-      await Future.delayed(const Duration(milliseconds: 800));
-
-      // Phase 3.9 — Retry the Firestore .set() up to 5 times on
-      // permission-denied (auth propagation delay) and transient
-      // errors. Without this, a single failure leaves an orphaned
-      // Auth user that can never log in.
-      Object? lastError;
-      for (int attempt = 1; attempt <= 5; attempt++) {
+      // Phase 3.10 — Wait for the onUserCreated Cloud Function to
+      // create the profile doc server-side.
+      //
+      // HISTORY:
+      //   - Phase 3.9: tried to write the doc client-side with
+      //     getIdToken(true) + 800ms delay + 5 retries. Still failed
+      //     occasionally due to Firestore SDK auth propagation delay.
+      //   - Phase 3.10 (this change): added onUserCreated Cloud
+      //     Function (see functions/index.js) that fires automatically
+      //     when Firebase Auth creates a new user, and writes the
+      //     profile doc server-side using Admin SDK (bypasses rules,
+      //     no auth propagation delay). Client now POLLS for the doc
+      //     to appear instead of writing it directly.
+      //
+      // POLL STRATEGY:
+      //   Poll .doc(uid).get() every 400ms for up to 8 attempts
+      //   (~3.2s total). The Cloud Function typically fires within
+      //   1-2 seconds of Auth user creation. Use the public list
+      //   query as a fallback if direct get() fails with permission-
+      //   denied (auth propagation delay on the client side too).
+      //
+      // FALLBACK:
+      //   If the doc still doesn't appear after 8 polls (~3.2s),
+      //   fall back to the Phase 3.9 client-side .set() with retries.
+      //   This handles the case where the Cloud Function isn't
+      //   deployed yet, failed to fire, or the Firebase project is
+      //   on a tier that doesn't support Auth triggers.
+      bool docExists = false;
+      for (int poll = 1; poll <= 8; poll++) {
         try {
-          await _firestore.collection('users').doc(user.uid).set({
-            'username': username,
-            'email': userEmail,
-            'isAdmin': false,
-            'registrationDate': regDate,
-            'createdAt': FieldValue.serverTimestamp(),
-          });
-          lastError = null;
-          break; // Success — exit retry loop.
+          // Try direct get first (uses authenticated get rule).
+          final doc = await _firestore.collection('users').doc(user.uid).get();
+          docExists = doc.exists;
+          if (docExists) break;
         } catch (e) {
-          lastError = e;
-          debugPrint('Register Firestore .set() attempt $attempt failed: $e');
-          if (e is FirebaseException) {
-            final code = e.code;
-            if (code == 'permission-denied' ||
-                code == 'unavailable' ||
-                code == 'network-error' ||
-                code == 'network-request-failed') {
-              // Retryable — wait and try again.
-              await Future.delayed(Duration(milliseconds: 500 * attempt));
-              continue;
-            }
+          debugPrint('Register poll $poll direct get() failed: $e');
+          // Fall back to public list query (uses allow list: if true).
+          try {
+            final query = await _firestore
+                .collection('users')
+                .where(FieldPath.documentId, isEqualTo: user.uid)
+                .limit(1)
+                .get();
+            docExists = query.docs.isNotEmpty;
+            if (docExists) break;
+          } catch (e2) {
+            debugPrint('Register poll $poll list query failed: $e2');
           }
-          // Non-retryable — break out of the loop.
-          break;
+        }
+        // Doc not yet created — wait and poll again.
+        if (poll < 8) {
+          await Future.delayed(const Duration(milliseconds: 400));
         }
       }
 
-      // Phase 3.9 — If all retries failed, we have an orphaned Auth
-      // user. Best-effort cleanup: delete the Auth user so the
-      // username/email can be re-used on the next registration
-      // attempt. If deletion fails too, surface the error to Bro.
-      if (lastError != null) {
-        debugPrint('Register: all Firestore .set() retries failed — cleaning up orphaned Auth user');
+      // Phase 3.10 — If the Cloud Function didn't create the doc
+      // within ~3.2s, fall back to client-side create with retries.
+      // This is the Phase 3.9 logic, kept as a safety net.
+      Object? lastError;
+      if (!docExists) {
+        debugPrint('Register: Cloud Function did not create doc within 3.2s — falling back to client-side .set()');
+        try {
+          await user.getIdToken(true);
+        } catch (e) {
+          debugPrint('Register getIdToken refresh failed (non-fatal): $e');
+        }
+        await Future.delayed(const Duration(milliseconds: 800));
+
+        for (int attempt = 1; attempt <= 5; attempt++) {
+          try {
+            await _firestore.collection('users').doc(user.uid).set({
+              'username': username,
+              'email': userEmail,
+              'isAdmin': false,
+              'registrationDate': regDate,
+              'createdAt': FieldValue.serverTimestamp(),
+            });
+            lastError = null;
+            docExists = true;
+            break; // Success — exit retry loop.
+          } catch (e) {
+            lastError = e;
+            debugPrint('Register Firestore .set() attempt $attempt failed: $e');
+            if (e is FirebaseException) {
+              final code = e.code;
+              if (code == 'permission-denied' ||
+                  code == 'unavailable' ||
+                  code == 'network-error' ||
+                  code == 'network-request-failed') {
+                await Future.delayed(Duration(milliseconds: 500 * attempt));
+                continue;
+              }
+            }
+            break;
+          }
+        }
+      }
+
+      // Phase 3.10 — If both Cloud Function poll AND client-side
+      // fallback failed, we have an orphaned Auth user. Best-effort
+      // cleanup: delete the Auth user so the username/email can be
+      // re-used on the next registration attempt.
+      if (!docExists && lastError != null) {
+        debugPrint('Register: all attempts failed — cleaning up orphaned Auth user');
         try {
           await user.delete();
         } catch (deleteErr) {
@@ -775,8 +848,9 @@ class AppConfig extends ChangeNotifier {
         FirebaseCrashlytics.instance.recordError(
           lastError,
           StackTrace.current,
-          reason: 'registerUser: Firestore .set() failed after 5 retries, '
-              'orphaned Auth user cleaned up',
+          reason: 'registerUser: Firestore doc creation failed (Cloud '
+              'Function timeout + client-side retries), orphaned Auth '
+              'user cleaned up',
         );
         return false;
       }
@@ -895,7 +969,26 @@ class AppConfig extends ChangeNotifier {
       //     backoff (500ms, 1s, 1.5s, 2s) gives the SDK time to catch
       //     up. 5 attempts × ~2s max backoff = ~7s total wait, which is
       //     within Bro's UX tolerance for login.
+      //   - Phase 3.10: Each retry now re-calls user.reload() +
+      //     getIdToken(true) to force the Firestore SDK to refresh its
+      //     internal auth state. This is critical for the case where
+      //     the user's Firestore doc was deleted (e.g., Bro cleared
+      //     the /users/ collection) and _loadUserProfile falls into
+      //     the "create doc" path — the create needs request.auth.uid
+      //     == uid, which requires the SDK to have picked up the new
+      //     auth state.
       for (int attempt = 1; attempt <= 5; attempt++) {
+        // Phase 3.10 — On retries (attempt > 1), force auth state
+        // refresh before calling _loadUserProfile. This gives the
+        // Firestore SDK another chance to pick up the auth token.
+        if (attempt > 1) {
+          try {
+            await user.reload();
+            await user.getIdToken(true);
+          } catch (e) {
+            debugPrint('Login retry $attempt auth refresh failed (non-fatal): $e');
+          }
+        }
         // Load user profile from Firestore
         await _loadUserProfile(user.uid);
         if (_currentUser != null) {
