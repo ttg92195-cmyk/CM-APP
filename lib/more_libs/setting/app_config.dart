@@ -361,9 +361,19 @@ class AppConfig extends ChangeNotifier {
         _currentUser = null;
         _isLoadingAuth = false;
         notifyListeners();
+      } else if (user == null && _currentUser == null) {
+        // Phase 3.7 — Cold start with no previously-signed-in user.
+        // The auth listener fires once at app startup with user=null,
+        // and we must clear _isLoadingAuth here so the splash screen
+        // (which waits for isLoadingAuth=false in main.dart line 655)
+        // can dismiss and show the LoginPage. Without this branch,
+        // _isLoadingAuth stays true forever and the splash hangs on
+        // the KMM logo spinner — which is what Bro reported as
+        // 'KMM spinner taking a long time' after the Phase 3.7 fix.
+        _isLoadingAuth = false;
+        notifyListeners();
       }
       // If user != null && _currentUser != null → already loaded, nothing to do.
-      // If user == null && _currentUser == null → already signed out, nothing to do.
     });
   }
 
