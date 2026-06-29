@@ -683,6 +683,7 @@ class AppConfig extends ChangeNotifier {
     // Phase 3.2 — clear diagnostic fields before each attempt
     lastRegisterErrorCode = null;
     lastRegisterErrorMessage = null;
+    User? createdUser;
     try {
       // Use provided email, or auto-generate from username
       final userEmail = email ?? await _usernameToEmail(username);
@@ -695,18 +696,90 @@ class AppConfig extends ChangeNotifier {
 
       final user = userCredential.user;
       if (user == null) return false;
+      createdUser = user;
 
       final now = DateTime.now();
       final regDate = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
 
-      // Create user profile in Firestore
-      await _firestore.collection('users').doc(user.uid).set({
-        'username': username,
-        'email': userEmail,
-        'isAdmin': false,
-        'registrationDate': regDate,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+      // Phase 3.9 — Force auth token refresh + delay before writing
+      // to Firestore. Same root cause as Phase 3.8 login fix: after
+      // createUserWithEmailAndPassword, the Firestore SDK needs time
+      // to propagate the new auth state to its request handlers.
+      // Without this, the .set() below fails with permission-denied
+      // (rules require isOwner(userId) which requires request.auth.uid
+      // == userId, but the SDK is still using anonymous auth state).
+      // This leaves an ORPHANED Firebase Auth user — Auth has the
+      // account but Firestore doesn't have the profile doc — which
+      // means subsequent logins also fail because _loadUserProfile
+      // can't find the user doc.
+      try {
+        await user.getIdToken(true);
+      } catch (e) {
+        debugPrint('Register getIdToken refresh failed (non-fatal): $e');
+      }
+      await Future.delayed(const Duration(milliseconds: 800));
+
+      // Phase 3.9 — Retry the Firestore .set() up to 5 times on
+      // permission-denied (auth propagation delay) and transient
+      // errors. Without this, a single failure leaves an orphaned
+      // Auth user that can never log in.
+      Object? lastError;
+      for (int attempt = 1; attempt <= 5; attempt++) {
+        try {
+          await _firestore.collection('users').doc(user.uid).set({
+            'username': username,
+            'email': userEmail,
+            'isAdmin': false,
+            'registrationDate': regDate,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+          lastError = null;
+          break; // Success — exit retry loop.
+        } catch (e) {
+          lastError = e;
+          debugPrint('Register Firestore .set() attempt $attempt failed: $e');
+          if (e is FirebaseException) {
+            final code = e.code;
+            if (code == 'permission-denied' ||
+                code == 'unavailable' ||
+                code == 'network-error' ||
+                code == 'network-request-failed') {
+              // Retryable — wait and try again.
+              await Future.delayed(Duration(milliseconds: 500 * attempt));
+              continue;
+            }
+          }
+          // Non-retryable — break out of the loop.
+          break;
+        }
+      }
+
+      // Phase 3.9 — If all retries failed, we have an orphaned Auth
+      // user. Best-effort cleanup: delete the Auth user so the
+      // username/email can be re-used on the next registration
+      // attempt. If deletion fails too, surface the error to Bro.
+      if (lastError != null) {
+        debugPrint('Register: all Firestore .set() retries failed — cleaning up orphaned Auth user');
+        try {
+          await user.delete();
+        } catch (deleteErr) {
+          debugPrint('Register: failed to delete orphaned Auth user: $deleteErr');
+        }
+        if (lastError is FirebaseException) {
+          lastRegisterErrorCode = lastError.code;
+          lastRegisterErrorMessage = lastError.message;
+        } else {
+          lastRegisterErrorCode = 'firestore-write-failed';
+          lastRegisterErrorMessage = lastError.toString();
+        }
+        FirebaseCrashlytics.instance.recordError(
+          lastError,
+          StackTrace.current,
+          reason: 'registerUser: Firestore .set() failed after 5 retries, '
+              'orphaned Auth user cleaned up',
+        );
+        return false;
+      }
 
       // Update current user
       _currentUser = {
