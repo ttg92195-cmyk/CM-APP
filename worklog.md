@@ -4360,3 +4360,89 @@ Stage Summary:
 PHASE 3 STATUS: 3.3 in progress. This commit removes the App
 Check activation + incompatible package, and adds diagnostic
 logging. Awaiting Bro's test results.
+
+---
+Task ID: Phase 3.3 (update 2)
+Agent: Main Agent
+Task: Bro confirmed App Check Enforce is ON for Cloud Firestore in
+  Firebase Console. Both login AND register still fail. Need to
+  clarify the actual root cause and the fix.
+
+Work Log:
+- Pulled latest from origin/main (commits f12aa85 + 0f2b2dc —
+  Phase 3.2 already removed App Check activation and firebase_app_check
+  package, added diagnostic logging).
+- Discovered that my local codebase was OUTDATED — the remote had
+  Phase 3.2 changes that weren't in my local working copy. Reset my
+  Phase 3.3 commit and pulled remote to get current state.
+- Identified the GAP in Phase 3.2: diagnostic logging only catches
+  FirebaseAuthException, NOT FirebaseException (the parent class
+  that covers Firestore errors). So Firestore errors like
+  [cloud_firestore/permission-denied] fall into the generic catch
+  block and get mislabeled as 'non-auth-exception'. This is exactly
+  what Bro saw in his error message.
+- Added 'on FirebaseException catch (e)' block to both registerUser
+  and loginUser in app_config.dart. Now Firestore errors get their
+  actual code (e.g., 'permission-denied') instead of 'non-auth-
+  exception'.
+- Added explicit profile-load-failed check in loginUser: if
+  _currentUser is null after _loadUserProfile, sets a meaningful
+  diagnostic code pointing to App Check enforcement or Firestore
+  rules as likely cause.
+- Committed as bd051ad and pushed to origin/main.
+
+ROOT CAUSE CONFIRMED:
+- Bro confirmed: Firebase Console → App Check → Cloud Firestore
+  has Enforce turned ON.
+- Sideloaded APKs CANNOT satisfy Play Integrity (Play Integrity
+  requires Play Store installation OR a registered signing key).
+- Without a valid App Check token, Firestore rejects EVERY write
+  (and read) with permission-denied, regardless of what the
+  firestore.rules allow.
+- The local code fix (Phase 3.2 removing App Check activation)
+  only stops the app from TRYING to get a token. It does NOT
+  disable server-side enforcement. Bro MUST turn OFF Enforce
+  in Firebase Console.
+
+ABOUT FIRESTORE.RULES:
+- The rules in cm-app/firestore.rules are CORRECT — they allow
+  isOwner(userId) to create their own user doc on signup.
+- The rules are NOT the problem. App Check enforcement is
+  evaluated BEFORE rules — if App Check rejects, rules are
+  never even checked.
+- Bro asked if rules might have a bug — answer is NO, the
+  rules are fine. The issue is purely App Check enforcement.
+
+ABOUT GITHUB AUTO-PUSH:
+- Bro asked if he needs to manually push to GitHub main.
+- Answer: NO, Bro does not need to push manually. The AI (me)
+  commits and pushes changes to origin/main. That push triggers
+  the GitHub Actions CI build automatically.
+- Bro just needs to: wait for build to complete → download APK
+  from GitHub Actions artifacts → install → test.
+
+Stage Summary:
+- Files modified:
+  * lib/more_libs/setting/app_config.dart — added on FirebaseException
+    catch block to both registerUser and loginUser, added profile-
+    load-failed diagnostic check
+- Committed as bd051ad and pushed to origin/main.
+- Bro action required (CRITICAL):
+  1. Go to Firebase Console → App Check → Cloud Firestore
+  2. Change "Enforce" to "Off" (or "Monitor" mode)
+     - Enforce = rejects all writes without valid token
+     - Monitor = allows writes but logs App Check failures
+     - Off = no App Check enforcement
+  3. Recommended: also check App Check → Authentication — ensure
+     Enforce is OFF there too (same reason)
+  4. Wait for the new GitHub Actions build (commit bd051ad) to
+     complete
+  5. Download and install the new APK
+  6. Test register AND login — should now work
+- After confirming it works, Bro should let me know so I can:
+  * Revert the diagnostic SnackBar messages back to generic
+    localized messages (restore L4 security property)
+  * Remove the diagnostic fields from app_config.dart
+
+PHASE 3 STATUS: 3.3 complete on code side. Awaiting Bro to turn
+off App Check Enforce in Firebase Console + test new build.
