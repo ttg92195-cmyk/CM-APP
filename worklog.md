@@ -4196,3 +4196,167 @@ PHASE 3 STATUS: 3.2 in progress. This commit removes the likely
 root cause (incompatible firebase_app_check package). If auth still
 fails after this build, the diagnostic logging from the previous
 commit will reveal the actual error code for targeted fix.
+
+---
+Task ID: Phase 3.3
+Agent: Main Agent
+Task: Bro reported "Register failed [code: non-auth-exception |
+  [cloud_firestore/permission-denied] The caller does not have
+  permission to execute the specified operation.]" when trying
+  to register a new account. Login also fails. Need to fix.
+
+Work Log:
+- Read current state of codebase: main.dart (commit 620b363 "H3:
+  Use Debug provider for development, Play Integrity for
+  production") has App Check ACTIVATED in release mode with
+  AndroidProvider.playIntegrity. pubspec.yaml has
+  firebase_app_check: ^0.3.0 (severely outdated, current is 2.x).
+- Reviewed registerUser() in app_config.dart — flow is:
+    1. _usernameToEmail(username) → appends @cmmovies.app
+    2. _auth.createUserWithEmailAndPassword(email, password) →
+       this SUCCEEDS (no auth exception thrown)
+    3. _firestore.collection('users').doc(user.uid).set({...}) →
+       this FAILS with [cloud_firestore/permission-denied]
+- Root cause analysis:
+  * Firebase Auth creation works → App Check enforcement is OFF
+    for Auth (else step 2 would fail).
+  * Firestore write fails → App Check enforcement is ON for
+    Firestore in the Firebase Console.
+  * Sideloaded APK cannot satisfy Play Integrity token exchange
+    (Play Integrity requires Play Store installation OR a
+    registered signing key). Without a valid token, Firestore
+    rejects every write with permission-denied.
+  * The ^0.3.0 firebase_app_check package is also severely
+    outdated and incompatible with firebase_auth 5.x /
+    cloud_firestore 5.x — this likely causes the token exchange
+    to fail even when Play Integrity could theoretically succeed.
+- Verified that the simple firestore.rules in cm-app/firestore.rules
+  ALLOW the create (isOwner(userId) returns true after
+  createUserWithEmailAndPassword succeeds). So this is NOT a
+  security rule issue — it's an App Check enforcement issue.
+
+Fix implemented (Phase 3.3):
+
+1. lib/main.dart:
+   * Removed `import 'package:firebase_app_check/firebase_app_check.dart';`
+   * Removed `await FirebaseAppCheck.instance.activate(...)` block
+   * Added Phase 3.3 comment block explaining the rationale
+     (sideloaded APK + outdated package = broken token exchange)
+   * Added debugPrint confirming App Check is skipped
+   * Preserved the kNetflixRed/kNetflixDarkRed color constants
+
+2. pubspec.yaml:
+   * Removed `firebase_app_check: ^0.3.0` from dependencies
+   * Added Phase 3.3 comment block in its place explaining why
+   * Bumped firebase_auth from ^5.3.1 → ^5.5.0 (minor bump,
+     picks up patches within 5.x major)
+   * Bumped cloud_firestore from ^5.4.4 → ^5.5.0 (same rationale)
+
+3. lib/more_libs/setting/app_config.dart:
+   * Added `import 'package:flutter/foundation.dart';` (for
+     debugPrint — was already implicitly available via Material,
+     but explicit is better)
+   * Added 4 diagnostic fields: lastRegisterErrorCode,
+     lastRegisterErrorMessage, lastLoginErrorCode,
+     lastLoginErrorMessage
+   * Modified registerUser():
+     - Clears diagnostic fields at start of each attempt
+     - Adds `on FirebaseException catch (e)` block to catch
+       Firestore/Storage exceptions (which have a different
+       type than FirebaseAuthException). This was the missing
+       piece — the previous generic `catch (e)` was reporting
+       "non-auth-exception" because FirebaseException is NOT
+       a FirebaseAuthException.
+     - Sets lastRegisterErrorCode/Message in all three catch
+       blocks (FirebaseAuthException, FirebaseException, generic)
+     - Adds null-user check with diagnostic code 'null-user'
+   * Modified loginUser():
+     - Same diagnostic field clearing + 3-block catch structure
+     - Adds explicit check after _loadUserProfile: if
+       _currentUser is null after profile load, sets code
+       'profile-load-failed' with helpful message ("Signed in
+       to Firebase Auth but could not read user profile from
+       Firestore. Check Firestore rules and App Check
+       enforcement.")
+
+4. lib/app/ui/screens/login_page.dart:
+   * Removed `import 'package:firebase_auth/firebase_auth.dart';`
+     (no longer needed — FirebaseAuthException catch block
+     removed from _handleRegister)
+   * Modified _handleLogin failure path:
+     - Reads lastLoginErrorCode/Message from AppConfig
+     - Shows SnackBar with format "Login failed [code: XXX | msg]"
+     - Increased SnackBar duration to 8 seconds for readability
+     - Phase 3.3 marker comment: TEMP diagnostic, revert to
+       generic translate('login_failed') after issue resolved
+   * Modified _handleRegister failure path:
+     - Same diagnostic format "Register failed [code: XXX | msg]"
+     - Removed outer try/catch — registerUser now catches all
+       exceptions internally and returns false with diagnostic
+       fields set, so the outer try/catch was redundant.
+   * Both SnackBars now show the ACTUAL Firebase error code,
+     not a generic localized message.
+
+5. scripts/phase3_3_verify.py (new):
+   * 41 structural checks across main.dart, pubspec.yaml,
+     app_config.dart, login_page.dart
+   * All 41 checks PASS
+   * Covers: App Check removal, package removal, diagnostic
+     fields, error capture in all 3 catch blocks, UI display
+     format, brace/paren balance
+
+Stage Summary:
+- Files modified:
+  * lib/main.dart — App Check activation removed, Phase 3.3
+    comment block added
+  * pubspec.yaml — firebase_app_check removed, firebase_auth +
+    cloud_firestore minor bumps, Phase 3.3 comment added
+  * lib/more_libs/setting/app_config.dart — 4 diagnostic fields,
+    registerUser + loginUser improved error capture (3-block
+    catch), flutter/foundation.dart import added
+  * lib/app/ui/screens/login_page.dart — diagnostic SnackBar
+    format, firebase_auth import removed, outer try/catch
+    removed from _handleRegister
+- Files added:
+  * scripts/phase3_3_verify.py — 41-check verification script
+- Root cause: App Check enforcement on Firestore + sideloaded
+  APK without valid Play Integrity token. Even though the
+  firestore.rules permit the write, App Check enforcement
+  rejects the request before rules are evaluated.
+- Two-part fix:
+  1. DISABLE App Check activation in main.dart (so the app
+     doesn't even attempt token exchange — sideloaded APKs
+     can't satisfy Play Integrity anyway)
+  2. REMOVE firebase_app_check ^0.3.0 from pubspec.yaml (it's
+     incompatible with firebase_auth 5.x / cloud_firestore 5.x,
+     and the old package's transitive dependencies may have
+     been interfering with the Firebase initialization chain)
+- Diagnostic logging (TEMP, revert after issue resolved):
+  * If login/register still fails, the SnackBar will now show
+    "Login failed [code: XXX | msg]" or
+    "Register failed [code: XXX | msg]" with the ACTUAL Firebase
+    error code
+  * This bypasses the L4 security property (generic messages
+    prevent username enumeration) — MUST be reverted to
+    generic translate('login_failed') / translate('register_failed')
+    once the issue is confirmed resolved
+- Bro action required:
+  1. Build via GitHub Actions CI (this commit)
+  2. Install the new APK (over the existing one is fine)
+  3. Try register AND login again
+  4. If it WORKS — confirm and we'll revert the diagnostic
+     SnackBars back to generic localized messages
+  5. If it STILL fails — read the new SnackBar (8 seconds,
+     should be long enough to read or screenshot) and report
+     the exact "code: XXX" value
+  6. ALSO verify in Firebase Console → App Check → Firestore:
+     ensure "Enforce" is OFF (or "Monitor" mode). If Enforce
+     is ON, sideloaded APKs will continue to fail even after
+     this fix. Until the app is published to Play Store,
+     App Check cannot be enforced for sideloaded distribution.
+  7. (Optional) Check Firebase Console → App Check →
+     Authentication: ensure Enforce is also OFF (same reason)
+
+PHASE 3 STATUS: 3.3 in progress. This commit removes the App
+Check activation + incompatible package, and adds diagnostic
+logging. Awaiting Bro's test results.
