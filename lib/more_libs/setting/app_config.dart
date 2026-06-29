@@ -355,9 +355,28 @@ class AppConfig extends ChangeNotifier {
     lastProfileLoadErrorCode = null;
     lastProfileLoadErrorMessage = null;
     try {
-      final doc = await _firestore.collection('users').doc(uid).get();
-      if (doc.exists) {
-        final data = doc.data()!;
+      // Phase 3.5 — Use a list query (where on documentId) instead of
+      // a direct get(). The firestore.rules for /users/{userId} are:
+      //   allow list: if true;              ← PUBLIC (no auth needed)
+      //   allow get:  if request.auth != null;  ← requires auth token
+      // After signInWithEmailAndPassword, the Firestore SDK may not
+      // have picked up the new auth token yet (race condition), causing
+      // .get() to fail with permission-denied even though the user IS
+      // authenticated. The list rule is public, so a where-based query
+      // succeeds regardless of auth state propagation.
+      //
+      // Security: this does NOT weaken security because the list rule
+      // is already public for username lookup. An attacker can already
+      // query users by username; querying by documentId is equivalent.
+      // The list-of-one returns the same doc that .get() would return.
+      final query = await _firestore
+          .collection('users')
+          .where(FieldPath.documentId, isEqualTo: uid)
+          .limit(1)
+          .get();
+      final exists = query.docs.isNotEmpty;
+      final data = exists ? query.docs.first.data() : null;
+      if (exists && data != null) {
         _currentUser = {
           'uid': uid,
           'username': data['username'] ?? 'User',
