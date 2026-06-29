@@ -234,31 +234,48 @@ class AppConfig extends ChangeNotifier {
     }
 
     for (final candidate in candidates) {
-      try {
-        final query = await _firestore
-            .collection('users')
-            .where('username', isEqualTo: candidate)
-            .limit(1)
-            .get();
-        if (query.docs.isNotEmpty) {
-          final data = query.docs.first.data();
-          final email = data['email'] as String?;
-          if (email != null && email.isNotEmpty) {
-            return email;
+      // Phase 3.7 — Retry the username lookup up to 3 times on transient
+      // errors (unavailable, network). Without this, a transient backend
+      // hiccup causes _usernameToEmail to fall back to
+      // 'username@cmmovies.app', which then fails in Auth with the
+      // misleading 'invalid-credential'.
+      for (int attempt = 1; attempt <= 3; attempt++) {
+        try {
+          final query = await _firestore
+              .collection('users')
+              .where('username', isEqualTo: candidate)
+              .limit(1)
+              .get();
+          if (query.docs.isNotEmpty) {
+            final data = query.docs.first.data();
+            final email = data['email'] as String?;
+            if (email != null && email.isNotEmpty) {
+              return email;
+            }
           }
-        }
-      } catch (e) {
-        debugPrint('Username lookup error for "$candidate" (may be rules): $e');
-        // Phase 3.4 — capture ACTUAL error so loginUser can surface it.
-        // Previously this catch swallowed the exception and silently fell
-        // back to username@cmmovies.app, which then failed with the
-        // misleading "invalid-credential" Auth error.
-        if (e is FirebaseException) {
-          lastUsernameLookupErrorCode = e.code;
-          lastUsernameLookupErrorMessage = e.message;
-        } else {
-          lastUsernameLookupErrorCode = 'username-lookup-error';
-          lastUsernameLookupErrorMessage = e.toString();
+          // Query succeeded but no match — break out of retry loop,
+          // try the next candidate (if any).
+          break;
+        } catch (e) {
+          debugPrint('Username lookup error for "$candidate" attempt $attempt: $e');
+          // Phase 3.4 — capture ACTUAL error so loginUser can surface it.
+          if (e is FirebaseException) {
+            lastUsernameLookupErrorCode = e.code;
+            lastUsernameLookupErrorMessage = e.message;
+          } else {
+            lastUsernameLookupErrorCode = 'username-lookup-error';
+            lastUsernameLookupErrorMessage = e.toString();
+          }
+          // Retry only on transient errors.
+          final code = lastUsernameLookupErrorCode ?? '';
+          if (code == 'unavailable' || code == 'network-error' || code == 'network-request-failed') {
+            if (attempt < 3) {
+              await Future.delayed(Duration(milliseconds: 500 * attempt));
+              continue;
+            }
+          }
+          // Non-transient error — break out of retry loop.
+          break;
         }
       }
     }
@@ -322,18 +339,31 @@ class AppConfig extends ChangeNotifier {
     // Load local preferences first
     await _loadLocalConfig();
 
-    // Listen to Firebase Auth state changes
+    // Listen to Firebase Auth state changes.
+    // Phase 3.7 — This listener is for INITIAL app startup only (when
+    // the user was previously logged in and the app is cold-starting).
+    // During an active loginUser() call, we set _isLoginInProgress=true
+    // so this listener becomes a no-op — loginUser() does its own
+    // _loadUserProfile and we don't want a second concurrent call
+    // racing on _currentUser (which caused Bro's "login only works
+    // once, then Invalid username or password" symptom).
     _auth.authStateChanges().listen((User? user) async {
-      if (user != null) {
-        // User is signed in - load profile from Firestore
-        _lastActivityTime = DateTime.now(); // L3: Record login time
+      if (_isLoginInProgress) {
+        debugPrint('authStateChanges fired during login in progress — skipping (loginUser handles it)');
+        return;
+      }
+      if (user != null && _currentUser == null) {
+        // Initial app load with a previously-signed-in user.
+        _lastActivityTime = DateTime.now();
         await _loadUserProfile(user.uid);
-      } else {
-        // User is signed out
+      } else if (user == null && _currentUser != null) {
+        // User was signed out (by us, by admin, or by session timeout).
         _currentUser = null;
         _isLoadingAuth = false;
         notifyListeners();
       }
+      // If user != null && _currentUser != null → already loaded, nothing to do.
+      // If user == null && _currentUser == null → already signed out, nothing to do.
     });
   }
 
@@ -356,6 +386,14 @@ class AppConfig extends ChangeNotifier {
   // If the listener call fails (e.g. transient Firestore unavailability),
   // it can null out _currentUser AFTER loginUser's call succeeded.
   bool _isLoadingProfile = false;
+
+  // Phase 3.7 — Flag set by loginUser() so the authStateChanges listener
+  // knows to stay out of the way during an active login flow. Without
+  // this, the listener fires right after signInWithEmailAndPassword,
+  // races with loginUser's own _loadUserProfile call, and depending on
+  // timing can null out _currentUser after loginUser returned success —
+  // causing the app to bounce back to LoginPage.
+  bool _isLoginInProgress = false;
 
   Future<void> _loadUserProfile(String uid) async {
     if (_isLoadingProfile) {
@@ -680,6 +718,10 @@ class AppConfig extends ChangeNotifier {
     // Phase 3.2 — clear diagnostic fields before each attempt
     lastLoginErrorCode = null;
     lastLoginErrorMessage = null;
+    // Phase 3.7 — set the in-progress flag so the authStateChanges
+    // listener becomes a no-op while we drive the auth + profile load
+    // ourselves. We MUST clear this in a finally block below.
+    _isLoginInProgress = true;
     try {
       final email = await _usernameToEmail(username);
 
@@ -705,8 +747,30 @@ class AppConfig extends ChangeNotifier {
         debugPrint('getIdToken refresh failed (non-fatal): $e');
       }
 
-      // Load user profile from Firestore
-      await _loadUserProfile(user.uid);
+      // Phase 3.7 — Retry _loadUserProfile up to 3 times on transient
+      // errors (e.g. 'unavailable'). Bro's first test showed 'unavailable'
+      // on cold login, which is a transient Firestore backend condition.
+      // Retrying with a small backoff resolves it without surfacing the
+      // error to the user.
+      for (int attempt = 1; attempt <= 3; attempt++) {
+        // Load user profile from Firestore
+        await _loadUserProfile(user.uid);
+        if (_currentUser != null) {
+          // Success — bail out of the retry loop.
+          break;
+        }
+        // If the failure was a transient error (unavailable, network),
+        // retry. If it was permission-denied or force-logout, the
+        // diagnostic is already set — surface it immediately.
+        final code = lastProfileLoadErrorCode ?? '';
+        if (code == 'unavailable' || code == 'network-error' || code == 'network-request-failed') {
+          debugPrint('Profile load attempt $attempt failed with $code — retrying...');
+          await Future.delayed(Duration(milliseconds: 500 * attempt));
+          continue;
+        }
+        // Non-transient error — stop retrying.
+        break;
+      }
       if (_currentUser == null) {
         // Phase 3.4 — Surface the ACTUAL error captured by
         // _loadUserProfile's inner catch, instead of the generic
@@ -778,6 +842,11 @@ class AppConfig extends ChangeNotifier {
         reason: 'loginUser non-Auth exception',
       );
       return false;
+    } finally {
+      // Phase 3.7 — Always clear the in-progress flag, even if an
+      // exception propagated up. Without this, the authStateChanges
+      // listener would stay disabled for the rest of the session.
+      _isLoginInProgress = false;
     }
   }
 
