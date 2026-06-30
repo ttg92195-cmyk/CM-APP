@@ -38,13 +38,19 @@ service cloud.firestore {
     // Helper: Verify that admin-only fields are NOT set to elevated values
     // during signup. A malicious user could otherwise craft a signup payload
     // with isAdmin:true / isVip:true / role:'admin' to escalate on day one.
-    // Absent fields are treated as safe defaults (null != true).
+    //
+    // Phase 3.22 — Use defensive !keys().hasAny() pattern (same as
+    // isValidMovie() above). Although Firestore Rules return null for
+    // absent fields (and null != true evaluates to true), this explicit
+    // pattern is more defensive and matches the codebase's existing
+    // validation style. Belt-and-suspenders alongside Phase 3.21 which
+    // also writes these fields explicitly in the .set() payload.
     function safeSignupFields() {
-      return request.resource.data.isAdmin != true
-        && request.resource.data.role != 'admin'
-        && request.resource.data.isVip != true
-        && request.resource.data.isBanned != true
-        && request.resource.data.forceLogout != true;
+      return (!request.resource.data.keys().hasAny(['isAdmin']) || request.resource.data.isAdmin != true)
+        && (!request.resource.data.keys().hasAny(['role']) || request.resource.data.role != 'admin')
+        && (!request.resource.data.keys().hasAny(['isVip']) || request.resource.data.isVip != true)
+        && (!request.resource.data.keys().hasAny(['isBanned']) || request.resource.data.isBanned != true)
+        && (!request.resource.data.keys().hasAny(['forceLogout']) || request.resource.data.forceLogout != true);
     }
 
     // ============================================================
