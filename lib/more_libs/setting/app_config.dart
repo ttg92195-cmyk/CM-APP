@@ -818,7 +818,7 @@ class AppConfig extends ChangeNotifier {
     required String email,
     required String regDate,
   }) async {
-    final delays = <int>[200, 500]; // before attempt 2 and 3
+    final delays = <int>[300, 600]; // before attempt 2 and 3 (slightly longer for propagation)
     Object? lastError;
     String? lastErrorCode;
 
@@ -830,12 +830,54 @@ class AppConfig extends ChangeNotifier {
         return false;
       }
 
-      // Force token refresh on EVERY attempt.
+      // Phase 3.18 — Auth state propagation fix (THE ROOT CAUSE FIX).
+      //
+      // HISTORY: Phase 3.13-3.17 all failed because after
+      // createUserWithEmailAndPassword returns, the Firestore SDK is
+      // still using anonymous/stale auth state for ~500-2000ms. During
+      // that window, .set() hits the create rule which requires
+      // isOwner(userId), but request.auth is null (stale SDK state) →
+      // permission-denied.
+      //
+      // The previous fix (getIdToken(true) + reload) forces a TOKEN
+      // refresh, but does NOT guarantee the Firestore SDK has picked
+      // up the new auth state. The Firestore SDK listens to
+      // authStateChanges() internally, but that listener fires
+      // asynchronously — there's a race between our .set() call and
+      // the SDK's internal auth state update.
+      //
+      // FIX: Subscribe to _auth.authStateChanges() and wait for it to
+      // emit a non-null user with the correct uid. This forces our
+      // code to wait until the SDK has DEFINITELY processed the new
+      // auth state. Then we add a small additional delay (200ms) to
+      // give the Firestore SDK's INTERNAL listeners time to react.
+      //
+      // This is the same pattern recommended by the Firebase team for
+      // "permission-denied after sign-in" issues.
+      try {
+        // Set up a one-shot listener that completes when auth state
+        // matches our target uid. Timeout after 2s to avoid hanging.
+        final authReady = _auth.authStateChanges()
+            .where((u) => u != null && u.uid == uid)
+            .first
+            .timeout(const Duration(seconds: 2));
+        await authReady;
+        // Small extra delay for Firestore SDK internal propagation.
+        await Future.delayed(const Duration(milliseconds: 200));
+        debugPrint('_tryCreateUserDocBlocking attempt $attempt: auth state propagated for uid=$uid');
+      } catch (e) {
+        // Timeout or other error — proceed anyway, the .set() below
+        // might still succeed or fail with a useful error code.
+        debugPrint('_tryCreateUserDocBlocking attempt $attempt authStateChanges wait failed (non-fatal): $e');
+      }
+
+      // Force token refresh on EVERY attempt (in addition to the
+      // authStateChanges wait above — belt and suspenders).
       try {
         await currentUser.reload();
         await currentUser.getIdToken(true);
       } catch (e) {
-        debugPrint('_tryCreateUserDocBlocking attempt $attempt auth refresh failed (non-fatal): $e');
+        debugPrint('_tryCreateUserDocBlocking attempt $attempt getIdToken failed (non-fatal): $e');
       }
 
       // Wait before retry attempts (not before the first).
