@@ -361,6 +361,43 @@ class AppConfig extends ChangeNotifier {
         // Initial app load with a previously-signed-in user.
         _lastActivityTime = DateTime.now();
         await _loadUserProfile(user.uid);
+
+        // Phase 3.15 — Safety net: if there's a pending signup in
+        // SharedPreferences (from a previous registration where the
+        // background doc creation failed or was killed when the app
+        // was closed), kick off the background task again now that
+        // the user is logged in.
+        //
+        // This handles the scenario where:
+        //   1. User registered (pending signup persisted)
+        //   2. Background task started but app was killed before doc
+        //      was created (all 15 retries didn't complete)
+        //   3. User reopens the app — authStateChanges fires with the
+        //      persisted Auth user
+        //   4. _loadUserProfile runs, finds no doc, goes to else-branch
+        //      which ALSO fires the background task
+        //   5. BUT if _loadUserProfile found the doc (because the
+        //      background task from step 2 DID succeed just before the
+        //      app was killed), the else-branch doesn't run, and the
+        //      pending signup is never cleared.
+        //
+        // This safety net ensures the pending signup is eventually
+        // cleared by re-firing the background task if needed. The
+        // per-uid dedup in _createUserDocInBackground prevents
+        // duplicate tasks.
+        final pending = await _consumePendingSignup();
+        if (pending != null && pending['email'] == (user.email ?? '')) {
+          debugPrint('_initAuth: found pending signup on app restart, re-firing background doc creation');
+          final now = DateTime.now();
+          final regDate = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+          _createUserDocInBackground(
+            uid: user.uid,
+            username: pending['username']!,
+            email: pending['email']!,
+            regDate: regDate,
+            clearPendingOnSuccess: true,
+          );
+        }
       } else if (user == null && _currentUser != null) {
         // User was signed out (by us, by admin, or by session timeout).
         _currentUser = null;
@@ -712,7 +749,15 @@ class AppConfig extends ChangeNotifier {
   /// Track in-flight background doc creation to prevent duplicate
   /// background tasks from stacking up if _loadUserProfile is called
   /// multiple times in quick succession.
-  bool _isBackgroundDocCreationInProgress = false;
+  ///
+  /// Phase 3.15 — Changed from `bool` to `String?` (uid). Previously,
+  /// a global bool flag prevented ANY new background task from starting
+  /// while one was in progress — even for a DIFFERENT user. This caused
+  /// a bug: if user A registered and the background task was running
+  /// (up to 6 min), then user A logged out and user B logged in, user
+  /// B's background task was silently skipped. With a uid-based guard,
+  /// a new user can always start their own background task.
+  String? _backgroundDocCreationUid;
 
   /// Create the /users/{uid} doc in the BACKGROUND. Non-blocking —
   /// the caller does NOT await this. 15 retries with exponential
@@ -727,12 +772,13 @@ class AppConfig extends ChangeNotifier {
     required String regDate,
     required bool clearPendingOnSuccess,
   }) async {
-    // Prevent duplicate background tasks.
-    if (_isBackgroundDocCreationInProgress) {
-      debugPrint('_createUserDocInBackground: already in progress, skipping');
+    // Phase 3.15 — Per-uid dedup. Only skip if a background task for
+    // the SAME uid is already running. A different uid gets its own task.
+    if (_backgroundDocCreationUid == uid) {
+      debugPrint('_createUserDocInBackground: already in progress for uid=$uid, skipping');
       return;
     }
-    _isBackgroundDocCreationInProgress = true;
+    _backgroundDocCreationUid = uid;
 
     // Fire-and-forget — don't await. The caller (loginUser/registerUser)
     // returns immediately. This Future runs to completion in the
@@ -744,7 +790,9 @@ class AppConfig extends ChangeNotifier {
         // User signed out between the call and the background task
         // starting. Can't create the doc without auth. Abort — the
         // pending signup stays in SharedPreferences for next login.
-        _isBackgroundDocCreationInProgress = false;
+        if (_backgroundDocCreationUid == uid) {
+          _backgroundDocCreationUid = null;
+        }
         return;
       }
 
@@ -760,10 +808,21 @@ class AppConfig extends ChangeNotifier {
       bool docCreated = false;
 
       for (int attempt = 1; attempt <= 15; attempt++) {
+        // Phase 3.15 — Check on EVERY retry that the current auth user
+        // still matches the uid we're creating the doc for. If the user
+        // has logged out or switched accounts, abort immediately — the
+        // auth token is no longer valid for this uid, so .set() would
+        // just fail with permission-denied forever.
+        final currentUser = _auth.currentUser;
+        if (currentUser == null || currentUser.uid != uid) {
+          debugPrint('_createUserDocInBackground: auth user changed during retry $attempt, aborting');
+          break;
+        }
+
         // Force auth state refresh on EVERY attempt.
         try {
-          await user.reload();
-          await user.getIdToken(true);
+          await currentUser.reload();
+          await currentUser.getIdToken(true);
         } catch (e) {
           debugPrint('_createUserDocInBackground attempt $attempt auth refresh failed (non-fatal): $e');
         }
@@ -822,7 +881,12 @@ class AppConfig extends ChangeNotifier {
         );
       }
 
-      _isBackgroundDocCreationInProgress = false;
+      // Phase 3.15 — Only clear the flag if it still points to our uid.
+      // If a different background task has started for a different uid,
+      // don't clobber its flag.
+      if (_backgroundDocCreationUid == uid) {
+        _backgroundDocCreationUid = null;
+      }
     }();
   }
 
