@@ -889,6 +889,16 @@ class AppConfig extends ChangeNotifier {
           'username': username,
           'email': email,
           'isAdmin': false,
+          // Phase 3.21 — Explicitly set all role/status fields that
+          // _loadUserProfile and the Firestore rules reference. While
+          // the rules' safeSignupFields() check passes for missing
+          // fields (null != true), explicitly setting them makes the
+          // doc more robust and matches what _loadUserProfile expects
+          // to read (avoiding null-coalesce fallbacks).
+          'role': 'user',
+          'isVip': false,
+          'isBanned': false,
+          'forceLogout': false,
           'registrationDate': regDate,
           'createdAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
@@ -1326,54 +1336,69 @@ class AppConfig extends ChangeNotifier {
       // way. The blocking attempt is just an optimization to create the
       // doc NOW rather than relying on a fragile background task.
 
-      // Phase 3.16 — Try to create the doc BLOCKING before returning
-      // success. User sees the loading spinner for ~1.7s max. If this
-      // succeeds, the doc exists immediately and we can clear the
-      // pending signup. If it fails, we fall back to the background task.
+      // ============================================================
+      // Phase 3.21 — Route registration through _loadUserProfile.
+      // THE fix for the doc-not-created bug that survived Phases
+      // 3.13-3.20.
+      // ============================================================
       //
-      // Phase 3.20 — After the sign-out + sign-in above, the Firestore
-      // SDK's auth state is now propagated (same conditions as Email
-      // login). The blocking retry should succeed on the first attempt.
-      // The retry loop remains as a safety net for edge cases.
-      final docCreated = await _tryCreateUserDocBlocking(
-        uid: uid,
-        username: username,
-        email: userEmail,
-        regDate: regDate,
-      );
+      // ROOT CAUSE OF PHASE 3.20 FAILURE:
+      //   Phase 3.20 added sign-out + sign-in to give the Firestore
+      //   SDK a fresh auth state (same as Email login). This was the
+      //   right idea, but Phase 3.20 then called
+      //   _tryCreateUserDocBlocking DIRECTLY. This skips a critical
+      //   step that Email login does: the doc get() in
+      //   _loadUserProfile's Strategy 1.
+      //
+      //   That doc get() does TWO things:
+      //     (a) Checks if the doc already exists
+      //     (b) PRIMES the Firestore SDK's auth state — the SDK's
+      //         internal auth listener fires when the first
+      //         authenticated read succeeds, which makes subsequent
+      //         writes (.set()) succeed reliably.
+      //
+      //   Without this priming read, the .set() call in
+      //   _tryCreateUserDocBlocking races ahead of the SDK's auth
+      //   state propagation and fails with permission-denied — even
+      //   after Phase 3.20's sign-out + sign-in.
+      //
+      // THE FIX:
+      //   Call _loadUserProfile(uid) directly. This uses the EXACT
+      //   same code path as Email login (which Bro confirmed works
+      //   reliably):
+      //     1. doc get() (Strategy 1) — primes the SDK
+      //     2. doc not found → else-branch
+      //     3. _tryCreateUserDocBlocking → .set() (now succeeds
+      //        because the SDK is primed)
+      //     4. _currentUser set from Auth data + pending username
+      //     5. Pending signup cleared on success
+      //
+      // _loadUserProfile also handles:
+      //   - Reading the pending signup (Bro's typed username)
+      //   - Falling back to background task if .set() still fails
+      //   - Setting _currentUser
+      //   - Calling notifyListeners()
+      await _loadUserProfile(uid);
 
-      if (docCreated) {
-        // Doc created successfully — clear the pending signup so it
-        // doesn't get reused on the next login.
-        await _clearPendingSignup();
-      } else {
-        // Blocking attempt failed (likely transient network/token issue).
-        // Fall back to the long-running background task. The pending
-        // signup stays in SharedPreferences so the original username
-        // is preserved for the next Email login's retry.
-        _createUserDocInBackground(
-          uid: uid,
-          username: username,
-          email: userEmail,
-          regDate: regDate,
-          clearPendingOnSuccess: true,
-        );
+      // Fallback: if _loadUserProfile failed (e.g., Firestore read
+      // error in BOTH strategies), it sets _currentUser = null.
+      // In that case, set _currentUser manually so the user can
+      // still use the app. The background task will retry doc
+      // creation. The pending signup stays in SharedPreferences.
+      if (_currentUser == null) {
+        debugPrint('Phase 3.21: _loadUserProfile returned null _currentUser — '
+            'setting fallback _currentUser from Auth data');
+        _currentUser = {
+          'uid': uid,
+          'username': username,
+          'isAdmin': false,
+          'loginDate': now.toIso8601String(),
+          'registrationDate': regDate,
+          'email': userEmail,
+        };
+        notifyListeners();
       }
 
-      // Set _currentUser from Auth data + the username Bro typed.
-      // Phase 3.20 — Use the fresh _auth.currentUser (after sign-in)
-      // rather than the stale `user` reference from createUserWithEmailAndPassword.
-      // The uid is the same, but _auth.currentUser has the freshest token.
-      _currentUser = {
-        'uid': uid,
-        'username': username,
-        'isAdmin': false,
-        'loginDate': now.toIso8601String(),
-        'registrationDate': regDate,
-        'email': userEmail,
-      };
-
-      notifyListeners();
       return true;
     } on FirebaseAuthException catch (e) {
       debugPrint('Register error: ${e.code} - ${e.message}');
