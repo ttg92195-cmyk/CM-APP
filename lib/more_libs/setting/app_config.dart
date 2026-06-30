@@ -1070,32 +1070,34 @@ class AppConfig extends ChangeNotifier {
         debugPrint('getIdToken refresh failed (non-fatal): $e');
       }
 
-      // Phase 3.8 — Brief delay to let Firestore SDK propagate the
-      // new auth token to its internal request handlers. Even after
-      // getIdToken(true) returns, the Firestore SDK's internal auth
-      // listener may not have fired yet, causing the first profile
-      // read to use a stale (anonymous) auth state. 800ms is enough
-      // for the SDK's auth-state-changed event to propagate on a
-      // typical mobile connection without being perceptible to the
-      // user as a "login delay".
-      await Future.delayed(const Duration(milliseconds: 800));
+      // Phase 3.14 — Reduced from 800ms to 400ms. The original 800ms was
+      // added in Phase 3.8 to give the Firestore SDK time to propagate
+      // the new auth token. But with Phase 3.13's non-blocking doc
+      // creation, the cost of the first profile read failing is much
+      // lower — _loadUserProfile's else-branch just kicks off a
+      // background task and returns success. So we can afford a shorter
+      // pre-delay and accept that the first attempt may fail with
+      // permission-denied (which the retry loop below handles).
+      await Future.delayed(const Duration(milliseconds: 400));
 
-      // Phase 3.11 — Retry _loadUserProfile up to 8 times on transient
-      // errors AND on permission-denied (auth propagation delay).
+      // Phase 3.14 — Reduced from 8 attempts to 3. The original 8-attempt
+      // loop (up to ~25s wait) was needed when _loadUserProfile's else-
+      // branch had a BLOCKING .set() retry loop. With Phase 3.13's non-
+      // blocking background doc creation, _loadUserProfile returns fast,
+      // and the cost of giving up after 3 attempts is just an error
+      // message asking the user to retry. Worst-case login wait is now
+      // ~3 × (Firestore read) + (400+800 = 1.2s backoff) ≈ 10s instead
+      // of the previous ~25-50s.
       //
       // HISTORY:
       //   - Phase 3.7: added retry loop for 'unavailable' / 'network-*'.
       //   - Phase 3.8: ADDED 'permission-denied' to the retryable list.
       //   - Phase 3.10: each retry calls user.reload() + getIdToken(true).
-      //   - Phase 3.11: increased from 5 → 8 attempts to match
-      //     registerUser's retry count. This is critical for Bro's
-      //     scenario: existing Auth users whose Firestore docs were
-      //     deleted need the create path in _loadUserProfile, which
-      //     needs auth to have propagated. 8 attempts × 700ms backoff
-      //     = up to ~25s total wait, which is enough for even the
-      //     slowest mobile networks. The user sees a brief "logging
-      //     in..." spinner during this time, which is acceptable.
-      for (int attempt = 1; attempt <= 8; attempt++) {
+      //   - Phase 3.11: increased from 5 → 8 attempts.
+      //   - Phase 3.14 (this change): reduced from 8 → 3 attempts because
+      //     Phase 3.13's non-blocking doc creation makes the cost of
+      //     giving up much lower.
+      for (int attempt = 1; attempt <= 3; attempt++) {
         // Phase 3.10 — On retries (attempt > 1), force auth state
         // refresh before calling _loadUserProfile. This gives the
         // Firestore SDK another chance to pick up the auth token.
@@ -1129,8 +1131,11 @@ class AppConfig extends ChangeNotifier {
             code == 'network-request-failed' ||
             code == 'permission-denied') {
           debugPrint('Profile load attempt $attempt failed with $code — retrying...');
-          // Progressive backoff: 700ms, 1400ms, 2100ms, ... 5600ms.
-          await Future.delayed(Duration(milliseconds: 700 * attempt));
+          // Phase 3.14 — Reduced backoff from 700ms × attempt to 400ms ×
+          // attempt. With only 3 attempts total, max backoff is now
+          // 400+800 = 1200ms (was 700+1400+2100+2800+3500+4200+4900+5600
+          // = ~25s with 8 attempts).
+          await Future.delayed(Duration(milliseconds: 400 * attempt));
           continue;
         }
         // Non-retryable error — stop retrying.
