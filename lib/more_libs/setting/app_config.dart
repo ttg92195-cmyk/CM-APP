@@ -623,8 +623,42 @@ class AppConfig extends ChangeNotifier {
           final now = DateTime.now();
           final regDate = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
 
-          // Set _currentUser IMMEDIATELY from Auth data. Login returns
-          // SUCCESS right away — the user doesn't wait for .set().
+          // Set _currentUser from Auth data. Login returns SUCCESS
+          // right away — but Phase 3.16 adds a SHORT blocking attempt
+          // first so the doc gets created reliably on this login (not
+          // relying on a fragile 6-min background task).
+          //
+          // Phase 3.16 — Try BLOCKING doc creation first. Only happens
+          // in the else-branch (doc didn't exist), so existing users
+          // with a doc are NOT slowed down. For new users on their
+          // first Email login (e.g. registration's blocking attempt
+          // failed), this gives them another chance to create the doc
+          // with a fresh auth token before falling back to the 6-min
+          // background task.
+          final docCreated = await _tryCreateUserDocBlocking(
+            uid: uid,
+            username: username,
+            email: email,
+            regDate: regDate,
+          );
+
+          if (docCreated) {
+            // Doc created — clear the pending signup if any.
+            if (pendingSignup != null) {
+              await _clearPendingSignup();
+            }
+          } else {
+            // Blocking failed — fall back to the 6-min background task.
+            // Pending signup stays in SharedPreferences for the next login.
+            _createUserDocInBackground(
+              uid: uid,
+              username: username,
+              email: email,
+              regDate: regDate,
+              clearPendingOnSuccess: pendingSignup != null,
+            );
+          }
+
           _currentUser = {
             'uid': uid,
             'username': username,
@@ -633,20 +667,6 @@ class AppConfig extends ChangeNotifier {
             'registrationDate': regDate,
             'email': email,
           };
-
-          // Phase 3.13 — Kick off doc creation in the BACKGROUND.
-          // Non-blocking: we don't await this. Login returns success
-          // immediately. The background task retries .set() up to 15
-          // times with exponential backoff. If it succeeds, the doc
-          // exists for future Username logins. If it fails, the pending
-          // signup stays in SharedPreferences for the next login.
-          _createUserDocInBackground(
-            uid: uid,
-            username: username,
-            email: email,
-            regDate: regDate,
-            clearPendingOnSuccess: pendingSignup != null,
-          );
         }
       }
     } catch (e) {
@@ -744,6 +764,137 @@ class AppConfig extends ChangeNotifier {
     } catch (e) {
       debugPrint('_clearPendingSignup failed (non-fatal): $e');
     }
+  }
+
+  // ============================================================
+  // Phase 3.16 — Blocking-first doc creation (Spark plan friendly)
+  // ============================================================
+  //
+  // PROBLEM
+  //   Phase 3.13-3.15 rely on a fire-and-forget background task that
+  //   retries .set() up to 15 times over ~6 min. The task can be killed
+  //   when the app is backgrounded, when the user logs out, or when
+  //   Android's JobScheduler reclaims memory. Bro reported that even
+  //   after a successful Email login (which should re-fire the task
+  //   via _loadUserProfile's else-branch), the /users/{uid} doc still
+  //   never appeared. The 6-min window is too fragile on real devices.
+  //
+  // FIX
+  //   Add a SHORT blocking retry loop (3 attempts, max ~1.7s total)
+  //   that runs INSIDE registerUser and _loadUserProfile. The user
+  //   sees a brief loading spinner. The auth token is at its freshest
+  //   because the user JUST authenticated. If blocking succeeds, the
+  //   doc exists immediately — Username login works on the very next
+  //   attempt. If blocking fails, fall back to the 15-retry background
+  //   task as before.
+  //
+  // WHY THIS WORKS WITHOUT CLOUD FUNCTIONS
+  //   - The Firestore /users/{uid} create rule allows the OWNER to
+  //     create their own doc with safe fields. We just need the auth
+  //     token to be propagated — which a forced getIdToken(true) +
+  //     short retry handles reliably on most networks.
+  //   - The previous "non-blocking" approach was over-engineered for
+  //     the rare case (terrible network) at the cost of the common
+  //     case (good network where 1 attempt succeeds in <500ms).
+  //   - Cloud Functions (Phase 3.10/3.15) would be more bulletproof
+  //     but require Firebase Blaze plan (pay-as-you-go). This blocking
+  //     approach works on the free Spark plan.
+
+  /// Try to create the /users/{uid} doc with 3 quick blocking retries.
+  ///
+  /// Total max wait: ~1.7s (200ms + 500ms delays + ~1s for 3 write attempts).
+  /// The caller MUST show a loading spinner while this runs.
+  ///
+  /// Returns `true` if the doc was created successfully, `false` if all
+  /// 3 attempts failed. On failure, the caller should fall back to the
+  /// long-running `_createUserDocInBackground` as a safety net.
+  ///
+  /// CRITICAL: this function does NOT clear the pending signup. The
+  /// caller is responsible for calling `_clearPendingSignup()` if this
+  /// returns `true`.
+  Future<bool> _tryCreateUserDocBlocking({
+    required String uid,
+    required String username,
+    required String email,
+    required String regDate,
+  }) async {
+    final delays = <int>[200, 500]; // before attempt 2 and 3
+    Object? lastError;
+    String? lastErrorCode;
+
+    for (int attempt = 1; attempt <= 3; attempt++) {
+      // Verify auth user still matches on every attempt.
+      final currentUser = _auth.currentUser;
+      if (currentUser == null || currentUser.uid != uid) {
+        debugPrint('_tryCreateUserDocBlocking: auth user mismatch on attempt $attempt, aborting');
+        return false;
+      }
+
+      // Force token refresh on EVERY attempt.
+      try {
+        await currentUser.reload();
+        await currentUser.getIdToken(true);
+      } catch (e) {
+        debugPrint('_tryCreateUserDocBlocking attempt $attempt auth refresh failed (non-fatal): $e');
+      }
+
+      // Wait before retry attempts (not before the first).
+      if (attempt > 1) {
+        await Future.delayed(Duration(milliseconds: delays[attempt - 2]));
+      }
+
+      try {
+        await _firestore.collection('users').doc(uid).set({
+          'username': username,
+          'email': email,
+          'isAdmin': false,
+          'registrationDate': regDate,
+          'createdAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+        debugPrint('_tryCreateUserDocBlocking: doc created on attempt $attempt for uid=$uid');
+        return true;
+      } catch (e) {
+        lastError = e;
+        if (e is FirebaseException) {
+          lastErrorCode = e.code;
+          debugPrint('_tryCreateUserDocBlocking attempt $attempt failed: [${e.code}] ${e.message}');
+        } else {
+          lastErrorCode = 'non-firebase';
+          debugPrint('_tryCreateUserDocBlocking attempt $attempt failed: $e');
+        }
+        // Retry on transient errors; abort on hard failures.
+        if (e is FirebaseException) {
+          final code = e.code;
+          if (code == 'permission-denied' ||
+              code == 'unavailable' ||
+              code == 'network-error' ||
+              code == 'network-request-failed' ||
+              code == 'unknown' ||
+              code == 'aborted' ||
+              code == 'deadline-exceeded') {
+            continue; // retry
+          }
+          // Hard failure (e.g. invalid-argument) — no point retrying.
+          break;
+        }
+        // Non-FirebaseException — retry once more, then give up.
+        if (attempt < 3) continue;
+      }
+    }
+
+    debugPrint('_tryCreateUserDocBlocking: FAILED after retries — '
+        'lastErrorCode=$lastErrorCode, lastError=$lastError');
+    // Report to Crashlytics so Bro can see the exact failure reason in
+    // the dashboard even if the debug log was missed.
+    if (lastError != null) {
+      FirebaseCrashlytics.instance.recordError(
+        lastError,
+        StackTrace.current,
+        reason: '_tryCreateUserDocBlocking failed (lastErrorCode=$lastErrorCode) '
+            'for uid=$uid, username=$username',
+      );
+    }
+    return false;
   }
 
   /// Track in-flight background doc creation to prevent duplicate
@@ -1015,7 +1166,7 @@ class AppConfig extends ChangeNotifier {
       final now = DateTime.now();
       final regDate = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
 
-      // Phase 3.13 — NON-BLOCKING doc creation.
+      // Phase 3.16 — BLOCKING-FIRST doc creation.
       //
       // HISTORY:
       //   - Phase 3.9-3.11: blocking .set() retry loops (5-8 attempts).
@@ -1023,19 +1174,52 @@ class AppConfig extends ChangeNotifier {
       //   - Phase 3.12: if .set() failed after 8 retries, kept the Auth
       //     user and returned success. But the doc was still missing,
       //     and the username was lost (next login used email.split).
-      //   - Phase 3.13 (this change): kick off .set() in the BACKGROUND
-      //     with 15 retries + exponential backoff. Registration returns
-      //     IMMEDIATELY. The pending signup in SharedPreferences ensures
-      //     the original username is preserved for the next login's
-      //     doc creation, even if this background task fails.
+      //   - Phase 3.13-3.15: NON-BLOCKING background task (15 retries,
+      //     ~6 min). Problem: background task gets killed when app is
+      //     backgrounded, user logs out, or Android reclaims memory.
+      //     Even after successful Email login, doc was never created.
+      //   - Phase 3.16 (this change): SHORT blocking attempt (3 retries,
+      //     ~1.7s max) IMMEDIATELY after Auth user creation, BEFORE
+      //     returning success. The auth token is at its freshest because
+      //     createUserWithEmailAndPassword just returned. If blocking
+      //     succeeds, the doc exists immediately and Username login
+      //     works on the very next attempt. If blocking fails, fall
+      //     back to the long-running background task as a safety net.
       //
-      // The Auth user is already created — registration succeeds. The
-      // doc will be created in the background. If it fails, the pending
-      // signup stays in SharedPreferences and the next login will try
-      // again via _loadUserProfile's else-branch.
+      // The Auth user is already created — registration succeeds either
+      // way. The blocking attempt is just an optimization to create the
+      // doc NOW rather than relying on a fragile background task.
 
-      // Set _currentUser IMMEDIATELY from Auth data + the username Bro
-      // typed. Registration returns SUCCESS right away.
+      // Phase 3.16 — Try to create the doc BLOCKING before returning
+      // success. User sees the loading spinner for ~1.7s max. If this
+      // succeeds, the doc exists immediately and we can clear the
+      // pending signup. If it fails, we fall back to the background task.
+      final docCreated = await _tryCreateUserDocBlocking(
+        uid: user.uid,
+        username: username,
+        email: userEmail,
+        regDate: regDate,
+      );
+
+      if (docCreated) {
+        // Doc created successfully — clear the pending signup so it
+        // doesn't get reused on the next login.
+        await _clearPendingSignup();
+      } else {
+        // Blocking attempt failed (likely transient network/token issue).
+        // Fall back to the long-running background task. The pending
+        // signup stays in SharedPreferences so the original username
+        // is preserved for the next Email login's retry.
+        _createUserDocInBackground(
+          uid: user.uid,
+          username: username,
+          email: userEmail,
+          regDate: regDate,
+          clearPendingOnSuccess: true,
+        );
+      }
+
+      // Set _currentUser from Auth data + the username Bro typed.
       _currentUser = {
         'uid': user.uid,
         'username': username,
@@ -1044,15 +1228,6 @@ class AppConfig extends ChangeNotifier {
         'registrationDate': regDate,
         'email': userEmail,
       };
-
-      // Kick off doc creation in the BACKGROUND (non-blocking).
-      _createUserDocInBackground(
-        uid: user.uid,
-        username: username,
-        email: userEmail,
-        regDate: regDate,
-        clearPendingOnSuccess: true,
-      );
 
       notifyListeners();
       return true;
