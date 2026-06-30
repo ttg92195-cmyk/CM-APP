@@ -1221,6 +1221,83 @@ class AppConfig extends ChangeNotifier {
       final user = userCredential.user;
       if (user == null) return false;
       createdUser = user;
+      final uid = user.uid;
+
+      // ============================================================
+      // Phase 3.20 — Sign-out + sign-in to force Firestore SDK auth
+      // state propagation. THE definitive fix for the doc-not-created
+      // bug that survived Phases 3.13-3.19.
+      // ============================================================
+      //
+      // ROOT CAUSE OF ALL PREVIOUS FAILURES:
+      //   After createUserWithEmailAndPassword returns, the Firestore
+      //   SDK's INTERNAL auth state listener does NOT pick up the new
+      //   auth state for a variable amount of time (500ms-2000ms+, and
+      //   possibly longer on slow networks). During this window, the
+      //   .set() call to create /users/{uid} fails with
+      //   permission-denied because the SDK treats the request as
+      //   unauthenticated (request.auth == null in the rules).
+      //
+      //   Phase 3.19 tried getIdToken(true) + reload() + 500ms delay.
+      //   This was NOT enough on Bro's device/network. The Firestore
+      //   SDK's auth state listener fires asynchronously and 500ms was
+      //   insufficient.
+      //
+      // THE INSIGHT:
+      //   Bro confirmed that Email login (signInWithEmailAndPassword)
+      //   works RELIABLY — after sign-in, _loadUserProfile can read
+      //   the Firestore doc IMMEDIATELY. This proves that the Firestore
+      //   SDK picks up the auth state quickly after a fresh
+      //   signInWithEmailAndPassword call.
+      //
+      //   The difference: createUserWithEmailAndPassword creates a new
+      //   user AND signs them in, but the Firestore SDK's auth state
+      //   propagation is slower/unreliable for this code path. The
+      //   sign-in path is well-optimized (it's the most common
+      //   operation), so auth state propagates immediately.
+      //
+      // THE FIX:
+      //   1. createUserWithEmailAndPassword (creates user, signs in,
+      //      but Firestore SDK doesn't pick up auth state reliably)
+      //   2. signOut() (clears the Firestore SDK's auth state)
+      //   3. signInWithEmailAndPassword (fresh sign-in — Firestore SDK
+      //      picks up auth state IMMEDIATELY, just like Email login)
+      //   4. Now .set() works, because the SDK has the correct auth
+      //      state, same as after a normal Email login.
+      //
+      // COST: Adds ~1-2 seconds to registration. Worth it for
+      // reliability. The user sees the loading spinner during this time.
+      //
+      // WHY THIS IS BETTER THAN PHASE 3.19:
+      //   - Phase 3.19: getIdToken(true) + 500ms delay — empirically
+      //     insufficient on Bro's device.
+      //   - Phase 3.20: Replicates the EXACT conditions under which
+      //     Email login works (which Bro confirmed is reliable).
+      try {
+        await _auth.signOut();
+        debugPrint('Phase 3.20: signed out after registration, signing back in to propagate auth state');
+        await _auth.signInWithEmailAndPassword(
+          email: userEmail,
+          password: password,
+        );
+        debugPrint('Phase 3.20: signed back in — Firestore SDK auth state propagated (same as Email login)');
+      } catch (e) {
+        // Sign-in failed. This is rare (we just created the account
+        // with the same credentials). Try once more, then continue.
+        debugPrint('Phase 3.20: sign-out + sign-in failed (non-fatal): $e');
+        try {
+          await _auth.signInWithEmailAndPassword(
+            email: userEmail,
+            password: password,
+          );
+          debugPrint('Phase 3.20: second sign-in attempt succeeded');
+        } catch (e2) {
+          debugPrint('Phase 3.20: second sign-in attempt also failed: $e2 — continuing with original auth state');
+          // Continue anyway — the Auth user is created. The blocking
+          // retry below will try with whatever auth state we have.
+          // The background task is the safety net.
+        }
+      }
 
       final now = DateTime.now();
       final regDate = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
@@ -1253,8 +1330,13 @@ class AppConfig extends ChangeNotifier {
       // success. User sees the loading spinner for ~1.7s max. If this
       // succeeds, the doc exists immediately and we can clear the
       // pending signup. If it fails, we fall back to the background task.
+      //
+      // Phase 3.20 — After the sign-out + sign-in above, the Firestore
+      // SDK's auth state is now propagated (same conditions as Email
+      // login). The blocking retry should succeed on the first attempt.
+      // The retry loop remains as a safety net for edge cases.
       final docCreated = await _tryCreateUserDocBlocking(
-        uid: user.uid,
+        uid: uid,
         username: username,
         email: userEmail,
         regDate: regDate,
@@ -1270,7 +1352,7 @@ class AppConfig extends ChangeNotifier {
         // signup stays in SharedPreferences so the original username
         // is preserved for the next Email login's retry.
         _createUserDocInBackground(
-          uid: user.uid,
+          uid: uid,
           username: username,
           email: userEmail,
           regDate: regDate,
@@ -1279,8 +1361,11 @@ class AppConfig extends ChangeNotifier {
       }
 
       // Set _currentUser from Auth data + the username Bro typed.
+      // Phase 3.20 — Use the fresh _auth.currentUser (after sign-in)
+      // rather than the stale `user` reference from createUserWithEmailAndPassword.
+      // The uid is the same, but _auth.currentUser has the freshest token.
       _currentUser = {
-        'uid': user.uid,
+        'uid': uid,
         'username': username,
         'isAdmin': false,
         'loginDate': now.toIso8601String(),

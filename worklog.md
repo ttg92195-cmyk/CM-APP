@@ -4196,3 +4196,39 @@ PHASE 3 STATUS: 3.2 in progress. This commit removes the likely
 root cause (incompatible firebase_app_check package). If auth still
 fails after this build, the diagnostic logging from the previous
 commit will reveal the actual error code for targeted fix.
+
+---
+Task ID: 3.20
+Agent: main (Super Z)
+Task: Fix /users/{uid} doc auto-creation during registration — Phase 3.20 sign-out + sign-in approach
+
+Work Log:
+- Read complete app_config.dart (1720+ lines) to understand full auth flow
+- Read firestore.rules — confirmed rules allow create with isOwner(userId) && safeSignupFields()
+- Checked git history of firestore.rules — OLD rules (commit 47acfbf) had NO safeSignupFields() check, just isOwner(userId)
+- Verified App Check is DISABLED in main.dart (Phase 3.2 removed it)
+- Verified Firebase project ID matches: cm-movies-dabab
+- Found Cloud Function onUserCreated still in functions/index.js — this was creating docs server-side when Bro had Blaze plan. Now on Spark plan, it doesn't run.
+- Identified ROOT CAUSE: After createUserWithEmailAndPassword, Firestore SDK's internal auth state listener does NOT pick up new auth state reliably. Phase 3.19's getIdToken(true) + 500ms delay was insufficient.
+- KEY INSIGHT: Bro confirmed Email login (signInWithEmailAndPassword) works reliably. The Firestore SDK picks up auth state quickly after a FRESH sign-in. So we replicate this condition.
+- Phase 3.20 FIX: After createUserWithEmailAndPassword, do signOut() + signInWithEmailAndPassword. This gives the Firestore SDK a fresh auth state (same conditions as Email login), so the subsequent .set() works.
+- Updated registerUser to:
+  1. createUserWithEmailAndPassword (creates user)
+  2. signOut() (clears Firestore SDK auth state)
+  3. signInWithEmailAndPassword (fresh sign-in — Firestore SDK picks up auth state immediately)
+  4. _tryCreateUserDocBlocking (now should succeed because auth state is propagated)
+- Updated _currentUser map to use `uid` variable instead of `user.uid` (user reference may be stale after sign-out + sign-in)
+- Dart syntax check: ALL balanced ((), {}, [])
+
+Stage Summary:
+- Files modified:
+  * lib/more_libs/setting/app_config.dart — registerUser: added sign-out + sign-in block after createUserWithEmailAndPassword
+- Root cause: Firestore SDK auth state propagation delay after createUserWithEmailAndPassword is unreliable. Sign-out + sign-in replicates the Email login conditions which DO work reliably.
+- This is the 8th attempt (Phases 3.13-3.19 all failed). The difference: Phase 3.20 uses a fundamentally different approach (re-authentication) instead of trying to force auth state propagation with delays and token refreshes.
+- Bro action required:
+  1. Build via GitHub Actions CI
+  2. Install new APK
+  3. Register a NEW account
+  4. Check Firebase Console → Firestore → Users collection — the new user's doc should appear AUTOMATICALLY
+  5. If doc appears: Username login should now work for the new account
+  6. If doc STILL doesn't appear: the issue is NOT auth propagation — it's likely that firestore.rules are not actually deployed to Firebase. Bro needs to run: firebase deploy --only firestore:rules
