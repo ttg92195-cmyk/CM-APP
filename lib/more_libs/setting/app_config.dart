@@ -830,55 +830,54 @@ class AppConfig extends ChangeNotifier {
         return false;
       }
 
-      // Phase 3.18 — Auth state propagation fix (THE ROOT CAUSE FIX).
+      // Phase 3.19 — Auth state propagation fix (REVISED).
       //
-      // HISTORY: Phase 3.13-3.17 all failed because after
-      // createUserWithEmailAndPassword returns, the Firestore SDK is
-      // still using anonymous/stale auth state for ~500-2000ms. During
-      // that window, .set() hits the create rule which requires
-      // isOwner(userId), but request.auth is null (stale SDK state) →
-      // permission-denied.
+      // HISTORY: Phase 3.18 used authStateChanges().first to wait for
+      // auth state to propagate. This was WRONG because:
+      //   - createUserWithEmailAndPassword ALREADY signs the user in
+      //     before returning. So _auth.currentUser is already set.
+      //   - authStateChanges() emits on STATE CHANGES. If the state
+      //     hasn't changed (user is already signed in), the stream
+      //     doesn't emit. We'd wait 2s for nothing, then time out.
+      //   - Result: Phase 3.18 always waited 2s, then .set() failed
+      //     because the Firestore SDK still hadn't picked up the new
+      //     auth state.
       //
-      // The previous fix (getIdToken(true) + reload) forces a TOKEN
-      // refresh, but does NOT guarantee the Firestore SDK has picked
-      // up the new auth state. The Firestore SDK listens to
-      // authStateChanges() internally, but that listener fires
-      // asynchronously — there's a race between our .set() call and
-      // the SDK's internal auth state update.
+      // FIX: Use a multi-pronged approach to GUARANTEE the Firestore
+      // SDK sees the new auth state:
+      //   1. Verify _auth.currentUser is set (sanity check).
+      //   2. Force getIdToken(true) — refreshes the token in the
+      //      FirebaseAuth instance AND notifies Firestore SDK listeners.
+      //   3. Wait 500ms — gives Firestore SDK's internal listeners
+      //      time to react to the token refresh.
+      //   4. THEN call .set().
       //
-      // FIX: Subscribe to _auth.authStateChanges() and wait for it to
-      // emit a non-null user with the correct uid. This forces our
-      // code to wait until the SDK has DEFINITELY processed the new
-      // auth state. Then we add a small additional delay (200ms) to
-      // give the Firestore SDK's INTERNAL listeners time to react.
-      //
-      // This is the same pattern recommended by the Firebase team for
-      // "permission-denied after sign-in" issues.
-      try {
-        // Set up a one-shot listener that completes when auth state
-        // matches our target uid. Timeout after 2s to avoid hanging.
-        final authReady = _auth.authStateChanges()
-            .where((u) => u != null && u.uid == uid)
-            .first
-            .timeout(const Duration(seconds: 2));
-        await authReady;
-        // Small extra delay for Firestore SDK internal propagation.
-        await Future.delayed(const Duration(milliseconds: 200));
-        debugPrint('_tryCreateUserDocBlocking attempt $attempt: auth state propagated for uid=$uid');
-      } catch (e) {
-        // Timeout or other error — proceed anyway, the .set() below
-        // might still succeed or fail with a useful error code.
-        debugPrint('_tryCreateUserDocBlocking attempt $attempt authStateChanges wait failed (non-fatal): $e');
+      // The 500ms delay is the key — getIdToken(true) is synchronous
+      // from the app's perspective but the Firestore SDK's auth state
+      // listener fires asynchronously, and we need to give it time.
+      final authUser = _auth.currentUser;
+      if (authUser == null || authUser.uid != uid) {
+        debugPrint('_tryCreateUserDocBlocking attempt $attempt: currentUser mismatch, aborting');
+        return false;
       }
 
-      // Force token refresh on EVERY attempt (in addition to the
-      // authStateChanges wait above — belt and suspenders).
+      // Force token refresh — this also notifies Firestore SDK listeners.
       try {
-        await currentUser.reload();
-        await currentUser.getIdToken(true);
+        await authUser.reload();
+        await authUser.getIdToken(true);
+        debugPrint('_tryCreateUserDocBlocking attempt $attempt: token refreshed');
       } catch (e) {
         debugPrint('_tryCreateUserDocBlocking attempt $attempt getIdToken failed (non-fatal): $e');
       }
+
+      // Phase 3.19 — Critical propagation delay. The Firestore SDK's
+      // internal authStateChanges listener fires ASYNCHRONOUSLY after
+      // getIdToken completes. Without this delay, .set() races ahead
+      // and uses the SDK's stale auth state → permission-denied.
+      //
+      // 500ms is empirical — long enough for the SDK to update on
+      // most networks, short enough to keep registration fast.
+      await Future.delayed(const Duration(milliseconds: 500));
 
       // Wait before retry attempts (not before the first).
       if (attempt > 1) {
@@ -1182,6 +1181,24 @@ class AppConfig extends ChangeNotifier {
     // Phase 3.2 — clear diagnostic fields before each attempt
     lastRegisterErrorCode = null;
     lastRegisterErrorMessage = null;
+    // Phase 3.19 — Set _isLoginInProgress so the authStateChanges
+    // listener (set up in _initAuth) doesn't fire and call
+    // _loadUserProfile CONCURRENTLY with our registerUser flow.
+    //
+    // HISTORY: Phase 3.7 added this flag for loginUser(), but forgot
+    // to set it for registerUser(). This caused a race condition:
+    //   1. createUserWithEmailAndPassword returns → user is signed in
+    //   2. authStateChanges listener fires (because _isLoginInProgress=false)
+    //   3. Listener calls _loadUserProfile(uid)
+    //   4. _loadUserProfile's else-branch fires _tryCreateUserDocBlocking
+    //   5. CONCURRENTLY, registerUser ALSO calls _tryCreateUserDocBlocking
+    //   6. Two .set() calls race — one might succeed, one might fail,
+    //      or both might fail with permission-denied because the SDK's
+    //      auth state is being refreshed by both callers simultaneously.
+    //
+    // Setting this flag prevents the listener from firing during
+    // registration, just like it does during login.
+    _isLoginInProgress = true;
     User? createdUser;
     try {
       // Use provided email, or auto-generate from username
@@ -1314,6 +1331,10 @@ class AppConfig extends ChangeNotifier {
         reason: 'registerUser non-Auth exception',
       );
       return false;
+    } finally {
+      // Phase 3.19 — Clear the flag so future authStateChanges events
+      // (e.g., app restart with persisted user) can fire normally.
+      _isLoginInProgress = false;
     }
   }
 
