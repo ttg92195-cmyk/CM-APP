@@ -4495,3 +4495,112 @@ Stage Summary:
   SnackBar will now show the ACTUAL Firestore error code (e.g.
   permission-denied) instead of the misleading labels, which will
   pinpoint the real root cause.
+
+---
+Task ID: Phase 3.13
+Agent: Main Agent
+Task: Fix slow registration (1-minute delay) by making Firestore doc creation non-blocking; preserve original username across the async gap so Username login works.
+
+Work Log:
+- Bro reported: fresh app install + new account creation takes ~1 minute,
+  login also slow. Network is poor in his area.
+- Investigated app_config.dart. Found that Phase 3.4 (latest committed
+  phase) still had BLOCKING Firestore writes in two places:
+    1. registerUser (line ~572 old): `await _firestore.collection('users').doc(user.uid).set({...})` — blocked registration 30-60s on slow networks
+    2. _loadUserProfile else-branch (line ~424 old): another blocking `await _firestore...set()` that ran on every login where the doc didn't exist yet
+- These two blocking writes, each potentially taking 30+ seconds on a
+  flaky network, explained the 1-minute registration delay.
+- Implemented Phase 3.13 with the following changes to
+  /home/z/my-project/cm-app/lib/more_libs/setting/app_config.dart:
+  * Added constants _pendingUsernameKey, _pendingEmailKey
+  * Added bool _isBackgroundDocCreationInProgress flag (dedup guard)
+  * Added _persistPendingSignup(username, email) — stores original
+    username+email to SharedPreferences BEFORE Auth user creation
+  * Added _consumePendingSignup() — reads (but does NOT remove) pending
+    signup; returns null if none stored
+  * Added _clearPendingSignup() — removes pending signup after
+    successful doc creation
+  * Added _createUserDocInBackground(uid, username, email) — 15 retries
+    with exponential backoff (1, 2, 4, 8, 16, then 30s×10), max ~6 min,
+    non-blocking (caller does NOT await), clears pending signup on
+    success, deduplicates via _isBackgroundDocCreationInProgress flag
+  * Modified registerUser: calls _persistPendingSignup BEFORE Auth
+    creation, sets _currentUser immediately, fires
+    _createUserDocInBackground (no await), removed blocking
+    await _firestore...set()
+  * Modified _loadUserProfile else-branch: uses _consumePendingSignup
+    to recover original username (preserves casing), sets _currentUser
+    immediately, fires _createUserDocInBackground (no await), removed
+    blocking await _firestore...set()
+  * Modified loginUser FirebaseAuthException catch: added new
+    'username-not-found' error case — if user typed username (no @),
+    lookup didn't error but returned no docs, and Auth sign-in failed
+    with invalid-credential, surface a clear message guiding the user
+    to try Email login instead
+- Wrote /home/z/my-project/cm-app/scripts/phase3_13_verify.py — 19/19 PASS.
+- Verified syntax: parens/braces/brackets all balanced in code (excluding
+  strings/comments).
+
+Stage Summary:
+- Registration should now return SUCCESS in ~1-3s on a decent network
+  (was 30-60s). The Firestore doc is created silently in the background
+  with up to 15 retries + exponential backoff.
+- Login is also faster because _loadUserProfile else-branch no longer
+  blocks on a Firestore write.
+- Username login still works for users whose /users/{uid} doc has been
+  created (by the background task or by manual creation in Firebase
+  Console). For users whose doc hasn't been created yet, the new
+  'username-not-found' error message guides them to use Email login.
+- KNOWN LIMITATION: if the network is so bad that even 15 retries
+  (~6 min total) all fail, the /users/{uid} doc will NOT exist and
+  Username login will fail with 'username-not-found'. The user can
+  still login via Email. The next login attempt will retry the
+  background doc creation from the pending signup in SharedPreferences.
+- Next step: Bro installs the Phase 3.13 APK and verifies that (a)
+  registration is now fast (~3s instead of 1 min), (b) Email login
+  still works, (c) Username login still works.
+
+---
+Task ID: Phase 3.14
+Agent: Main Agent
+Task: Speed up login by reducing the 8-attempt blocking retry loop in loginUser.
+
+Work Log:
+- Bro reported: fresh app install + new account creation takes ~1 minute;
+  login also slow. Asked if this is normal.
+- Investigated. Found that:
+  * Phase 3.13 (remote commit 7be7da4) already makes registration
+    non-blocking — registerUser returns SUCCESS immediately after
+    createUserWithEmailAndPassword. The 1-minute registration delay on
+    first install is therefore mostly Firebase cold start + poor
+    network, NOT a code issue.
+  * However, loginUser still has an 8-attempt BLOCKING retry loop
+    (Phase 3.11) that can wait up to ~25s+ on permission-denied errors
+    (auth propagation delay). With Phase 3.13's non-blocking doc
+    creation, this many retries is no longer necessary — the cost of
+    giving up early is just an error message asking the user to retry,
+    not a failed registration.
+- Implemented Phase 3.14 in app_config.dart:
+  * Reduced pre-delay before _loadUserProfile from 800ms → 400ms.
+    Reasoning: the original 800ms was added in Phase 3.8 to give the
+    Firestore SDK time to propagate the new auth token. With Phase
+    3.13's non-blocking doc creation, the cost of the first profile
+    read failing is much lower — _loadUserProfile's else-branch just
+    kicks off a background task and returns success. So a shorter
+    pre-delay is acceptable.
+  * Reduced retry loop from 8 attempts → 3 attempts. Worst-case login
+    wait is now ~3 × (Firestore read) + (400+800 = 1.2s backoff) ≈ 10s
+    instead of the previous ~25-50s.
+  * Reduced backoff from 700ms × attempt → 400ms × attempt.
+- Verified syntax: parens/braces/brackets all balanced.
+
+Stage Summary:
+- Login should now be noticeably faster, especially on networks where
+  auth propagation delay was causing multiple permission-denied retries.
+- Registration is unchanged from Phase 3.13 (already non-blocking).
+- The 1-minute registration delay Bro saw on first install is most
+  likely Firebase cold start + poor network — not a code issue we can
+  fix client-side. The Auth call itself (createUserWithEmailAndPassword)
+  is network-bound and we have no control over its latency.
+- Next step: Bro installs the Phase 3.14 APK and verifies that login
+  is faster.

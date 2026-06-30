@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "### Image 1:  \n1. **Firebase Console Tab/Page**: Cloud Firestore > Database (Data tab).  \n2. **New UID/Document**: The \"users\" collection is visible, with a truncated UID (`3EMAOP1IacoJ8GMNxQR3H3...`) shown in the right panel (likely a new document).  \n3. **Timestamp/Username**: No timestamp or username fields visible (only collection structure).  \n4. **Error Messages**: None.  \n\n\n### Image 2:  \n1. **Firebase Console Tab/Page**: Cloud Firestore > Database (Data tab, expanded to a specific document).  \n2. **New UID/Document**: A full UID (`3EMAOP1IacoJ8GMNxQR3H3x7Pi2`) is visible as the document ID.  \n3. **Timestamp/Username**: Timestamp (`createdAt: July 1, 2026 at 2:15:14 AM UTC+6:30`), username (`\"Chitminzaw\"`), and email (`\"guyg20985@gmail.com\"`) are shown.  \n4. **Error Messages**: None.  \n\n\n### Image 3:  \n1. **Firebase Console Tab/Page**: Authentication > Users tab.  \n2. **New UID/Document**: A new user row is visible, with UID (`3EMAOP1I...`) matching the Firestore document.  \n3. **Timestamp/Username**: Timestamp (`Created: Jul...`), email (`guyg2...`), and UID are shown (username not explicitly listed here, but matches Image 2).  \n4. **Error Messages**: A notice about Firebase Dynamic Links (not an error).  \n\n\n### Image 4:  \n1. **Firebase Console Tab/Page**: Mobile app \"Profile\" screen (not Firebase Console, but app UI).  \n2. **New UID/Document**: Username (`Chitminzaw`) and email (`guyg20985@gmail.com`) match the Firestore/Auth data.  \n3. **Timestamp/Username**: Username (`Chitminzaw`), email, and \"Account Active\" date (`2026-07-01`) are shown.  \n4. **Error Messages**: None.  \n\n\nAll images confirm a new Auth user was created, a matching Firestore document appeared, and username login works post-logout.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1782849965,
+  "id": "202607010405512f2e9778dadd483b",
+  "model": "glm-4.6v",
+  "object": "chat.completion",
+  "request_id": "202607010405512f2e9778dadd483b",
+  "usage": {
+    "completion_tokens": 479,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 6056,
+    "prompt_tokens_details": {
+      "cached_tokens": 4
+    },
+    "total_tokens": 6535
+  }
+}
