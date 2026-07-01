@@ -26,11 +26,8 @@ class _SearchScreenState extends State<SearchScreen> {
   final SearchHistoryService _historyService = SearchHistoryService.instance;
   Timer? _debounceTimer;
 
-  List<Movie> _results = [];          // Visible results (chunk of _fullResults)
-  List<Movie> _fullResults = [];     // Phase 4.1: full fetched set (up to 200)
-  int _visibleCount = 0;             // Phase 4.1: how many of _fullResults are shown
-  static const int _pageSize = 20;   // Phase 4.1: items per chunk
-  static const int _fetchLimit = 200; // Phase 4.1: max items to fetch from Firestore
+  List<Movie> _results = [];          // Visible results
+  static const int _pageSize = 20;   // Items per page (true server-side pagination)
   bool _isLoading = false;
   bool _hasSearched = false;
 
@@ -39,7 +36,10 @@ class _SearchScreenState extends State<SearchScreen> {
   StreamSubscription<List<String>>? _historySub;
 
   // Pagination state for infinite scroll
-  DocumentSnapshot? _lastDoc;       // Phase 4.1: only used for filter-only (no keyword) path
+  // Phase 4.7 — True server-side cursor pagination. _lastDoc is now used
+  // for BOTH filter-only and keyword search paths. _seenIds is a
+  // dedup safety net (not a chunk slicer).
+  DocumentSnapshot? _lastDoc;
   bool _hasMore = true;
   bool _isLoadingMore = false;
   Set<String> _seenIds = {};
@@ -129,8 +129,6 @@ class _SearchScreenState extends State<SearchScreen> {
     if (query.isEmpty && !_hasActiveFilters) {
       setState(() {
         _results = [];
-        _fullResults = [];
-        _visibleCount = 0;
         _hasSearched = false;
       });
       return;
@@ -145,8 +143,6 @@ class _SearchScreenState extends State<SearchScreen> {
     _lastDoc = null;
     _hasMore = true;
     _seenIds.clear();
-    _fullResults = [];
-    _visibleCount = 0;
 
     setState(() {
       _isLoading = true;
@@ -154,12 +150,12 @@ class _SearchScreenState extends State<SearchScreen> {
     });
 
     try {
-      // Phase 4.1 — Fetch a LARGE batch (200) in one Firestore round-trip,
-      // then chunk it client-side. This works around the limitation that
-      // _searchWithKeyword returns lastDoc=null (because it merges 3
-      // different Firestore queries with no shared cursor). With 200
-      // results cached locally, the user can scroll through up to 200
-      // movies without any additional Firestore reads.
+      // Phase 4.7 — TRUE server-side cursor pagination.
+      // Fetch only _pageSize (20) docs from Firestore on the first page.
+      // _searchWithKeyword now returns a real DocumentSnapshot cursor for
+      // keyword searches too, so subsequent pages load 20 more docs each
+      // via startAfterDocument(_lastDoc). No more 200-doc client-side
+      // cache — first search returns 20 docs instantly, scroll loads next 20.
       final result = await _contentService.searchMoviesWithFilters(
         keyword: query.isEmpty ? null : query,
         genre: _selectedGenre,
@@ -167,40 +163,19 @@ class _SearchScreenState extends State<SearchScreen> {
         year: _selectedYear,
         rating: _selectedRating,
         sortBy: _sortBy,
-        limit: _fetchLimit, // Phase 4.1: fetch 200 in one shot
+        limit: _pageSize,
       );
       if (mounted) {
         final movies = result['movies'] as List<Movie>;
-        // Phase 4.1 — Cache the full fetched set, show only the first page.
-        _fullResults = movies;
-        final initialChunk = movies.take(_pageSize).toList();
-        _visibleCount = initialChunk.length;
-        // Phase 4.5 — ONLY track the IDs of movies we're actually showing
-        // (initialChunk), NOT the full 200-movie cache. The previous code
-        // added ALL 200 IDs to _seenIds here, which caused _loadMore()'s
-        // dedup check to reject every subsequent chunk (all 200 were
-        // already "seen") — so _results stayed at 20 forever while
-        // _visibleCount silently advanced to 40, 60, 80... The UI showed
-        // the same 20 movies no matter how far the user scrolled.
-        //
-        // By only marking the initially-shown 20 as "seen", the dedup
-        // check in _loadMore() correctly passes movies 20-40 through
-        // (they're not yet in _seenIds), and adds them to _seenIds as
-        // they're displayed.
-        for (final m in initialChunk) {
+        // Track IDs of shown movies for dedup safety net.
+        for (final m in movies) {
           _seenIds.add(m.id);
         }
         final serverHasMore = (result['hasMore'] as bool? ?? false);
-        // hasMore is true if either:
-        //   (a) the server said there are more docs beyond what we fetched
-        //       (i.e. movies.length >= _fetchLimit), OR
-        //   (b) we have more cached items locally that haven't been shown
-        //       yet (visibleCount < _fullResults.length).
-        final localHasMore = _visibleCount < _fullResults.length;
         setState(() {
-          _results = initialChunk;
+          _results = movies;
           _lastDoc = result['lastDoc'] as DocumentSnapshot?;
-          _hasMore = (serverHasMore || localHasMore) && movies.isNotEmpty;
+          _hasMore = serverHasMore && movies.isNotEmpty;
           _isLoading = false;
         });
       }
@@ -209,8 +184,6 @@ class _SearchScreenState extends State<SearchScreen> {
       if (mounted) {
         setState(() {
           _results = [];
-          _fullResults = [];
-          _visibleCount = 0;
           _isLoading = false;
         });
       }
@@ -227,8 +200,6 @@ class _SearchScreenState extends State<SearchScreen> {
       _lastDoc = null;
       _hasMore = true;
       _seenIds.clear();
-      _fullResults = [];
-      _visibleCount = 0;
     });
     if (_searchController.text.isNotEmpty || _hasSearched) {
       _search();
@@ -245,42 +216,12 @@ class _SearchScreenState extends State<SearchScreen> {
   Future<void> _loadMore() async {
     if (_isLoadingMore || !_hasMore || _isLoading) return;
 
-    // Phase 4.1 — Client-side chunk pagination.
-    //
-    // First, try to serve the next page from the local cache (_fullResults).
-    // This avoids additional Firestore reads for keyword searches where
-    // cursor-based pagination isn't possible (because _searchWithKeyword
-    // returns lastDoc=null after merging 3 different queries).
-    if (_visibleCount < _fullResults.length) {
-      setState(() => _isLoadingMore = true);
-      // Compute the next chunk from the local cache.
-      final nextEnd = (_visibleCount + _pageSize).clamp(0, _fullResults.length);
-      final nextChunk = _fullResults.sublist(_visibleCount, nextEnd);
-      // Anti-dup guard: filter out any IDs we've already shown.
-      final dedupedChunk = <Movie>[];
-      for (final m in nextChunk) {
-        if (!_seenIds.contains(m.id)) {
-          _seenIds.add(m.id);
-          dedupedChunk.add(m);
-        }
-      }
-      setState(() {
-        _results.addAll(dedupedChunk);
-        _visibleCount = nextEnd;
-        // hasMore stays true only if there are still more items in the
-        // local cache OR the server reported more docs beyond our 200-fetch.
-        _hasMore = _visibleCount < _fullResults.length ||
-            (_lastDoc != null && _fullResults.length >= _fetchLimit);
-        _isLoadingMore = false;
-      });
-      return;
-    }
-
-    // Phase 4.1 — Local cache exhausted. Only attempt a Firestore fetch
-    // if the previous call returned a real cursor (filter-only path).
-    // For keyword searches (lastDoc == null), we cannot paginate further
-    // — the server has already given us everything we can reliably fetch.
+    // Phase 4.7 — True server-side cursor pagination for BOTH keyword and
+    // filter-only paths. _lastDoc is the Firestore DocumentSnapshot returned
+    // by the previous page; we use startAfterDocument to fetch the next page.
     if (_lastDoc == null) {
+      // No cursor means no more pages (first page would have set _lastDoc
+      // if there was more data). Bail out.
       setState(() {
         _hasMore = false;
         _isLoadingMore = false;
@@ -303,7 +244,8 @@ class _SearchScreenState extends State<SearchScreen> {
       );
       if (mounted) {
         final newMovies = result['movies'] as List<Movie>;
-        // Deduplicate by ID
+        // Deduplicate by ID (safety net — Strategy 1 cursor is monotonic
+        // but filters can cause subtle edge cases).
         final dedupedMovies = <Movie>[];
         for (final m in newMovies) {
           if (!_seenIds.contains(m.id)) {

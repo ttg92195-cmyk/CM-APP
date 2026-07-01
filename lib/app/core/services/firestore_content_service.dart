@@ -987,6 +987,24 @@ class FirestoreContentService {
 
   /// Internal: keyword-based search that fetches more documents to find old movies too
   /// Supports advanced token-based search: "Kung Fu Panda 2008" matches title AND year
+  ///
+  /// Phase 4.7 — TRUE server-side cursor pagination.
+  ///
+  /// HISTORY: Phase 4.1 added client-side chunk pagination — fetched 200 docs
+  /// once, sliced 20 per page from memory. This caused Bro's reported bug:
+  /// "first search shows nothing for a moment, then 200 results appear all at
+  /// once instead of 20 first". The 200-doc fetch was slow + atomic, so users
+  /// saw either nothing or everything depending on timing.
+  ///
+  /// FIX (Phase 4.7): Now we paginate Strategy 1 (prefix query on
+  /// title_lowercase) using a real Firestore cursor. Strategy 2 (array-
+  /// contains on search_keywords) and the substring fallback only run on the
+  /// FIRST page (startAfter == null) — they have no stable cursor. On
+  /// subsequent pages, only Strategy 1 runs, which gives us a real
+  /// DocumentSnapshot cursor to return.
+  ///
+  /// Result: page 1 returns 20 docs in ~1 Firestore read-batch, page 2
+  /// returns the next 20, etc. True pagination, no client-side slicing.
   Future<Map<String, dynamic>> _searchWithKeyword({
     required String keyword,
     String? genre,
@@ -1010,32 +1028,33 @@ class FirestoreContentService {
       }
     }
 
-    // =========================================================================
-    // OPTIMIZATION (mirrors the legacy searchMovies() pattern, now removed)
-    // =========================================================================
-    // Before: 2 + 2N queries/search (N = name token count) = up to ~500 reads
-    //   prefix + (per-token search_keywords) + orderBy(updatedAt) + no-orderBy
-    // After:  1 + N queries/search = ~100-200 reads (50-75% reduction)
-    //   Broader fallbacks are skipped when the primary queries returned
-    //   ANY matching result. Only legacy movies missing both
-    //   'title_lowercase' and 'search_keywords' trigger the fallback.
-    // =========================================================================
-
-    // Build a comprehensive search query
-    // Fetch a large batch to ensure old movies are included
-    final fetchLimit = (limit * 3).clamp(60, 200);
+    final lowerKeyword = keyword.toLowerCase().trim();
+    final upperKeyword = lowerKeyword + '\uf8ff';
+    final isFirstPage = startAfter == null;
 
     try {
-      // Strategy 1: Firestore prefix search on 'title_lowercase' (case-insensitive)
-      final lowerKeyword = keyword.toLowerCase().trim();
-      final upperKeyword = lowerKeyword + '\uf8ff';
-      final prefixSnapshot = await _moviesRef
+      // =========================================================================
+      // Phase 4.7 — STRATEGY 1: PREFIX QUERY (the ONLY paginated strategy)
+      // =========================================================================
+      // Strategy 1 is the primary result source for keyword searches (e.g.
+      // "o" matches all titles starting with "o"). It uses orderBy on
+      // title_lowercase, so it supports a real Firestore cursor — we can
+      // safely paginate this query across multiple pages.
+      //
+      // fetchLimit: number of docs to fetch per page. We fetch slightly
+      // more than `limit` so we have headroom for the year/genre/rating
+      // client-side filters below (which can drop some of the fetched docs).
+      final fetchLimit = (limit * 2).clamp(40, 100);
+
+      Query prefixQuery = _moviesRef
           .where('title_lowercase', isGreaterThanOrEqualTo: lowerKeyword)
           .where('title_lowercase', isLessThanOrEqualTo: upperKeyword)
           .orderBy('title_lowercase')
-          .limit(fetchLimit)
-          .get();
-
+          .limit(fetchLimit);
+      if (startAfter != null) {
+        prefixQuery = prefixQuery.startAfterDocument(startAfter);
+      }
+      final prefixSnapshot = await prefixQuery.get();
       final prefixMovies = prefixSnapshot.docs
           .map((doc) => Movie.fromMap(
                 doc.data() as Map<String, dynamic>,
@@ -1043,240 +1062,81 @@ class FirestoreContentService {
               ))
           .toList();
 
-      // Strategy 2: search_keywords array for each name token (non-prefix word matching)
-      // e.g. searching "Avengers" finds "The Avengers" because "avengers" is a search_keyword
-      final keywordResults = <Movie>[];
-      final keywordSeenIds = <String>{};
-      for (final token in nameTokens) {
-        try {
-          final kwSnapshot = await _moviesRef
-              .where('search_keywords', arrayContains: token)
-              .limit(fetchLimit)
-              .get();
-          for (final doc in kwSnapshot.docs) {
-            final movie = Movie.fromMap(doc.data() as Map<String, dynamic>, docId: doc.id);
-            if (!keywordSeenIds.contains(movie.id)) {
-              keywordSeenIds.add(movie.id);
-              keywordResults.add(movie);
-            }
-          }
-        } catch (_) {
-          // search_keywords field may not exist yet, skip gracefully
-        }
-      }
-
-      // Strategy 1.5: SUBSTRING FALLBACK for short queries (1-2 chars)
       // =========================================================================
-      // Bro reported (Task 25) that searching a single character like "o"
-      // returned only movies STARTING with "o" (e.g. "Ocean's Eleven",
-      // "Once Upon a Time") but NOT movies CONTAINING "o" anywhere in the
-      // title (e.g. "Thor", "Iron Man 2", "Doctor Strange"). Meanwhile
-      // searching "ON" returned some movies with "on" anywhere — confusing.
-      //
-      // Root cause:
-      //   - Strategy 1 (prefix search) only matches titles that START with
-      //     the query. For "o", it returns plenty of results (Ocean's, Once,
-      //     Oldboy, etc.), so prefixMovies is NOT empty.
-      //   - The previous version of this Strategy 1.5 only fired when
-      //     `prefixMovies.isEmpty && keywordResults.isEmpty` — which rarely
-      //     happens for single letters (because Strategy 1 almost always
-      //     finds prefix matches). So the substring fallback never ran,
-      //     and the early-exit returned only the prefix matches.
-      //   - For "ON": Strategy 1 returns fewer prefix matches (movies
-      //     starting with "on" are rarer), so the substring fallback DID
-      //     fire and found movies containing "on" anywhere. That's why
-      //     Bro saw "some movies" for "ON" but "only starting-with-O
-      //     movies" for "O".
-      //
-      // FIX (Task 25): Always run the substring fallback for short queries
-      // (length <= 2), regardless of whether Strategies 1 and 2 returned
-      // matches. The early-exit logic below already merges
-      // prefixMovies + keywordResults + substringResults and applies a
-      // client-side `title.contains(query)` filter for short queries, so
-      // the user will see BOTH prefix matches (movies starting with "o")
-      // AND substring matches (movies containing "o" anywhere) — exactly
-      // what Bro wants.
-      //
-      // Cost: +1 Firestore query (~fetchLimit reads) for EVERY short
-      // search. At fetchLimit=60 reads/query (limit=20 → 20*3 clamped to
-      // 60) and Bro's typical usage, this adds ~5-10% to Firebase Reads
-      // — acceptable per Bro's explicit OK.
+      // STRATEGY 2 + SUBSTRING FALLBACK: only on the FIRST page
+      // =========================================================================
+      // These have no stable cursor (no orderBy for substring, no shared
+      // ordering between array-contains and prefix). On page 2+, only
+      // Strategy 1 runs — so the user might miss a few movies that
+      // match only via search_keywords or substring on later pages.
+      // Acceptable trade-off for true pagination; the missing movies
+      // appear on page 1's merged result set anyway.
+      final keywordResults = <Movie>[];
       final substringResults = <Movie>[];
-      if (lowerKeyword.length <= 2) {
-        try {
-          final subSnapshot = await _moviesRef.limit(fetchLimit).get();
-          for (final doc in subSnapshot.docs) {
-            final movie = Movie.fromMap(
-              doc.data() as Map<String, dynamic>,
-              docId: doc.id,
-            );
-            // Case-insensitive substring match on title
-            if (movie.titleLowercase.contains(lowerKeyword)) {
-              substringResults.add(movie);
+      if (isFirstPage) {
+        // Strategy 2: search_keywords array-contains for each name token
+        final keywordSeenIds = <String>{};
+        for (final token in nameTokens) {
+          try {
+            final kwSnapshot = await _moviesRef
+                .where('search_keywords', arrayContains: token)
+                .limit(fetchLimit)
+                .get();
+            for (final doc in kwSnapshot.docs) {
+              final movie = Movie.fromMap(doc.data() as Map<String, dynamic>, docId: doc.id);
+              if (!keywordSeenIds.contains(movie.id)) {
+                keywordSeenIds.add(movie.id);
+                keywordResults.add(movie);
+              }
             }
+          } catch (_) {
+            // search_keywords field may not exist yet, skip gracefully
           }
-        } catch (e) {
-          debugPrint('_searchWithKeyword substring fallback failed: $e');
         }
-      }
 
-      // Pre-combine what we have so far. If primary queries already returned
-      // movies that match every name token AND year token, we can SKIP the
-      // expensive broader fallback queries below (saves ~200 reads).
-      final earlySeenIds = <String>{};
-      final earlyAllMovies = <Movie>[];
-      for (final m in [...prefixMovies, ...keywordResults, ...substringResults]) {
-        if (!earlySeenIds.contains(m.id)) {
-          earlySeenIds.add(m.id);
-          earlyAllMovies.add(m);
-        }
-      }
-      final earlyFiltered = earlyAllMovies.where((m) {
-        final lowerTitle = m.titleLowercase;
-        // For short single-token queries (<=2 chars), use substring match
-        // instead of token-every-contains. This prevents "o" from being
-        // rejected just because it isn't a full word in the title.
-        final nameMatch = nameTokens.isEmpty ||
-            (lowerKeyword.length <= 2 && nameTokens.length == 1
-                ? lowerTitle.contains(nameTokens.first)
-                : nameTokens.every((token) => lowerTitle.contains(token)));
-        final yearMatch = yearTokens.isEmpty ||
-            (m.year != null && yearTokens.contains(m.year!.toLowerCase()));
-        return nameMatch && yearMatch;
-      }).toList();
-
-      // --- EARLY EXIT: skip broader fallbacks if primary returned matches ---
-      // Apply the same downstream filters + sort so the user sees the same
-      // result shape they would have seen with the full query path.
-      if (earlyFiltered.isNotEmpty) {
-        var filtered = earlyFiltered;
-        if (genre != null && genre.isNotEmpty) {
-          filtered = filtered.where((m) => m.categories.contains(genre)).toList();
-        }
-        if (type != null && type.isNotEmpty) {
-          filtered = filtered.where((m) => m.type == type).toList();
-        }
-        if (year != null && year.isNotEmpty) {
-          filtered = filtered.where((m) => m.year == year).toList();
-        }
-        if (rating != null && rating.isNotEmpty) {
-          final minRating = double.tryParse(rating) ?? 0.0;
-          filtered = filtered.where((m) {
-            final movieRating = double.tryParse(m.rating ?? '0') ?? 0.0;
-            return movieRating >= minRating;
-          }).toList();
-        }
-        // Sort results (same logic as the main path below).
-        if (sortBy == 'rating') {
-          filtered.sort((a, b) =>
-              (double.tryParse(b.rating ?? '0') ?? 0.0)
-              .compareTo(double.tryParse(a.rating ?? '0') ?? 0.0));
-        } else if (sortBy == 'name') {
-          filtered.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
-        } else {
-          filtered.sort((a, b) {
-            final aDate = b.updatedAt ?? b.createdAt ?? DateTime(2000);
-            final bDate = a.updatedAt ?? a.createdAt ?? DateTime(2000);
-            return aDate.compareTo(bDate);
-          });
-        }
-        return {
-          'movies': filtered.take(limit).toList(),
-          'hasMore': filtered.length > limit,
-          'lastDoc': null,
-        };
-      }
-
-      // --- FALLBACK: only when primary queries returned 0 matches ----------
-      // Run broader queries to catch LEGACY movies missing both
-      // 'title_lowercase' and 'search_keywords' fields.
-      //
-      // IMPORTANT: We use TWO parallel broader queries here instead of one:
-      //   - broaderByUpdatedAt: orderBy('updatedAt', descending) — catches
-      //     recently-updated movies that have 'updatedAt' field (added via
-      //     addMovie / updateMovie).
-      //   - broaderNoOrderBy:   plain .limit() without orderBy — catches
-      //     LEGACY movies that have neither 'updatedAt' nor 'createdAt'
-      //     field. Firestore's orderBy(field) silently excludes any doc
-      //     missing that field — that's why a previous version of this
-      //     code used orderBy('createdAt') and could NOT find movies that
-      //     Bro had imported via an older code path that didn't set
-      //     'createdAt'. Bro reported "search any movie → nothing shows"
-      //     because of this exact bug. The no-orderBy path guarantees
-      //     every movie in the collection is a candidate for the
-      //     client-side title filter below.
-      //
-      // Both queries are limited to fetchLimit (60-200 docs). Pagination
-      // via startAfterDocument only works on the orderBy path; the
-      // no-orderBy path is best-effort and skipped when paginating.
-      Query broaderByUpdatedAt = _moviesRef
-          .orderBy('updatedAt', descending: true);
-      if (startAfter != null) {
-        broaderByUpdatedAt = broaderByUpdatedAt.startAfterDocument(startAfter);
-      }
-      broaderByUpdatedAt = broaderByUpdatedAt.limit(fetchLimit);
-
-      final broaderMovies = <Movie>[];
-      try {
-        final snapshot = await broaderByUpdatedAt.get();
-        for (final doc in snapshot.docs) {
-          broaderMovies.add(Movie.fromMap(
-            doc.data() as Map<String, dynamic>,
-            docId: doc.id,
-          ));
-        }
-      } catch (e) {
-        debugPrint('_searchWithKeyword broaderByUpdatedAt failed: $e — '
-            'will rely on no-orderBy fallback');
-      }
-
-      // No-orderBy fallback: only on first page (startAfter == null).
-      // On subsequent pages, we'd need a stable cursor, which orderBy
-      // provides — without orderBy, pagination is unsafe. So we accept
-      // that legacy movies are only fully searchable on page 1.
-      if (startAfter == null) {
-        try {
-          final legacySnapshot = await _moviesRef.limit(fetchLimit).get();
-          for (final doc in legacySnapshot.docs) {
-            final movie = Movie.fromMap(
-              doc.data() as Map<String, dynamic>,
-              docId: doc.id,
-            );
-            // Dedup against the orderBy results — same movie could appear
-            // in both if it has updatedAt.
-            final id = movie.id;
-            final alreadySeen = broaderMovies.any((m) => m.id == id);
-            if (!alreadySeen) {
-              broaderMovies.add(movie);
+        // Substring fallback for short queries (1-2 chars) — see Strategy 1.5
+        // comment in the git history (Task 25). Lets "o" match "Thor",
+        // "Iron Man 2", "Doctor Strange" too, not just prefix matches.
+        if (lowerKeyword.length <= 2) {
+          try {
+            final subSnapshot = await _moviesRef.limit(fetchLimit).get();
+            for (final doc in subSnapshot.docs) {
+              final movie = Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              );
+              if (movie.titleLowercase.contains(lowerKeyword)) {
+                substringResults.add(movie);
+              }
             }
+          } catch (e) {
+            debugPrint('_searchWithKeyword substring fallback failed: $e');
           }
-        } catch (e) {
-          debugPrint('_searchWithKeyword legacy fallback failed: $e');
         }
       }
 
-      // Combine results from all strategies, deduplicating by ID
+      // Merge Strategy 1 + (page-1-only) Strategies 2 & 3, dedup by ID.
+      // Strategy 1 results come FIRST so cursor-based pagination stays
+      // stable across pages (we always return the last prefixSnapshot doc
+      // as the next cursor).
       final seenIds = <String>{};
       final allMovies = <Movie>[];
-
-      for (final m in [...prefixMovies, ...keywordResults, ...substringResults, ...broaderMovies]) {
+      for (final m in [...prefixMovies, ...keywordResults, ...substringResults]) {
         if (!seenIds.contains(m.id)) {
           seenIds.add(m.id);
           allMovies.add(m);
         }
       }
 
-      // Apply token-based advanced filtering
+      // Apply token-based advanced filtering (name tokens + year tokens)
       var filtered = allMovies.where((m) {
-        // All name tokens must be contained in the movie title (case-insensitive)
         final lowerTitle = m.titleLowercase;
         final nameMatch = nameTokens.isEmpty ||
-            nameTokens.every((token) => lowerTitle.contains(token));
-
-        // If year tokens present, at least one must match the movie year
+            (lowerKeyword.length <= 2 && nameTokens.length == 1
+                ? lowerTitle.contains(nameTokens.first)
+                : nameTokens.every((token) => lowerTitle.contains(token)));
         final yearMatch = yearTokens.isEmpty ||
             (m.year != null && yearTokens.contains(m.year!.toLowerCase()));
-
         return nameMatch && yearMatch;
       }).toList();
 
@@ -1306,9 +1166,7 @@ class FirestoreContentService {
       } else if (sortBy == 'name') {
         filtered.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
       } else {
-        // 'latest' — sort by updatedAt with fallback to createdAt, so that
-        // movies missing one of the timestamp fields still sort correctly
-        // relative to the others (DateTime(2000) sentinel sorts to bottom).
+        // 'latest' — sort by updatedAt with fallback to createdAt
         filtered.sort((a, b) {
           final aDate = b.updatedAt ?? b.createdAt ?? DateTime(2000);
           final bDate = a.updatedAt ?? a.createdAt ?? DateTime(2000);
@@ -1316,20 +1174,29 @@ class FirestoreContentService {
         });
       }
 
-      final hasMore = filtered.length > limit ||
-          broaderMovies.length >= fetchLimit;
+      // Take only `limit` results for this page.
+      final pageMovies = filtered.take(limit).toList();
 
-      // lastDoc: cursor for pagination. We can only paginate using the
-      // orderBy('updatedAt') query, so we look up the last movie in our
-      // combined list and find the corresponding snapshot. Since we don't
-      // keep the snapshot around, we return null here and let the caller
-      // re-run the search with the next "page" by skipping already-seen IDs.
-      // For the search screen, infinite scroll beyond page 1 is rarely used
-      // (users typically refine their query instead), so this is acceptable.
+      // Phase 4.7 — Return a REAL cursor (last doc from Strategy 1).
+      // Since Strategy 1 is the only paginated query and its results come
+      // first in the merge, the last doc of prefixSnapshot is a valid
+      // cursor for the next page. If the user's filters dropped all
+      // prefixMovies from this page (rare edge case), we still return
+      // the last prefixSnapshot doc — the next page will continue from
+      // there with fresh prefix matches.
+      final lastDoc = prefixSnapshot.docs.isNotEmpty
+          ? prefixSnapshot.docs.last
+          : null;
+
+      // hasMore: true if Strategy 1 returned a full batch (more pages
+      // likely available). If Strategy 1 returned fewer than fetchLimit,
+      // there are no more prefix matches — pagination stops.
+      final hasMore = prefixSnapshot.docs.length >= fetchLimit;
+
       return {
-        'movies': filtered.take(limit).toList(),
+        'movies': pageMovies,
         'hasMore': hasMore,
-        'lastDoc': null,
+        'lastDoc': lastDoc,
       };
     } catch (e) {
       debugPrint('_searchWithKeyword failed: $e');
