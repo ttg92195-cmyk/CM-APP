@@ -1263,6 +1263,30 @@ class FirestoreContentService {
   }
 
   /// Get movies by collection name
+  ///
+  /// Phase 4.8 — Automatic search_keywords fallback.
+  ///
+  /// HISTORY: When Bro creates a brand-new Collection (e.g. "Marvel") in the
+  /// admin panel, no movies have `collections: ["Marvel"]` set yet. The
+  /// collection tab would show "No movies found" until Bro manually edited
+  /// every movie to add the collection tag. Bro wanted this to be 100%
+  /// automatic: the moment a collection is created, the app should show
+  /// movies whose `search_keywords` array contains the collection name
+  /// (case-insensitive). This works because every movie already has its
+  /// title auto-tokenized into search_keywords (e.g. "Avengers: Endgame"
+  /// → ['avengers', 'endgame']).
+  ///
+  /// FIX (Phase 4.8): On the FIRST page (startAfter == null), if the primary
+  /// `collections` array-contains query returns zero results, fall back to a
+  /// `search_keywords` array-contains query. Subsequent pages continue
+  /// paginating whatever query path was selected on page 1.
+  ///
+  /// Cursor stability: both primary and fallback queries use the same
+  /// `.orderBy('createdAt', descending: true)` + `.limit(limit)` shape, so
+  /// the DocumentSnapshot cursor is interchangeable between them. The
+  /// fallback path returns its own lastDoc, which `_loadMore()` in the
+  /// collection screen passes back as startAfter — and since both queries
+  /// sort by the same field, the cursor is valid for either path.
   Future<Map<String, dynamic>> getMoviesByCollection(
     String collectionName, {
     int limit = 50,
@@ -1292,6 +1316,27 @@ class FirestoreContentService {
                 docId: doc.id,
               ))
           .toList();
+
+      // Phase 4.8 — Auto fallback to search_keywords when:
+      //   (a) primary query returned empty, AND
+      //   (b) we're on the first page (startAfter == null).
+      // On subsequent pages we DON'T fallback — the cursor from page 1
+      // is specific to its query path; mixing would produce wrong results.
+      // Page-1 emptiness is the canonical "this collection isn't tagged
+      // anywhere yet" signal, so falling back there is sufficient.
+      if (movies.isEmpty && startAfter == null) {
+        final fallbackResult = await _getMoviesByCollectionFallback(
+          collectionName: collectionName,
+          limit: limit,
+          startAfter: startAfter,
+          typeFilter: typeFilter,
+        );
+        if (fallbackResult != null) {
+          return fallbackResult;
+        }
+        // Fallback also returned empty (or threw) — fall through to the
+        // empty-result return below.
+      }
 
       return {
         'movies': movies,
@@ -1324,6 +1369,19 @@ class FirestoreContentService {
         movies.sort((a, b) => (b.createdAt ?? DateTime(2000))
             .compareTo(a.createdAt ?? DateTime(2000)));
 
+        // Phase 4.8 — Same auto-fallback on the no-orderBy fallback path.
+        if (movies.isEmpty && startAfter == null) {
+          final kwFallback = await _getMoviesByCollectionFallback(
+            collectionName: collectionName,
+            limit: limit,
+            startAfter: startAfter,
+            typeFilter: typeFilter,
+          );
+          if (kwFallback != null) {
+            return kwFallback;
+          }
+        }
+
         return {
           'movies': movies,
           'hasMore': snapshot.docs.length >= limit,
@@ -1331,11 +1389,120 @@ class FirestoreContentService {
         };
       } catch (e2) {
         debugPrint('getMoviesByCollection fallback also failed: $e2');
+        // Phase 4.8 — Last-resort: try search_keywords even if both
+        // collections queries threw (e.g. composite index missing AND
+        // collection is genuinely empty). Page 1 only.
+        if (startAfter == null) {
+          final kwFallback = await _getMoviesByCollectionFallback(
+            collectionName: collectionName,
+            limit: limit,
+            startAfter: startAfter,
+            typeFilter: typeFilter,
+          );
+          if (kwFallback != null) {
+            return kwFallback;
+          }
+        }
         return {
           'movies': <Movie>[],
           'hasMore': false,
           'lastDoc': null,
         };
+      }
+    }
+  }
+
+  /// Phase 4.8 — search_keywords fallback for getMoviesByCollection.
+  ///
+  /// Returns null if the fallback query returned zero results OR threw
+  /// (caller should fall through to its own empty/error handling). Returns
+  /// a non-null Map if at least one movie matched.
+  ///
+  /// We normalize the collection name to lowercase because search_keywords
+  /// are stored lowercase (e.g. title "Avengers" → search_keywords
+  /// ['avengers']). The collection name "Marvel" → query token "marvel".
+  Future<Map<String, dynamic>?> _getMoviesByCollectionFallback({
+    required String collectionName,
+    required int limit,
+    required DocumentSnapshot? startAfter,
+    required String? typeFilter,
+  }) async {
+    try {
+      final token = collectionName.toLowerCase().trim();
+      if (token.isEmpty) return null;
+
+      Query query = _moviesRef
+          .where('search_keywords', arrayContains: token);
+      if (typeFilter != null) {
+        query = query.where('type', isEqualTo: typeFilter);
+      }
+      query = query
+          .orderBy('createdAt', descending: true)
+          .limit(limit);
+
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
+      }
+
+      final snapshot = await query.get();
+      final movies = snapshot.docs
+          .map((doc) => Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              ))
+          .toList();
+
+      if (movies.isEmpty) return null;
+
+      debugPrint('Phase 4.8: collection "$collectionName" had no tagged '
+          'movies, fell back to search_keywords — found ${movies.length}');
+      return {
+        'movies': movies,
+        'hasMore': snapshot.docs.length >= limit,
+        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+      };
+    } catch (e) {
+      debugPrint('Phase 4.8: search_keywords fallback threw: $e — '
+          'trying without orderBy');
+      // No-orderBy fallback (composite index missing on
+      // search_keywords + type + createdAt).
+      try {
+        final token = collectionName.toLowerCase().trim();
+        if (token.isEmpty) return null;
+
+        Query query = _moviesRef
+            .where('search_keywords', arrayContains: token);
+        if (typeFilter != null) {
+          query = query.where('type', isEqualTo: typeFilter);
+        }
+        query = query.limit(limit);
+
+        if (startAfter != null) {
+          query = query.startAfterDocument(startAfter);
+        }
+
+        final snapshot = await query.get();
+        final movies = snapshot.docs
+            .map((doc) => Movie.fromMap(
+                  doc.data() as Map<String, dynamic>,
+                  docId: doc.id,
+                ))
+            .toList();
+        movies.sort((a, b) => (b.createdAt ?? DateTime(2000))
+            .compareTo(a.createdAt ?? DateTime(2000)));
+
+        if (movies.isEmpty) return null;
+
+        debugPrint('Phase 4.8: search_keywords no-orderBy fallback found '
+            '${movies.length} movies');
+        return {
+          'movies': movies,
+          'hasMore': snapshot.docs.length >= limit,
+          'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+        };
+      } catch (e2) {
+        debugPrint('Phase 4.8: search_keywords no-orderBy fallback also failed: $e2');
+        return null;
       }
     }
   }
