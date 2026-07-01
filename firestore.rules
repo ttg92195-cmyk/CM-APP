@@ -24,15 +24,29 @@ service cloud.firestore {
     // because it tries to set isVip=false. That's intentional and safe — the
     // runtime check isCurrentUserVip still gates VIP features correctly using
     // vipExpiry date, so the silent failure has no user-visible impact.
+    //
+    // Phase 4.6 — Use .get('field', null) instead of direct field access.
+    // For a brand-new user doc created during signup, the optional fields
+    // (vipExpiry, vipGrantedAt, forceLogoutAt) are NOT written by the signup
+    // flow (only isAdmin, role, isVip, isBanned, forceLogout are set). With
+    // direct field access, the Rules Engine evaluates
+    //   request.resource.data.vipExpiry == resource.data.vipExpiry
+    // where both sides reference an absent field. In theory this should
+    // resolve to null == null == true, but in practice the Rules Engine
+    // can throw on the missing-field access and deny the entire update.
+    // The .get('field', null) pattern explicitly returns null for absent
+    // fields without throwing, making the comparison safe. This unblocks
+    // registerDevice()'s tx.update() for new accounts (the immediate
+    // Profile-tab "No devices registered" bug).
     function preservesAdminOnlyFields() {
-      return request.resource.data.isAdmin == resource.data.isAdmin
-        && request.resource.data.role == resource.data.role
-        && request.resource.data.isVip == resource.data.isVip
-        && request.resource.data.vipExpiry == resource.data.vipExpiry
-        && request.resource.data.vipGrantedAt == resource.data.vipGrantedAt
-        && request.resource.data.isBanned == resource.data.isBanned
-        && request.resource.data.forceLogout == resource.data.forceLogout
-        && request.resource.data.forceLogoutAt == resource.data.forceLogoutAt;
+      return request.resource.data.get('isAdmin', null) == resource.data.get('isAdmin', null)
+        && request.resource.data.get('role', null) == resource.data.get('role', null)
+        && request.resource.data.get('isVip', null) == resource.data.get('isVip', null)
+        && request.resource.data.get('vipExpiry', null) == resource.data.get('vipExpiry', null)
+        && request.resource.data.get('vipGrantedAt', null) == resource.data.get('vipGrantedAt', null)
+        && request.resource.data.get('isBanned', null) == resource.data.get('isBanned', null)
+        && request.resource.data.get('forceLogout', null) == resource.data.get('forceLogout', null)
+        && request.resource.data.get('forceLogoutAt', null) == resource.data.get('forceLogoutAt', null);
     }
 
     // Helper: Verify that admin-only fields are NOT set to elevated values

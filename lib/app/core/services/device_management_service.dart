@@ -296,6 +296,17 @@ class DeviceManagementService {
   /// On hard failure (Firestore unreachable, permission denied), the
   /// method returns allowed=true (fail-open) to not block login — the
   /// device-limit feature is a soft enforcement, not a security control.
+  ///
+  /// Phase 4.6 — Self-create the user doc if it doesn't exist. The
+  /// previous fail-open branch (return allowed=true with empty devices
+  /// when the doc wasn't found) was the root cause of the Profile-tab
+  /// "No devices registered" bug: if signup's _tryCreateUserDocBlocking
+  /// failed silently (or hit a race with Firestore SDK auth-state
+  /// propagation), the user doc never existed, so every registerDevice
+  /// call returned allowed=true with no write — leaving the device list
+  /// permanently empty. Now we create the doc inline (with all required
+  /// admin-only fields set to safe defaults so the preservesAdminOnlyFields
+  /// rule passes) and add the current device in the same transaction.
   Future<DeviceLimitResult> registerDevice(String uid) async {
     try {
       final currentDevice = await getCurrentDeviceInfo();
@@ -305,14 +316,57 @@ class DeviceManagementService {
         final userDoc = await tx.get(userDocRef);
 
         if (!userDoc.exists) {
-          // User doc not created yet (race with signup flow). Fail open
-          // so login proceeds; the device-limit slot will be tracked on
-          // the next login after the doc exists.
+          // Phase 4.6 — User doc not created yet (race with signup flow
+          // OR signup's doc creation failed silently). Previously this
+          // returned allowed=true with empty devices and NO write —
+          // causing the "No devices registered" bug on the Profile tab.
+          //
+          // Now we create the doc inline with the same field set as
+          // _tryCreateUserDocBlocking in app_config.dart, plus the
+          // current device in logged_in_devices. This makes
+          // registerDevice self-sufficient — it no longer depends on
+          // signup having completed the doc creation.
+          //
+          // Note: tx.set() inside a transaction goes through the
+          // /users/{userId} `create` rule (isOwner + safeSignupFields).
+          // Both conditions are satisfied: the caller is the Auth user
+          // matching `uid`, and the payload sets all admin fields to
+          // safe non-elevated values (false / 'user').
+          final now = DateTime.now();
+          final regDate = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+          // Extract username/email from auth user if available, fall
+          // back to UID-derived placeholders. We avoid passing these
+          // as parameters to keep registerDevice's signature stable.
+          final authUser = _auth.currentUser;
+          final email = authUser?.email ?? '';
+          String username = email.isNotEmpty
+              ? email.split('@').first
+              : 'user_${uid.substring(0, 8)}';
+          if (email.endsWith('@cmmovies.app')) {
+            username = email.replaceAll('@cmmovies.app', '');
+          }
+
+          final newDevicesList = <Map<String, dynamic>>[currentDevice.toMap()];
+          tx.set(userDocRef, {
+            'username': username,
+            'email': email,
+            'isAdmin': false,
+            'role': 'user',
+            'isVip': false,
+            'isBanned': false,
+            'forceLogout': false,
+            'registrationDate': regDate,
+            'createdAt': FieldValue.serverTimestamp(),
+            'logged_in_devices': newDevicesList,
+          }, SetOptions(merge: true));
+          final parsed = newDevicesList
+              .map((e) => DeviceInfo.fromMap(e))
+              .toList();
           return DeviceLimitResult(
             allowed: true,
             maxDevices: 2,
-            currentDevices: 0,
-            devices: [],
+            currentDevices: 1,
+            devices: parsed,
           );
         }
 
