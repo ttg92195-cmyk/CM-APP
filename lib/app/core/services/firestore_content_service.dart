@@ -1295,6 +1295,50 @@ class FirestoreContentService {
   }) async {
     // Task 38 Req 5 — server-side type filter for Collections tab pagination.
     // See getMoviesByGenre above for the rationale.
+    //
+    // Phase 4.9 — Stateless cursor inspection for page 2+ routing.
+    //
+    // HISTORY: Phase 4.8 added search_keywords fallback on page 1 only.
+    // Bug: on page 2+, the cursor (lastDoc from page 1) might come from
+    // the fallback path (search_keywords), in which case its `collections`
+    // array does NOT contain `collectionName`. Using that cursor in the
+    // primary `collections arrayContains` query would either return empty
+    // (Firestore's startAfterDocument uses the cursor's field values, and
+    // a movie not in the result set causes pagination to silently fail)
+    // or throw an error — causing pagination to stop after page 1.
+    //
+    // FIX (Phase 4.9): Before attempting the primary query on page 2+,
+    // inspect the cursor's `collections` array. If `collectionName` is
+    // NOT in it, route directly to the search_keywords fallback — the
+    // cursor was definitely produced by the fallback path, so we should
+    // continue paginating that same path. This is fully stateless: no
+    // need to track which path was used on page 1 in any external state.
+    if (startAfter != null) {
+      final cursorCollections = _readCollectionsFromCursor(startAfter);
+      if (!cursorCollections.contains(collectionName)) {
+        // Cursor is from the fallback path — route directly there.
+        debugPrint('Phase 4.9: cursor has no "$collectionName" in '
+            'collections — routing page 2+ to search_keywords fallback');
+        final fallbackResult = await _getMoviesByCollectionFallback(
+          collectionName: collectionName,
+          limit: limit,
+          startAfter: startAfter,
+          typeFilter: typeFilter,
+        );
+        if (fallbackResult != null) {
+          return fallbackResult;
+        }
+        // Fallback returned empty (end of search_keywords matches) —
+        // return empty result. Don't try primary; the cursor is invalid
+        // for primary (collections doesn't contain the name).
+        return {
+          'movies': <Movie>[],
+          'hasMore': false,
+          'lastDoc': null,
+        };
+      }
+    }
+
     try {
       Query query = _moviesRef
           .where('collections', arrayContains: collectionName);
@@ -1320,10 +1364,8 @@ class FirestoreContentService {
       // Phase 4.8 — Auto fallback to search_keywords when:
       //   (a) primary query returned empty, AND
       //   (b) we're on the first page (startAfter == null).
-      // On subsequent pages we DON'T fallback — the cursor from page 1
-      // is specific to its query path; mixing would produce wrong results.
-      // Page-1 emptiness is the canonical "this collection isn't tagged
-      // anywhere yet" signal, so falling back there is sufficient.
+      // On subsequent pages we DON'T fallback here — Phase 4.9's cursor
+      // inspection above already routed page 2+ correctly.
       if (movies.isEmpty && startAfter == null) {
         final fallbackResult = await _getMoviesByCollectionFallback(
           collectionName: collectionName,
@@ -1370,6 +1412,7 @@ class FirestoreContentService {
             .compareTo(a.createdAt ?? DateTime(2000)));
 
         // Phase 4.8 — Same auto-fallback on the no-orderBy fallback path.
+        // (Page 1 only — page 2+ is routed by Phase 4.9 cursor inspection.)
         if (movies.isEmpty && startAfter == null) {
           final kwFallback = await _getMoviesByCollectionFallback(
             collectionName: collectionName,
@@ -1409,6 +1452,32 @@ class FirestoreContentService {
           'lastDoc': null,
         };
       }
+    }
+  }
+
+  /// Phase 4.9 — Read the `collections` array from a DocumentSnapshot
+  /// cursor. Returns an empty list if the field is missing, not a list,
+  /// or the snapshot has no data. Used by getMoviesByCollection to
+  /// decide whether to route page 2+ to the search_keywords fallback.
+  ///
+  /// Stateless: we don't track which query path was used on page 1 in
+  /// any external state. Instead, we infer it from the cursor itself:
+  /// if the cursor's `collections` field does NOT contain the search
+  /// collectionName, the cursor must have come from the fallback path
+  /// (search_keywords results don't have the collection tagged).
+  List<String> _readCollectionsFromCursor(DocumentSnapshot cursor) {
+    try {
+      final data = cursor.data();
+      if (data == null) return const [];
+      if (data is! Map<String, dynamic>) return const [];
+      final collections = data['collections'];
+      if (collections is! List) return const [];
+      return collections
+          .whereType<String>()
+          .toList(growable: false);
+    } catch (e) {
+      debugPrint('Phase 4.9: _readCollectionsFromCursor failed: $e');
+      return const [];
     }
   }
 
