@@ -28,40 +28,41 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   final FirestoreContentService _contentService = FirestoreContentService();
   late TabController _tabController;
 
-  // Pagination state
+  // ==========================================================================
+  // Phase 4.3 — INFINITE SCROLL (replaces page-number pagination)
+  // ==========================================================================
+  // Before Phase 4.3, the Admin Panel used a page-number pagination system
+  // (⬅️ 1 2 3 ➡️) at the bottom of All/Movies/Series tabs. Bro reported this
+  // felt out of place in a mobile app — modern apps use infinite scroll with
+  // a pull-to-refresh and a bottom loading spinner.
   //
-  // PAGINATION: 20 per page so the admin sees a manageable chunk per
-  // page and can flip pages quickly. Previously this was 30 (default
-  // raised from 20 in commit 33b5dd5, June 11) — Bro reported the
-  // Movies/Series tabs were loading too many posts at once, and the
-  // same applies here for the Admin Panel's grid view. Reverted to 20
-  // per page for consistency with the rest of the app.
+  // New model:
+  //   - _allPosts accumulates every post we've fetched so far (no more page
+  //     cache keyed by page number).
+  //   - _lastVisibleDoc is the cursor for the next getAllPosts(startAfter:).
+  //   - _hasMore flips false when Firestore returns a short page.
+  //   - NotificationListener<ScrollNotification> on each ListView triggers
+  //     _loadMore() when the user gets within 200px of the bottom.
+  //   - RefreshIndicator wraps the ListView for pull-to-refresh.
+  //   - A bottom status tile shows: loading spinner / "No more posts" / none.
+  //
+  // The Series tab mirrors this with its own state (decoupled from the All
+  // tab because getSeries() queries only series docs).
+  // ==========================================================================
   static const int _pageSize = 20;
-  int _currentPage = 1;
-  bool _hasMore = true;
-  bool _isLoadingPage = false;
-  List<DocumentSnapshot> _pageLastDocs = []; // lastDoc for each loaded page
-  Map<int, List<Movie>> _pageCache = {}; // cached posts per page
 
-  // === SERIES TAB — DEDICATED PAGINATION STATE ===
-  // Before this fix, the Series tab filtered CLIENT-SIDE from the All tab's
-  // _pageCache (which only holds 30 mixed posts per page). With 1068 movies
-  // and only 3 series in the DB, page 1 of getAllPosts() almost always had
-  // 0 series — so the Series tab showed "No posts found" even though the
-  // tab label correctly said "Series (3)" (from Firestore aggregate count).
-  // Search worked because searchAllPosts() queries the whole DB.
-  //
-  // Fix: Series tab now uses getSeries() directly with its own pagination
-  // state, decoupled from the All tab. The All tab and Movies tab are
-  // unchanged (Movies tab filters from All tab's _pageCache, which works
-  // fine because the vast majority of posts are movies).
-  int _seriesCurrentPage = 1;
+  // All tab + Movies tab (shared) — Movies tab is a filtered view of All tab.
+  List<Movie> _allPosts = [];            // accumulated list
+  bool _hasMore = true;                  // can fetch more?
+  bool _isLoadingMore = false;           // fetching next chunk?
+  DocumentSnapshot? _lastVisibleDoc;     // cursor for startAfter()
+
+  // Series tab — dedicated state (same design, new shape)
+  List<Movie> _allSeriesPosts = [];      // accumulated series list
   bool _seriesHasMore = true;
-  bool _seriesIsLoadingPage = false;
-  List<DocumentSnapshot> _seriesPageLastDocs = [];
-  Map<int, List<Movie>> _seriesPageCache = {};
+  bool _seriesIsLoadingMore = false;
+  DocumentSnapshot? _seriesLastVisibleDoc;
 
-  List<Movie> _allPosts = []; // accumulated posts for search/filter
   List<Movie> _filteredPosts = [];
   List<TagAndGenres> _genres = [];
   List<TagAndGenres> _tags = [];
@@ -133,18 +134,17 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   Future<void> _loadInitialData() async {
     setState(() => _isLoading = true);
     try {
-      // Reset pagination state — All tab
-      _currentPage = 1;
-      _hasMore = true;
-      _pageLastDocs = [];
-      _pageCache = {};
+      // Phase 4.3 — reset infinite-scroll state for All tab.
       _allPosts = [];
+      _hasMore = true;
+      _isLoadingMore = false;
+      _lastVisibleDoc = null;
 
-      // Reset pagination state — Series tab (separate from All tab)
-      _seriesCurrentPage = 1;
+      // Reset infinite-scroll state for Series tab.
+      _allSeriesPosts = [];
       _seriesHasMore = true;
-      _seriesPageLastDocs = [];
-      _seriesPageCache = {};
+      _seriesIsLoadingMore = false;
+      _seriesLastVisibleDoc = null;
 
       // Fetch All-tab page 1, Series-tab page 1, and supporting data, all
       // in parallel. The extra getSeries() call adds ~1 Firestore round-trip
@@ -179,20 +179,16 @@ class _AdminPanelPageState extends State<AdminPanelPage>
         final seriesLastDoc = seriesData['lastDoc'] as DocumentSnapshot?;
 
         setState(() {
-          _pageCache[1] = posts;
+          // Phase 4.3 — All tab: directly populate accumulated list + cursor.
           _allPosts = List.from(posts);
           _filteredPosts = List.from(posts);
           _hasMore = hasMore;
-          if (lastDoc != null) {
-            _pageLastDocs = [lastDoc];
-          }
+          _lastVisibleDoc = lastDoc;
 
-          // Populate Series tab cache
-          _seriesPageCache[1] = seriesPosts;
+          // Series tab: same shape — accumulated list + cursor.
+          _allSeriesPosts = List.from(seriesPosts);
           _seriesHasMore = seriesHasMore;
-          if (seriesLastDoc != null) {
-            _seriesPageLastDocs = [seriesLastDoc];
-          }
+          _seriesLastVisibleDoc = seriesLastDoc;
 
           _genres = results[2] as List<TagAndGenres>;
           _tags = results[3] as List<TagAndGenres>;
@@ -211,176 +207,141 @@ class _AdminPanelPageState extends State<AdminPanelPage>
     }
   }
 
-  /// Load a specific page of posts
-  Future<void> _loadPage(int page) async {
-    if (page < 1) return;
-    if (_isLoadingPage) return;
+  // ==========================================================================
+  // Phase 4.3 — INFINITE SCROLL: _loadMore + _loadMoreSeries + _refresh
+  // ==========================================================================
+  // These replace the old _loadPage / _nextPage / _prevPage / _knownPages
+  // (and the Series-tab mirrors). The new model is cursor-based: each call
+  // to _loadMore appends a chunk of _pageSize posts to _allPosts, advancing
+  // _lastVisibleDoc to the last doc of the new chunk. _hasMore flips false
+  // when Firestore returns a short page (or an empty page).
+  // ==========================================================================
 
-    // If page is cached, just switch to it
-    if (_pageCache.containsKey(page)) {
-      setState(() {
-        _currentPage = page;
-        _applyFilters();
-      });
-      return;
-    }
+  /// Fetch the next chunk of posts for the All/Movies tab using cursor-based
+  /// pagination. Appends to _allPosts and advances _lastVisibleDoc.
+  Future<void> _loadMore() async {
+    if (_isLoadingMore || !_hasMore) return;
 
-    // Can only load next page if we have the previous page's last doc
-    if (page > 1 && _pageLastDocs.length < page - 1) return;
-
-    // Can't go beyond available pages
-    if (page > 1 && !_hasMore && _pageCache[page - 1] != null) {
-      // We've reached the end
-      return;
-    }
-
-    setState(() => _isLoadingPage = true);
-
+    setState(() => _isLoadingMore = true);
     try {
-      DocumentSnapshot? startAfter;
-      if (page > 1 && _pageLastDocs.length >= page - 1) {
-        startAfter = _pageLastDocs[page - 2]; // last doc of previous page
-      }
-
       final result = await _contentService.getAllPosts(
         limit: _pageSize,
-        startAfter: startAfter,
+        startAfter: _lastVisibleDoc,
       );
 
-      if (mounted) {
-        final posts = result['movies'] as List<Movie>;
-        final hasMore = result['hasMore'] as bool;
-        final lastDoc = result['lastDoc'] as DocumentSnapshot?;
+      if (!mounted) return;
+      final posts = result['movies'] as List<Movie>;
+      final hasMore = result['hasMore'] as bool;
+      final lastDoc = result['lastDoc'] as DocumentSnapshot?;
 
-        setState(() {
-          _pageCache[page] = posts;
-          _hasMore = hasMore;
-          if (lastDoc != null) {
-            // Ensure we have lastDocs for all pages up to this one
-            while (_pageLastDocs.length < page) {
-              if (_pageLastDocs.length == page - 1) {
-                _pageLastDocs.add(lastDoc);
-              } else {
-                // This shouldn't happen, but handle gracefully
-                _pageLastDocs.add(lastDoc);
-              }
-            }
-          }
-          // Accumulate posts for search/filter
-          _allPosts = [];
-          for (int i = 1; i <= _pageCache.keys.reduce((a, b) => a > b ? a : b); i++) {
-            if (_pageCache.containsKey(i)) {
-              _allPosts.addAll(_pageCache[i]!);
-            }
-          }
-          _currentPage = page;
-          _applyFilters();
-          _isLoadingPage = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) setState(() => _isLoadingPage = false);
-    }
-  }
-
-  /// Go to next page
-  void _nextPage() {
-    if (_hasMore || _pageCache.containsKey(_currentPage + 1)) {
-      _loadPage(_currentPage + 1);
-    }
-  }
-
-  /// Go to previous page
-  void _prevPage() {
-    if (_currentPage > 1) {
-      _loadPage(_currentPage - 1);
-    }
-  }
-
-  /// Get total number of pages we know about
-  int get _knownPages {
-    final maxCached = _pageCache.keys.fold(0, (a, b) => a > b ? a : b);
-    return _hasMore ? maxCached + 1 : maxCached;
-  }
-
-  // ==========================================================================
-  // SERIES TAB — DEDICATED PAGINATION
-  // ==========================================================================
-  // These methods mirror _loadPage / _nextPage / _prevPage / _knownPages but
-  // operate on the Series tab's separate pagination state, calling
-  // getSeries() directly instead of filtering from getAllPosts().
-
-  /// Load a specific page of SERIES posts (Series tab only).
-  Future<void> _loadSeriesPage(int page) async {
-    if (page < 1) return;
-    if (_seriesIsLoadingPage) return;
-
-    // If page is cached, just switch to it
-    if (_seriesPageCache.containsKey(page)) {
       setState(() {
-        _seriesCurrentPage = page;
+        _allPosts.addAll(posts);
+        _hasMore = hasMore;
+        if (lastDoc != null) {
+          _lastVisibleDoc = lastDoc;
+        }
+        // Defensive: if Firestore returned an empty page, force _hasMore off
+        // so we don't keep retrying. firestore_content_service should already
+        // do this, but never trust a remote call to be perfectly behaved.
+        if (posts.isEmpty) {
+          _hasMore = false;
+        }
+        _applyFilters();
+        _isLoadingMore = false;
       });
-      return;
+    } catch (e) {
+      debugPrint('Phase 4.3 _loadMore error: $e');
+      if (mounted) setState(() => _isLoadingMore = false);
     }
+  }
 
-    // Can only load next page if we have the previous page's last doc
-    if (page > 1 && _seriesPageLastDocs.length < page - 1) return;
+  /// Fetch the next chunk of SERIES posts (Series tab only).
+  Future<void> _loadMoreSeries() async {
+    if (_seriesIsLoadingMore || !_seriesHasMore) return;
 
-    // Can't go beyond available pages
-    if (page > 1 && !_seriesHasMore && _seriesPageCache[page - 1] != null) {
-      return;
-    }
-
-    setState(() => _seriesIsLoadingPage = true);
-
+    setState(() => _seriesIsLoadingMore = true);
     try {
-      DocumentSnapshot? startAfter;
-      if (page > 1 && _seriesPageLastDocs.length >= page - 1) {
-        startAfter = _seriesPageLastDocs[page - 2];
-      }
-
       final result = await _contentService.getSeries(
         limit: _pageSize,
-        startAfter: startAfter,
+        startAfter: _seriesLastVisibleDoc,
       );
 
-      if (mounted) {
-        final series = result['movies'] as List<Movie>;
-        final hasMore = result['hasMore'] as bool;
-        final lastDoc = result['lastDoc'] as DocumentSnapshot?;
+      if (!mounted) return;
+      final series = result['movies'] as List<Movie>;
+      final hasMore = result['hasMore'] as bool;
+      final lastDoc = result['lastDoc'] as DocumentSnapshot?;
 
-        setState(() {
-          _seriesPageCache[page] = series;
-          _seriesHasMore = hasMore;
-          if (lastDoc != null) {
-            while (_seriesPageLastDocs.length < page) {
-              _seriesPageLastDocs.add(lastDoc);
-            }
-          }
-          _seriesCurrentPage = page;
-          _seriesIsLoadingPage = false;
-        });
-      }
+      setState(() {
+        _allSeriesPosts.addAll(series);
+        _seriesHasMore = hasMore;
+        if (lastDoc != null) {
+          _seriesLastVisibleDoc = lastDoc;
+        }
+        if (series.isEmpty) {
+          _seriesHasMore = false;
+        }
+        _seriesIsLoadingMore = false;
+      });
     } catch (e) {
-      if (mounted) setState(() => _seriesIsLoadingPage = false);
+      debugPrint('Phase 4.3 _loadMoreSeries error: $e');
+      if (mounted) setState(() => _seriesIsLoadingMore = false);
     }
   }
 
-  void _nextSeriesPage() {
-    if (_seriesHasMore || _seriesPageCache.containsKey(_seriesCurrentPage + 1)) {
-      _loadSeriesPage(_seriesCurrentPage + 1);
-    }
-  }
+  /// Phase 4.3 — pull-to-refresh handler.
+  /// Re-fetches the first page WITHOUT blanking the screen. The existing
+  /// _allPosts list stays visible until the new data arrives, then is
+  /// replaced atomically in a single setState. If the fetch fails, the
+  /// old data is kept (better UX than an empty screen with an error).
+  Future<void> _refresh() async {
+    try {
+      final results = await Future.wait([
+        _contentService.getAllPosts(limit: _pageSize),
+        _contentService.getSeries(limit: _pageSize),
+        _contentService.getGenres(),
+        _contentService.getTags(),
+        _contentService.getCollections(),
+        _contentService.getBannerConfig(),
+      ]);
+      final totalCounts = await _contentService.getTotalPostCounts();
 
-  void _prevSeriesPage() {
-    if (_seriesCurrentPage > 1) {
-      _loadSeriesPage(_seriesCurrentPage - 1);
-    }
-  }
+      if (!mounted) return;
+      final postsData = results[0] as Map<String, dynamic>;
+      final posts = postsData['movies'] as List<Movie>;
+      final hasMore = postsData['hasMore'] as bool;
+      final lastDoc = postsData['lastDoc'] as DocumentSnapshot?;
 
-  int get _knownSeriesPages {
-    final maxCached = _seriesPageCache.keys.fold(0, (a, b) => a > b ? a : b);
-    return _seriesHasMore ? maxCached + 1 : maxCached;
+      final seriesData = results[1] as Map<String, dynamic>;
+      final seriesPosts = seriesData['movies'] as List<Movie>;
+      final seriesHasMore = seriesData['hasMore'] as bool;
+      final seriesLastDoc = seriesData['lastDoc'] as DocumentSnapshot?;
+
+      setState(() {
+        _allPosts = List.from(posts);
+        _filteredPosts = List.from(posts);
+        _hasMore = hasMore;
+        _lastVisibleDoc = lastDoc;
+        _isLoadingMore = false;
+
+        _allSeriesPosts = List.from(seriesPosts);
+        _seriesHasMore = seriesHasMore;
+        _seriesLastVisibleDoc = seriesLastDoc;
+        _seriesIsLoadingMore = false;
+
+        _genres = results[2] as List<TagAndGenres>;
+        _tags = results[3] as List<TagAndGenres>;
+        _collections = results[4] as List<TagAndGenres>;
+        _bannerImageUrls = results[5] is List
+            ? List<String>.from((results[5] as List).whereType<String>())
+            : [];
+        _totalCountAll = totalCounts['all'] ?? 0;
+        _totalCountMovies = totalCounts['movies'] ?? 0;
+        _totalCountSeries = totalCounts['series'] ?? 0;
+      });
+    } catch (e) {
+      debugPrint('Phase 4.3 _refresh error: $e');
+      // Don't clear existing data on error — keep showing what we have.
+    }
   }
 
   void _filterPosts(String query) {
@@ -540,27 +501,24 @@ class _AdminPanelPageState extends State<AdminPanelPage>
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    // Get current page posts — All tab
-    final currentPagePosts = _pageCache[_currentPage] ?? [];
-    // Get current page posts — Series tab (dedicated cache, NOT filtered
-    // from currentPagePosts which would miss series on movie-heavy pages).
-    final currentSeriesPagePosts = _seriesPageCache[_seriesCurrentPage] ?? [];
+    // Phase 4.3 — infinite scroll: All/Movies tabs share _allPosts (Movies
+    // tab is a filtered view of All tab). Series tab uses its own dedicated
+    // _allSeriesPosts list (decoupled because getSeries() queries only
+    // series docs). When searching/filtering, _filteredPosts is used
+    // instead (search returns full results from searchAllPosts; filter is
+    // applied client-side to _allPosts).
     final movies = _filteredPosts.where((p) => p.type != 'series').toList();
     final series = _filteredPosts.where((p) => p.type == 'series').toList();
 
-    // For tab view, use filtered posts from current page
-    final currentAllPosts = _searchQuery.isNotEmpty || _filterGenre != null || _filterYear != null
-        ? _filteredPosts
-        : currentPagePosts;
-    final currentMovies = _searchQuery.isNotEmpty || _filterGenre != null || _filterYear != null
+    final bool isFiltering = _searchQuery.isNotEmpty ||
+        _filterGenre != null ||
+        _filterYear != null;
+
+    final currentAllPosts = isFiltering ? _filteredPosts : _allPosts;
+    final currentMovies = isFiltering
         ? movies
-        : currentPagePosts.where((p) => p.type != 'series').toList();
-    // Series tab: when not searching, use the DEDICATED series cache (fixes
-    // the "No posts found" bug). When searching, fall back to filtering
-    // _filteredPosts (which comes from searchAllPosts across the whole DB).
-    final currentSeries = _searchQuery.isNotEmpty || _filterGenre != null || _filterYear != null
-        ? series
-        : currentSeriesPagePosts;
+        : _allPosts.where((p) => p.type != 'series').toList();
+    final currentSeries = isFiltering ? series : _allSeriesPosts;
 
     return Scaffold(
       appBar: AppBar(
@@ -706,11 +664,15 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   }
 
   Widget _buildPostsTab(List<Movie> posts, bool isDark, {required int tabIndex}) {
-    // Series tab (tabIndex == 2) uses its OWN pagination state, decoupled
-    // from the All tab. All/Movies tabs share the All tab's pagination.
+    // Phase 4.3 — Series tab (tabIndex == 2) uses its OWN infinite-scroll
+    // state, decoupled from the All tab. All/Movies tabs share the All
+    // tab's state (Movies tab is a filtered view of All tab's _allPosts).
     final bool isSeriesTab = tabIndex == 2;
-    final bool isLoadingThisPage =
-        isSeriesTab ? _seriesIsLoadingPage : _isLoadingPage;
+    final bool isLoadingMore = isSeriesTab ? _seriesIsLoadingMore : _isLoadingMore;
+    final bool hasMore = isSeriesTab ? _seriesHasMore : _hasMore;
+    final Future<void> Function() loadMore =
+        isSeriesTab ? _loadMoreSeries : _loadMore;
+
     return Column(
       children: [
         // Bulk delete bar
@@ -773,7 +735,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
         ),
         // Filter bar
         _buildFilterBar(isDark),
-        // Posts list
+        // Posts list — Phase 4.3: RefreshIndicator + infinite-scroll ListView.
         Expanded(
           child: _isSearchingLoading
               ? const Center(
@@ -783,170 +745,187 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
                 )
-              : _isSearching
-                  ? (_filteredPosts.isEmpty
-                      ? const Center(child: Text('No posts found.'))
-                      : ListView.builder(
-                          itemCount: _filteredPosts.length,
-                          itemBuilder: (context, index) {
-                            final post = _filteredPosts[index];
-                            return _buildPostListItem(post, isDark);
-                          },
-                        ))
-                  : isLoadingThisPage
-                      ? const Center(
-                          child: SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        )
-                      : posts.isEmpty
-                          ? const Center(child: Text('No posts found.'))
-                          : ListView.builder(
-                              itemCount: posts.length,
-                              itemBuilder: (context, index) {
-                                final post = posts[index];
-                                return _buildPostListItem(post, isDark);
-                              },
-                            ),
+              : RefreshIndicator(
+                  color: const Color(0xFFE50914),
+                  onRefresh: _refresh,
+                  child: _buildPostsList(
+                    posts: posts,
+                    isDark: isDark,
+                    isLoadingMore: isLoadingMore,
+                    hasMore: hasMore,
+                    loadMore: loadMore,
+                  ),
+                ),
         ),
-        // Pagination controls — only show when NOT searching.
-        // Series tab uses its own pagination controls (dedicated cache).
-        if (!_isSearching && _searchQuery.isEmpty && _filterGenre == null && _filterYear == null)
-          isSeriesTab
-              ? _buildPaginationControls(isDark, forSeriesTab: true)
-              : _buildPaginationControls(isDark, forSeriesTab: false),
       ],
     );
   }
 
-  Widget _buildPaginationControls(bool isDark, {required bool forSeriesTab}) {
-    // Pick the right pagination state based on which tab we're rendering.
-    final int knownPages = forSeriesTab ? _knownSeriesPages : _knownPages;
-    final int currentPage = forSeriesTab ? _seriesCurrentPage : _currentPage;
-    final bool hasMore = forSeriesTab ? _seriesHasMore : _hasMore;
-    final Map<int, List<Movie>> pageCache =
-        forSeriesTab ? _seriesPageCache : _pageCache;
-    final void Function() prevPage =
-        forSeriesTab ? _prevSeriesPage : _prevPage;
-    final void Function() nextPage =
-        forSeriesTab ? _nextSeriesPage : _nextPage;
-    final Future<void> Function(int) loadPage =
-        forSeriesTab ? _loadSeriesPage : _loadPage;
-
-    // Calculate which page numbers to show
-    List<int> pageNumbers = [];
-    if (knownPages <= 7) {
-      // Show all pages if 7 or fewer
-      for (int i = 1; i <= knownPages; i++) {
-        pageNumbers.add(i);
+  /// Phase 4.3 — Builds the posts ListView with infinite-scroll footer.
+  ///
+  /// Three modes:
+  ///   1. Searching: flat list of search results (no footer — search
+  ///      returns full results from searchAllPosts across the whole DB,
+  ///      so no pagination needed). Still wrapped in a ListView so the
+  ///      parent RefreshIndicator has something to scroll.
+  ///   2. Empty list (no search, no posts loaded yet): a minimal ListView
+  ///      with a "No posts found" message. The ListView is needed so
+  ///      pull-to-refresh still works on an empty list.
+  ///   3. Normal: ListView with `posts.length + 1` items. The extra item
+  ///      is the footer (loading spinner / "No more posts" / idle spacer).
+  ///      A NotificationListener<ScrollNotification> wraps the ListView
+  ///      and triggers `loadMore` when the user gets within 200px of the
+  ///      bottom.
+  Widget _buildPostsList({
+    required List<Movie> posts,
+    required bool isDark,
+    required bool isLoadingMore,
+    required bool hasMore,
+    required Future<void> Function() loadMore,
+  }) {
+    // Mode 1: searching — flat list, no footer.
+    if (_isSearching) {
+      if (posts.isEmpty) {
+        return ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: const [
+            SizedBox(height: 80),
+            Center(child: Text('No posts found.')),
+          ],
+        );
       }
-    } else {
-      // Show: 1 ... currentPage-1 currentPage currentPage+1 ... lastKnown
-      pageNumbers.add(1);
-      if (currentPage > 3) pageNumbers.add(-1); // -1 represents ellipsis
-      for (int i = currentPage - 1; i <= currentPage + 1; i++) {
-        if (i > 1 && i < knownPages) pageNumbers.add(i);
-      }
-      if (currentPage < knownPages - 2) pageNumbers.add(-2); // -2 represents ellipsis
-      pageNumbers.add(knownPages);
+      return ListView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
+        itemCount: posts.length,
+        itemBuilder: (context, index) =>
+            _buildPostListItem(posts[index], isDark),
+      );
     }
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1A1A2E) : Colors.grey.shade100,
-        border: Border(
-          top: BorderSide(
-            color: isDark ? Colors.white12 : Colors.grey.shade300,
-            width: 0.5,
-          ),
-        ),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // Previous button
-            IconButton(
-              onPressed: currentPage > 1 ? prevPage : null,
-              icon: const Icon(Icons.chevron_left),
-              iconSize: 22,
-              padding: const EdgeInsets.all(4),
-              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-              style: IconButton.styleFrom(
-                foregroundColor: currentPage > 1
-                    ? const Color(0xFFE50914)
-                    : (isDark ? Colors.white24 : Colors.grey.shade400),
-              ),
-            ),
-            const SizedBox(width: 4),
-            // Page numbers
-            ...pageNumbers.map((pageNum) {
-              if (pageNum < 0) {
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: Text(
-                    '...',
-                    style: TextStyle(
-                      color: isDark ? Colors.white38 : Colors.black38,
-                      fontSize: 14,
-                    ),
-                  ),
-                );
-              }
-              final isCurrentPage = pageNum == currentPage;
-              return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 2),
-                child: Material(
-                  color: isCurrentPage
-                      ? const Color(0xFFE50914)
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(8),
-                  child: InkWell(
-                    onTap: () => loadPage(pageNum),
-                    borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      width: 36,
-                      height: 36,
-                      alignment: Alignment.center,
-                      child: Text(
-                        '$pageNum',
-                        style: TextStyle(
-                          color: isCurrentPage
-                              ? Colors.white
-                              : (isDark ? Colors.white70 : Colors.black87),
-                          fontWeight: isCurrentPage ? FontWeight.bold : FontWeight.normal,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            }),
-            const SizedBox(width: 4),
-            // Next button
-            IconButton(
-              onPressed: hasMore || pageCache.containsKey(currentPage + 1)
-                  ? nextPage
-                  : null,
-              icon: const Icon(Icons.chevron_right),
-              iconSize: 22,
-              padding: const EdgeInsets.all(4),
-              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-              style: IconButton.styleFrom(
-                foregroundColor: hasMore || pageCache.containsKey(currentPage + 1)
-                    ? const Color(0xFFE50914)
-                    : (isDark ? Colors.white24 : Colors.grey.shade400),
-              ),
-            ),
-          ],
-        ),
+    // Mode 2: empty list — allow pull-to-refresh.
+    if (posts.isEmpty && !isLoadingMore) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: const [
+          SizedBox(height: 80),
+          Center(child: Text('No posts found.')),
+        ],
+      );
+    }
+
+    // Mode 3: normal infinite-scroll list with footer.
+    //
+    // physics: AlwaysScrollableScrollPhysics — required so the user can
+    // overscroll to trigger RefreshIndicator even when the list is short.
+    //
+    // The NotificationListener captures ALL scroll notifications (not just
+    // ScrollEndNotification) so the loadMore fires promptly when the user
+    // flings to the bottom. The `isLoadingMore`/`hasMore` guards inside
+    // _loadMore itself prevent double-fires.
+    return NotificationListener<ScrollNotification>(
+      onNotification: (notification) {
+        if (_isSearching) return false;
+        // Trigger on both ScrollUpdateNotification (mid-scroll) and
+        // ScrollEndNotification (fling settled). This makes the next chunk
+        // load proactively as the user approaches the bottom, instead of
+        // waiting for the scroll to fully stop.
+        if (notification is! ScrollUpdateNotification &&
+            notification is! ScrollEndNotification &&
+            notification is! OverscrollNotification) {
+          return false;
+        }
+        final metrics = notification.metrics;
+        // Guard: don't trigger if the list isn't scrollable yet. This
+        // prevents auto-firing _loadMore on tiny lists where
+        // maxScrollExtent is 0 or very small (e.g. only 2-3 posts fit).
+        // Once the user has enough posts to scroll, this guard passes and
+        // the bottom-trigger logic kicks in.
+        if (metrics.maxScrollExtent < 100) return false;
+        if (metrics.pixels >= metrics.maxScrollExtent - 200) {
+          loadMore();
+        }
+        return false;
+      },
+      child: ListView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
+        // +1 for the footer tile (loading spinner / "No more posts" / spacer).
+        itemCount: posts.length + 1,
+        itemBuilder: (context, index) {
+          if (index == posts.length) {
+            return _buildListFooter(
+              isLoadingMore: isLoadingMore,
+              hasMore: hasMore,
+              isDark: isDark,
+            );
+          }
+          return _buildPostListItem(posts[index], isDark);
+        },
       ),
     );
+  }
+
+  /// Phase 4.3 — Bottom status tile for the posts ListView.
+  /// Shows one of three states:
+  ///   - Loading more: spinner + "Loading more..."
+  ///   - No more posts: subtle "No more posts" with check icon
+  ///   - Idle (more available): small spacer at the bottom
+  Widget _buildListFooter({
+    required bool isLoadingMore,
+    required bool hasMore,
+    required bool isDark,
+  }) {
+    if (isLoadingMore) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        child: Center(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                'Loading more...',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: isDark ? Colors.white54 : Colors.black54,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    if (!hasMore) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        child: Center(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.check_circle_outline,
+                size: 16,
+                color: isDark ? Colors.white38 : Colors.black38,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'No more posts',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: isDark ? Colors.white38 : Colors.black38,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    // Idle — small bottom padding so the next scroll-trigger has room.
+    return const SizedBox(height: 32);
   }
 
   Widget _buildFilterBar(bool isDark) {
