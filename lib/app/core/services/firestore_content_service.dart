@@ -1481,96 +1481,186 @@ class FirestoreContentService {
     }
   }
 
-  /// Phase 4.8 — search_keywords fallback for getMoviesByCollection.
+  /// Phase 4.10 — Hybrid Strategy fallback for getMoviesByCollection.
   ///
-  /// Returns null if the fallback query returned zero results OR threw
-  /// (caller should fall through to its own empty/error handling). Returns
-  /// a non-null Map if at least one movie matched.
+  /// HISTORY:
+  ///   - Phase 4.8 used `search_keywords arrayContains token` where token
+  ///     = the WHOLE collection name lowercased (e.g. "iron man"). This
+  ///     NEVER matched because _generateSearchKeywords splits titles on
+  ///     whitespace — "Iron Man" is stored as ["iron", "man"], not
+  ///     ["iron man"]. So multi-word collection names like "Iron Man",
+  ///     "Star Wars", "Marvel Cinematic" always returned zero results.
+  ///   - Phase 4.10 fix: use the FIRST word of the collection name as
+  ///     the arrayContains query token (e.g. "iron"), then over-fetch
+  ///     (limit * 3) and filter client-side by the FULL phrase
+  ///     (title_lowercase.contains("iron man")). This catches
+  ///     "Iron Man", "Iron Man 2", "Iron Man 3" when searching "Iron Man",
+  ///     and filters out unrelated "iron" matches like "Iron Giant".
   ///
-  /// We normalize the collection name to lowercase because search_keywords
-  /// are stored lowercase (e.g. title "Avengers" → search_keywords
-  /// ['avengers']). The collection name "Marvel" → query token "marvel".
+  /// BEHAVIOR:
+  ///   - Single-word collection (e.g. "Marvel"): firstWord == phrase,
+  ///     so the client-side filter is trivially true. Identical to old
+  ///     Phase 4.8 behavior, just with 3x over-fetch (harmless).
+  ///   - Multi-word collection (e.g. "Iron Man"): firstWord="iron",
+  ///     phrase="iron man". Query pulls all "iron" movies; client filter
+  ///     keeps only those whose title contains "iron man".
+  ///
+  /// PAGINATION + CURSOR:
+  ///   - The cursor returned to the caller is the LAST SHOWN doc (the
+  ///     limit-th doc after filtering), NOT the last fetched doc. This
+  ///     is critical: startAfterDocument uses the cursor's createdAt
+  ///     value to start the next query, so page 2 will correctly skip
+  ///     past everything shown on page 1.
+  ///   - On page 2+, the over-fetch window may re-include some "iron"
+  ///     docs that page 1 fetched but filtered out — they'll be filtered
+  ///     out again on page 2. Slightly redundant but correct.
+  ///   - hasMore is computed from the FILTERED count (> limit), not the
+  ///     raw fetched count. So if 60 docs fetched but only 5 pass the
+  ///     phrase filter, hasMore=false and the user sees all 5.
+  ///
+  /// Returns null if (a) the query threw, (b) snapshot is empty, or
+  /// (c) snapshot had docs but NONE passed the phrase filter. Caller
+  /// treats null as "no fallback results" and falls through to empty
+  /// handling.
   Future<Map<String, dynamic>?> _getMoviesByCollectionFallback({
     required String collectionName,
     required int limit,
     required DocumentSnapshot? startAfter,
     required String? typeFilter,
   }) async {
-    try {
-      final token = collectionName.toLowerCase().trim();
-      if (token.isEmpty) return null;
+    final token = collectionName.toLowerCase().trim();
+    if (token.isEmpty) return null;
 
+    // Split into words; use first word as the Firestore query token.
+    // e.g. "Iron Man" → firstWord="iron", phrase="iron man"
+    final words = token.split(RegExp(r'\s+'));
+    final firstWord = words.first;
+    final phrase = token; // full lowercased collection name
+
+    try {
       Query query = _moviesRef
-          .where('search_keywords', arrayContains: token);
+          .where('search_keywords', arrayContains: firstWord);
       if (typeFilter != null) {
         query = query.where('type', isEqualTo: typeFilter);
       }
+      // Over-fetch 3x — gives client-side phrase filter enough headroom.
+      // If filter ratio is poor (e.g. "iron" matches many non-"iron man"
+      // titles), user may see <limit movies on a page; they can scroll
+      // again to load more.
       query = query
           .orderBy('createdAt', descending: true)
-          .limit(limit);
+          .limit(limit * 3);
 
       if (startAfter != null) {
         query = query.startAfterDocument(startAfter);
       }
 
       final snapshot = await query.get();
-      final movies = snapshot.docs
+      if (snapshot.docs.isEmpty) return null;
+
+      // === Client-side phrase filter ===
+      // For single-word collections this is a no-op (phrase == firstWord).
+      // For multi-word collections this keeps only movies whose title
+      // actually contains the full phrase (e.g. "iron man"), filtering
+      // out partial matches like "iron giant".
+      final filteredDocs = snapshot.docs.where((doc) {
+        final data = doc.data() as Map<String, dynamic>;
+        final titleLower = data['title_lowercase'] as String? ?? '';
+        return titleLower.contains(phrase);
+      }).toList();
+
+      if (filteredDocs.isEmpty) return null;
+
+      final hasMore = filteredDocs.length > limit;
+      final pageDocs = hasMore
+          ? filteredDocs.sublist(0, limit)
+          : filteredDocs;
+
+      final movies = pageDocs
           .map((doc) => Movie.fromMap(
                 doc.data() as Map<String, dynamic>,
                 docId: doc.id,
               ))
           .toList();
 
-      if (movies.isEmpty) return null;
+      // Cursor: last SHOWN doc (not last fetched). This is critical for
+      // correct page 2+ pagination — see header comment above.
+      final lastDoc = pageDocs.isNotEmpty ? pageDocs.last : null;
 
-      debugPrint('Phase 4.8: collection "$collectionName" had no tagged '
-          'movies, fell back to search_keywords — found ${movies.length}');
+      debugPrint('Phase 4.10: collection "$collectionName" fallback — '
+          'fetched ${snapshot.docs.length} (firstWord="$firstWord"), '
+          'phrase-filtered to ${filteredDocs.length}, showing ${movies.length}, '
+          'hasMore=$hasMore');
+
       return {
         'movies': movies,
-        'hasMore': snapshot.docs.length >= limit,
-        'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+        'hasMore': hasMore,
+        'lastDoc': lastDoc,
       };
     } catch (e) {
-      debugPrint('Phase 4.8: search_keywords fallback threw: $e — '
+      debugPrint('Phase 4.10: hybrid fallback threw: $e — '
           'trying without orderBy');
       // No-orderBy fallback (composite index missing on
       // search_keywords + type + createdAt).
       try {
-        final token = collectionName.toLowerCase().trim();
-        if (token.isEmpty) return null;
-
         Query query = _moviesRef
-            .where('search_keywords', arrayContains: token);
+            .where('search_keywords', arrayContains: firstWord);
         if (typeFilter != null) {
           query = query.where('type', isEqualTo: typeFilter);
         }
-        query = query.limit(limit);
+        query = query.limit(limit * 3);
 
         if (startAfter != null) {
           query = query.startAfterDocument(startAfter);
         }
 
         final snapshot = await query.get();
-        final movies = snapshot.docs
+        if (snapshot.docs.isEmpty) return null;
+
+        final filteredDocs = snapshot.docs.where((doc) {
+          final data = doc.data() as Map<String, dynamic>;
+          final titleLower = data['title_lowercase'] as String? ?? '';
+          return titleLower.contains(phrase);
+        }).toList();
+
+        if (filteredDocs.isEmpty) return null;
+
+        // Sort by createdAt desc (since Firestore didn't orderBy).
+        filteredDocs.sort((a, b) {
+          final aData = a.data() as Map<String, dynamic>;
+          final bData = b.data() as Map<String, dynamic>;
+          final aTs = aData['createdAt'] as Timestamp?;
+          final bTs = bData['createdAt'] as Timestamp?;
+          final aDate = aTs?.toDate() ?? DateTime(2000);
+          final bDate = bTs?.toDate() ?? DateTime(2000);
+          return bDate.compareTo(aDate);
+        });
+
+        final hasMore = filteredDocs.length > limit;
+        final pageDocs = hasMore
+            ? filteredDocs.sublist(0, limit)
+            : filteredDocs;
+
+        final movies = pageDocs
             .map((doc) => Movie.fromMap(
                   doc.data() as Map<String, dynamic>,
                   docId: doc.id,
                 ))
             .toList();
-        movies.sort((a, b) => (b.createdAt ?? DateTime(2000))
-            .compareTo(a.createdAt ?? DateTime(2000)));
 
-        if (movies.isEmpty) return null;
+        final lastDoc = pageDocs.isNotEmpty ? pageDocs.last : null;
 
-        debugPrint('Phase 4.8: search_keywords no-orderBy fallback found '
-            '${movies.length} movies');
+        debugPrint('Phase 4.10: search_keywords no-orderBy fallback — '
+            'fetched ${snapshot.docs.length}, phrase-filtered to '
+            '${filteredDocs.length}, showing ${movies.length}');
+
         return {
           'movies': movies,
-          'hasMore': snapshot.docs.length >= limit,
-          'lastDoc': snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
+          'hasMore': hasMore,
+          'lastDoc': lastDoc,
         };
       } catch (e2) {
-        debugPrint('Phase 4.8: search_keywords no-orderBy fallback also failed: $e2');
+        debugPrint('Phase 4.10: search_keywords no-orderBy fallback also failed: $e2');
         return null;
       }
     }
