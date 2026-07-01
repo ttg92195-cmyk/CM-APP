@@ -171,14 +171,25 @@ class _SearchScreenState extends State<SearchScreen> {
       );
       if (mounted) {
         final movies = result['movies'] as List<Movie>;
-        // Track IDs to prevent duplicates across load-more calls.
-        for (final m in movies) {
-          _seenIds.add(m.id);
-        }
         // Phase 4.1 — Cache the full fetched set, show only the first page.
         _fullResults = movies;
         final initialChunk = movies.take(_pageSize).toList();
         _visibleCount = initialChunk.length;
+        // Phase 4.5 — ONLY track the IDs of movies we're actually showing
+        // (initialChunk), NOT the full 200-movie cache. The previous code
+        // added ALL 200 IDs to _seenIds here, which caused _loadMore()'s
+        // dedup check to reject every subsequent chunk (all 200 were
+        // already "seen") — so _results stayed at 20 forever while
+        // _visibleCount silently advanced to 40, 60, 80... The UI showed
+        // the same 20 movies no matter how far the user scrolled.
+        //
+        // By only marking the initially-shown 20 as "seen", the dedup
+        // check in _loadMore() correctly passes movies 20-40 through
+        // (they're not yet in _seenIds), and adds them to _seenIds as
+        // they're displayed.
+        for (final m in initialChunk) {
+          _seenIds.add(m.id);
+        }
         final serverHasMore = (result['hasMore'] as bool? ?? false);
         // hasMore is true if either:
         //   (a) the server said there are more docs beyond what we fetched
