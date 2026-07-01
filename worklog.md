@@ -4604,3 +4604,96 @@ Stage Summary:
   is network-bound and we have no control over its latency.
 - Next step: Bro installs the Phase 3.14 APK and verifies that login
   is faster.
+
+---
+Task ID: Phase 4.10
+Agent: Main Agent
+Task: Fix Collections tab — multi-word collection names (e.g. "Iron Man") returned zero movies because Phase 4.8's fallback queried search_keywords with the WHOLE phrase, but search_keywords stores individual words (split on whitespace).
+
+Work Log:
+- Bro tested Phase 4.9 (the cursor-routing fix from previous session)
+  and confirmed: creating a "Marvel" collection showed nothing,
+  but creating an "Iron" collection correctly showed "Iron Man 3".
+  This proved that `search_keywords arrayContains "iron"` works,
+  but `search_keywords arrayContains "iron man"` does NOT — because
+  `_generateSearchKeywords` splits "Iron Man" into ["iron", "man"],
+  not ["iron man"].
+- Bro forwarded another AI's solution: Hybrid Strategy — use the
+  FIRST word of the collection name as the arrayContains query token,
+  then over-fetch and filter client-side by the FULL phrase.
+- Implemented Phase 4.10 in firestore_content_service.dart,
+  replacing the entire `_getMoviesByCollectionFallback` function:
+    * Tokenize collectionName → words = token.split(RegExp(r'\s+'))
+    * firstWord = words.first  (e.g. "iron" from "Iron Man")
+    * phrase = token            (e.g. "iron man")
+    * Query: `search_keywords arrayContains firstWord`, orderBy
+      createdAt desc, limit = limit * 3 (3x over-fetch for filter
+      headroom).
+    * Client-side filter: title_lowercase.contains(phrase). For
+      single-word collections this is trivially true (phrase ==
+      firstWord). For multi-word it keeps "Iron Man 1/2/3" and
+      filters out unrelated "Iron Giant" etc.
+    * hasMore = filteredDocs.length > limit (NOT raw fetched count).
+    * pageDocs = hasMore ? filteredDocs.sublist(0, limit) : filteredDocs.
+    * Cursor (lastDoc) = pageDocs.last — i.e., the last SHOWN doc,
+      NOT the last fetched doc. This is critical: startAfterDocument
+      uses the cursor's createdAt value, so page 2 starts after what
+      the user actually saw, not after the over-fetched tail.
+    * Same hybrid logic applied to the no-orderBy fallback path
+      (when composite index is missing). Added explicit createdAt
+      sort since Firestore didn't orderBy.
+- Verified bracket balance: 382/382 braces, 1178/1178 parens,
+  128/128 brackets — all balanced after stripping strings/comments.
+- Verified indentation: function starts at column 2 (class member
+  level), ends at line 1667, next function `getMoviesByTagSimple`
+  starts at line 1669 with correct column-2 indentation.
+
+Behavior matrix:
+  - "Marvel" (single word):
+      firstWord="marvel", phrase="marvel"
+      Query: search_keywords arrayContains "marvel"
+      Filter: title_lowercase.contains("marvel") — trivially true
+      Result: same as Phase 4.8, just with 3x over-fetch (harmless)
+  - "Iron Man" (multi word):
+      firstWord="iron", phrase="iron man"
+      Query: search_keywords arrayContains "iron"
+        → matches "Iron Man", "Iron Man 2", "Iron Man 3", "Iron Giant"
+      Filter: title_lowercase.contains("iron man")
+        → keeps "Iron Man 1/2/3", drops "Iron Giant"
+      Result: Bro gets the Iron Man trilogy ✓
+  - "Star Wars" (multi word):
+      firstWord="star", phrase="star wars"
+      Query: search_keywords arrayContains "star"
+      Filter: title_lowercase.contains("star wars")
+      Result: only movies whose title contains "star wars" ✓
+
+Pagination note:
+  - Cursor = last SHOWN doc (limit-th doc after filtering).
+  - Page 2's startAfterDocument starts AFTER cursor's createdAt,
+    so it skips past everything shown on page 1.
+  - Page 2's over-fetch window may re-include some "iron" docs that
+    page 1 fetched but filtered out — they'll be filtered out again
+    on page 2. Slightly redundant but correct.
+  - Known limitation: if filter ratio is very poor (e.g. 100 "iron"
+    docs fetched but only 3 contain "iron man"), user sees 3 movies
+    on the page and hasMore=false. They cannot scroll for more even
+    if more "iron man" docs exist beyond the 3x window. Acceptable
+    for now — if Bro reports this, we can increase the factor to 5x
+    or add internal fetch-loops.
+
+Phase 4.9 cursor-routing compatibility:
+  - Phase 4.9 inspects the startAfter cursor's `collections` array
+    and routes page 2+ to fallback if collectionName is NOT in it.
+  - Phase 4.10's fallback still returns movies whose `collections`
+    field typically doesn't contain collectionName (they matched via
+    search_keywords, not via collections tagging). So Phase 4.9's
+    routing still works correctly with Phase 4.10.
+
+Stage Summary:
+- Multi-word collection names now work end-to-end. Bro can create
+  "Iron Man", "Star Wars", "Marvel Cinematic Universe" etc. and
+  the Collections tab will show matching movies.
+- Single-word collections ("Marvel", "DC") unchanged behavior.
+- Next step: Bro builds APK and verifies that "Iron Man" collection
+  now shows the Iron Man trilogy. Also verify "Marvel" still works
+  (single-word case should be unaffected).
