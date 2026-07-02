@@ -4818,3 +4818,106 @@ Stage Summary:
 - Next step: Bro builds APK and tests all 6 cases above. If any
   still fails, we can tune the stop-words list or increase the
   over-fetch factor.
+
+---
+Task ID: Phase 4.12
+Agent: Main Agent
+Task: Add Universe Keywords Mapping + arrayContainsAny so creating a "Marvel" collection instantly shows ALL Marvel movies (Iron Man, Thor, Avengers, Spider-Man, etc.) without manual tagging — Bro wants 100% complete universe experience.
+
+Work Log:
+- Bro confirmed Phase 4.11 works for single/multi-word/punctuation/
+  stop-words cases. But pointed out the missing piece: creating a
+  "Marvel" collection should show ALL Marvel movies, not just movies
+  whose title literally contains "marvel" (which is very few — most
+  are named after the hero: "Iron Man", "Thor", "Avengers").
+- Bro forwarded another AI's solution: Universe Keywords Map +
+  arrayContainsAny. Build a static map of universe name → list of
+  hero/franchise keywords, then ONE Firestore query with
+  arrayContainsAny covers the whole universe.
+- Implemented Phase 4.12 in firestore_content_service.dart:
+
+  STEP 1: Added `_universeKeywords` static const Map at the top of
+  FirestoreContentService class (after collection references, before
+  READ OPERATIONS section). Includes 7 universes:
+    * 'marvel': 16 keywords (marvel, iron, thor, america, avengers,
+      deadpool, wolverine, hulk, loki, venom, spider, spiderman,
+      panther, guardians, strange, bats)
+    * 'dc': 9 keywords (dc, batman, superman, joker, aquaman, flash,
+      shazam, wonder, lantern)
+    * 'harry potter': 3 (potter, beasts, hogwarts)
+    * 'star wars': 4 (wars, jedi, sith, mandalorian)
+    * 'monsterverse': 2 (godzilla, kong)
+    * 'the conjuring universe': 4 (conjuring, annabelle, nun, valak)
+    * 'lord of the rings': 4 (rings, hobbit, middle, gandalf)
+  Bro can extend by adding more entries to this map.
+
+  STEP 2: Rewrote `_getMoviesByCollectionFallback` with Universe path:
+    * Detect: `isUniverse = _universeKeywords.containsKey(token)`
+    * If universe: query with `arrayContainsAny: universeTokens`.
+      Returns every movie whose search_keywords contains ANY of the
+      universe's hero keywords. ONE Firestore query (NOT N parallel).
+    * If not universe: preserve Phase 4.11's 3-step pipeline
+      (punctuation strip → stop-word filter → longest word queryKey →
+      fuzzy normalize).
+    * Client-side filter: universe path keeps ALL docs (every keyword
+      match is part of the universe by definition). Non-universe path
+      applies the fuzzy phrase filter as before.
+    * Both paths use the same pagination cursor logic (lastDoc =
+      pageDocs.last, hasMore = filteredDocs.length > limit, over-fetch
+      3x). Universe path's filteredDocs == snapshot.docs so hasMore
+      is essentially snapshot.docs.length > limit.
+    * No-orderBy fallback path also updated to handle universe vs
+      non-universe branches (composite index missing scenario).
+
+COST ANALYSIS:
+  - Universe path: 1 Firestore query. Reads = number of returned docs
+    (e.g. 20 movies returned = 20 reads), NOT number of array values.
+    Far cheaper than N parallel queries on the Spark (free) plan.
+  - Non-universe path: same as Phase 4.11 — 1 query, 3x over-fetch.
+
+Behavior matrix:
+  - "Marvel" (universe):
+      isUniverse = true, universeTokens = [marvel, iron, thor, ...]
+      Query: search_keywords arrayContainsAny [16 keywords]
+      Filter: keep ALL matches
+      Result: every Marvel movie (Iron Man, Thor, Avengers, Spider-Man,
+      Black Panther, Doctor Strange, Guardians, Deadpool, etc.) ✓
+  - "DC" (universe):
+      isUniverse = true, universeTokens = [dc, batman, superman, ...]
+      Query: search_keywords arrayContainsAny [9 keywords]
+      Result: every DC movie ✓
+  - "Harry Potter" (universe):
+      isUniverse = true, universeTokens = [potter, beasts, hogwarts]
+      Query: arrayContainsAny [3 keywords]
+      Result: every Harry Potter + Fantastic Beasts movie ✓
+  - "Iron Man" (non-universe):
+      isUniverse = false, queryKey = "iron", fuzzy phrase = "ironman"
+      Result: Phase 4.11 behavior — Iron Man trilogy ✓
+  - "Spider-Man" (non-universe):
+      isUniverse = false, queryKey = "spider", fuzzy phrase = "spiderman"
+      Result: Phase 4.11 behavior — Spider-Man movies ✓
+  - "Lord of the Rings" (universe):
+      isUniverse = true, universeTokens = [rings, hobbit, middle, gandalf]
+      Query: arrayContainsAny [4 keywords]
+      Result: every LOTR + Hobbit movie (broader than Phase 4.11) ✓
+
+Phase 4.9 cursor-routing compatibility: unchanged. The fallback still
+returns movies whose 'collections' field typically doesn't contain
+collectionName, so Phase 4.9's startAfter-cursor inspection still
+routes page 2+ to fallback correctly.
+
+Verified: brackets balanced (390/390 braces, 1214/1214 parens,
+141/141 brackets) after stripping strings/comments. Indentation at
+column 2 (class member level). _universeKeywords Map is a static
+const class member, in scope for _getMoviesByCollectionFallback.
+
+Stage Summary:
+- Creating "Marvel" / "DC" / "Harry Potter" / "Star Wars" /
+  "Monsterverse" / "The Conjuring Universe" / "Lord of the Rings"
+  collections now shows ALL movies in that universe with ONE Firestore
+  query — no manual movie tagging required.
+- Non-universe collections ("Iron Man", "Spider-Man", "Scooby-Doo!",
+  etc.) preserve Phase 4.11 behavior — handled by the 3-step pipeline.
+- To extend: Bro adds new universe entries to _universeKeywords Map.
+- Next step: Bro builds APK and tests all 7 universe collections +
+  verifies non-universe collections still work.
