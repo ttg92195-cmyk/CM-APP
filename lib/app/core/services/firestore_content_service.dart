@@ -17,6 +17,44 @@ class FirestoreContentService {
   CollectionReference get _tagsRef => _firestore.collection('tags');
   CollectionReference get _collectionsRef => _firestore.collection('collections');
 
+  // ==================== Phase 4.12 — Universe Keywords Map ====================
+  //
+  // When a collection name matches one of these keys (lowercased), the
+  // fallback uses `arrayContainsAny` with the mapped keyword list INSTEAD
+  // OF the single-word pipeline. This lets Bro create a "Marvel" collection
+  // and immediately see all Iron Man, Thor, Avengers, Spider-Man movies
+  // without manually tagging each movie.
+  //
+  // Why this matters: previously "Marvel" only matched movies whose title
+  // contained "marvel" (very few — most Marvel movies are named after the
+  // hero, e.g. "Iron Man", "Thor"). Now we expand the query to include
+  // every hero/franchise keyword in the Marvel universe.
+  //
+  // Cost: ONE Firestore query (arrayContainsAny) instead of N parallel
+  // queries. On the Spark (free) plan, this minimizes reads.
+  //
+  // To extend: add new universes here. Map keys MUST be lowercase; values
+  // are lists of lowercase search_keywords tokens (must match how
+  // _generateSearchKeys stores them — split on whitespace, punctuation
+  // stripped, so "Spider-Man" becomes ["spider", "man"] — use "spider"
+  // AND "spiderman" to cover both forms).
+  static const Map<String, List<String>> _universeKeywords = {
+    'marvel': [
+      'marvel', 'iron', 'thor', 'america', 'avengers', 'deadpool',
+      'wolverine', 'hulk', 'loki', 'venom', 'spider', 'spiderman',
+      'panther', 'guardians', 'strange', 'bats',
+    ],
+    'dc': [
+      'dc', 'batman', 'superman', 'joker', 'aquaman', 'flash',
+      'shazam', 'wonder', 'lantern',
+    ],
+    'harry potter': ['potter', 'beasts', 'hogwarts'],
+    'star wars': ['wars', 'jedi', 'sith', 'mandalorian'],
+    'monsterverse': ['godzilla', 'kong'],
+    'the conjuring universe': ['conjuring', 'annabelle', 'nun', 'valak'],
+    'lord of the rings': ['rings', 'hobbit', 'middle', 'gandalf'],
+  };
+
   // ==================== READ OPERATIONS ====================
 
   /// Find a movie document by tmdbId — returns the first match or null
@@ -1481,48 +1519,42 @@ class FirestoreContentService {
     }
   }
 
-  /// Phase 4.11 — Ultimate Hybrid Strategy fallback for getMoviesByCollection.
+  /// Phase 4.12 — Ultimate Universe Hybrid Strategy fallback.
   ///
   /// HISTORY:
-  ///   - Phase 4.8 used `search_keywords arrayContains token` where token
-  ///     = the WHOLE collection name lowercased. Never matched because
-  ///     search_keywords stores SPLIT words.
-  ///   - Phase 4.10 used the FIRST word (split on whitespace) as the
-  ///     queryKey and filtered by full phrase client-side. Worked for
-  ///     "Iron Man" but BROKE for:
-  ///       * "Spider-Man" (hyphen — firstWord became "spider-man" which
-  ///         is NOT in search_keywords; DB stores "spider" and "man")
-  ///       * "Scooby-Doo!" (same hyphen + exclamation problem)
-  ///       * "Lord of the Rings" (firstWord="lord" worked, but "the"
-  ///         and "of" caused client filter on the WHOLE phrase
-  ///         "lord of the rings" to match exactly with spaces — fragile)
-  ///       * "Godzilla x Kong" (firstWord="godzilla" worked, but "x"
-  ///         in the phrase filter caused issues)
-  ///   - Phase 4.11 fix: 3-step pipeline (per Bro's request, based on
-  ///     another AI's suggestion):
-  ///       1. PUNCTUATION STRIP — replace all non-word chars with space,
-  ///          split, discard empties. "Spider-Man" → ["spider", "man"].
-  ///          "Scooby-Doo!" → ["scooby", "doo"].
-  ///       2. STOP-WORD FILTER — drop common English noise words
-  ///          (the, of, and, a, an, in, or, x, vs, to, for, by, with,
-  ///          at, on, from). "Lord of the Rings" → ["lord", "rings"].
-  ///          "Godzilla x Kong" → ["godzilla", "kong"].
-  ///          If ALL words are stop words (rare), fall back to original
-  ///          token list to avoid empty queryKey.
-  ///       3. PICK LONGEST WORD AS queryKey — longest word is the most
-  ///          specific token, minimizing false positives. ["spider",
-  ///          "man"] → "spider". ["godzilla", "kong"] → "godzilla".
-  ///          ["lord", "rings"] → "rings".
-  ///     Then on the client side, FUZZY NORMALIZE both phrase and title
-  ///     (strip ALL non-word chars → "spider-man" → "spiderman", "Spider
-  ///     Man" → "spiderman") and check `titleNormalized.contains(
-  ///     phraseNormalized)`. This handles all punctuation discrepancies
-  ///     between collection name and movie title.
+  ///   - Phase 4.8/4.10/4.11 progressively improved the search_keywords
+  ///     fallback for `getMoviesByCollection`. Phase 4.11 handled
+  ///     punctuation, stop words, and fuzzy matching for arbitrary
+  ///     collection names like "Spider-Man", "Lord of the Rings".
+  ///   - BUT: Bro wants a TRUE universe experience. Creating a "Marvel"
+  ///     collection should show ALL Marvel movies (Iron Man, Thor,
+  ///     Avengers, Spider-Man, etc.) — not just movies whose title
+  ///     literally contains "marvel". Same for DC, Harry Potter, etc.
+  ///   - Phase 4.12 adds a Universe Keywords Map (see
+  ///     `_universeKeywords` at the top of this class). When the
+  ///     collection name matches a universe key, we use
+  ///     `arrayContainsAny` with the mapped keyword list (ONE Firestore
+  ///     query, minimal reads) and return ALL matched movies without
+  ///     client-side filtering — every matched keyword is by definition
+  ///     part of the universe.
+  ///   - For non-universe collections, the Phase 4.11 pipeline
+  ///     (punctuation strip → stop-word filter → longest word queryKey →
+  ///     fuzzy normalize) is preserved unchanged.
   ///
-  /// PAGINATION + CURSOR (preserved from Phase 4.10):
+  /// COST ANALYSIS:
+  ///   - Universe path: 1 Firestore query with arrayContainsAny on up to
+  ///     30 keywords. Firestore bills this as ONE read batch (number of
+  ///     docs returned = reads, NOT number of array values). Far cheaper
+  ///     than N parallel queries.
+  ///   - Non-universe path: same as Phase 4.11 — 1 query, 3x over-fetch,
+  ///     client-side fuzzy filter.
+  ///
+  /// PAGINATION + CURSOR (preserved from Phase 4.10/4.11):
   ///   - lastDoc = pageDocs.last (last SHOWN doc, NOT last fetched).
   ///   - hasMore = filteredDocs.length > limit (FILTERED count, not raw).
-  ///   - Over-fetch 3x for filter headroom.
+  ///   - Over-fetch 3x for non-universe filter headroom.
+  ///   - Universe path: filteredDocs == snapshot.docs (no filtering),
+  ///     so hasMore is essentially snapshot.docs.length > limit.
   Future<Map<String, dynamic>?> _getMoviesByCollectionFallback({
     required String collectionName,
     required int limit,
@@ -1532,54 +1564,70 @@ class FirestoreContentService {
     final token = collectionName.toLowerCase().trim();
     if (token.isEmpty) return null;
 
-    // === Step 1: Punctuation strip + tokenize ===
-    // Replace all non-word chars (hyphens, exclamation, etc.) with space,
-    // then split on whitespace. "Spider-Man" → ["spider", "man"].
-    final cleanTokens = token
-        .replaceAll(RegExp(r'[^\w\s]'), ' ')
-        .split(RegExp(r'\s+'))
-        .where((w) => w.isNotEmpty)
-        .toList();
-    if (cleanTokens.isEmpty) return null;
+    // === Universe detection ===
+    // If the collection name matches a key in _universeKeywords, use the
+    // mapped keyword list with arrayContainsAny. Otherwise, fall through
+    // to the Phase 4.11 single-word pipeline.
+    final isUniverse = _universeKeywords.containsKey(token);
+    final List<String> universeTokens =
+        isUniverse ? _universeKeywords[token]! : const [];
 
-    // === Step 2: Stop-word filter ===
-    // Drop common English noise words. This prevents "the" from being
-    // the queryKey (which would match nearly every movie). For "Godzilla
-    // x Kong" the "x" is dropped, leaving ["godzilla", "kong"]. For
-    // "Lord of the Rings" the "of" and "the" are dropped, leaving
-    // ["lord", "rings"].
-    const stopWords = {
-      'the', 'of', 'and', 'a', 'an', 'in', 'or', 'x', 'vs', 'to',
-      'for', 'by', 'with', 'at', 'on', 'from',
-    };
-    var searchTokens = cleanTokens
-        .where((w) => !stopWords.contains(w))
-        .toList();
-    // Edge case: collection name is ALL stop words (e.g. "The X"). Fall
-    // back to original token list so we don't end up with an empty
-    // queryKey.
-    if (searchTokens.isEmpty) {
-      searchTokens = cleanTokens;
+    // === Non-universe pipeline (Phase 4.11 preserved) ===
+    // Only computed when isUniverse is false. Hoisted out so the variable
+    // is in scope for both try and catch blocks.
+    List<String> cleanTokens = const [];
+    List<String> searchTokens = const [];
+    String queryKey = '';
+    String normalizedPhrase = '';
+    if (!isUniverse) {
+      // Step 1: Punctuation strip + tokenize
+      cleanTokens = token
+          .replaceAll(RegExp(r'[^\w\s]'), ' ')
+          .split(RegExp(r'\s+'))
+          .where((w) => w.isNotEmpty)
+          .toList();
+      if (cleanTokens.isEmpty) return null;
+
+      // Step 2: Stop-word filter
+      const stopWords = {
+        'the', 'of', 'and', 'a', 'an', 'in', 'or', 'x', 'vs', 'to',
+        'for', 'by', 'with', 'at', 'on', 'from',
+      };
+      searchTokens = cleanTokens
+          .where((w) => !stopWords.contains(w))
+          .toList();
+      if (searchTokens.isEmpty) {
+        searchTokens = cleanTokens;
+      }
+
+      // Step 3: Pick longest word as queryKey
+      final sorted = List<String>.from(searchTokens)
+        ..sort((a, b) => b.length.compareTo(a.length));
+      queryKey = sorted.first;
     }
 
-    // === Step 3: Pick longest word as queryKey ===
-    // Longest word is the most specific → fewest false positives in the
-    // Firestore query. ["spider", "man"] → "spider" (length 6 > 3).
-    // ["godzilla", "kong"] → "godzilla" (length 8 > 4).
-    searchTokens.sort((a, b) => b.length.compareTo(a.length));
-    final queryKey = searchTokens.first;
-
-    // === Fuzzy normalization helper ===
-    // Strip ALL non-word chars → "spider-man" → "spiderman".
-    // Used for client-side phrase matching so punctuation differences
-    // between collection name and movie title don't break matches.
+    // Fuzzy normalization helper (used by non-universe filter only,
+    // but defined here so both try and catch blocks can reference it).
     String normalize(String s) =>
         s.toLowerCase().replaceAll(RegExp(r'[^\w]'), '');
-    final normalizedPhrase = normalize(token);
+    normalizedPhrase = normalize(token);
 
     try {
-      Query query = _moviesRef
-          .where('search_keywords', arrayContains: queryKey);
+      Query query;
+      if (isUniverse) {
+        // === Universe path — arrayContainsAny on mapped keywords ===
+        // ONE Firestore query covers all heroes in the universe.
+        query = _moviesRef.where(
+          'search_keywords',
+          arrayContainsAny: universeTokens,
+        );
+      } else {
+        // === Non-universe path — single keyword (Phase 4.11) ===
+        query = _moviesRef.where(
+          'search_keywords',
+          arrayContains: queryKey,
+        );
+      }
       if (typeFilter != null) {
         query = query.where('type', isEqualTo: typeFilter);
       }
@@ -1594,12 +1642,11 @@ class FirestoreContentService {
       final snapshot = await query.get();
       if (snapshot.docs.isEmpty) return null;
 
-      // === Client-side fuzzy phrase filter ===
-      // Normalize both sides: collection name "Spider-Man" → "spiderman",
-      // movie title "Spider-Man: Homecoming" → "spidermanhomecoming".
-      // Then check contains. This catches both "Spider Man" and
-      // "Spider-Man" spellings.
+      // === Client-side filter ===
+      // Universe path: keep ALL docs (every keyword match is part of the
+      // universe by definition). Non-universe path: fuzzy phrase filter.
       final filteredDocs = snapshot.docs.where((doc) {
+        if (isUniverse) return true;
         final data = doc.data() as Map<String, dynamic>;
         final title = data['title']?.toString() ?? '';
         final titleLower =
@@ -1621,14 +1668,11 @@ class FirestoreContentService {
               ))
           .toList();
 
-      // Cursor: last SHOWN doc (preserved from Phase 4.10 — critical
-      // for correct page 2+ pagination with startAfterDocument).
       final lastDoc = pageDocs.isNotEmpty ? pageDocs.last : null;
 
-      debugPrint('Phase 4.11 (Ultimate Hybrid): collection '
-          '"$collectionName" fallback — fetched ${snapshot.docs.length} '
-          '(queryKey="$queryKey"), fuzzy-filtered to '
-          '${filteredDocs.length}, showing ${movies.length}, '
+      debugPrint('Phase 4.12 (Universe Hybrid): collection '
+          '"$collectionName" — isUniverse=$isUniverse, '
+          'fetched ${snapshot.docs.length}, showing ${movies.length}, '
           'hasMore=$hasMore');
 
       return {
@@ -1637,13 +1681,23 @@ class FirestoreContentService {
         'lastDoc': lastDoc,
       };
     } catch (e) {
-      debugPrint('Phase 4.11: ultimate hybrid fallback threw: $e — '
+      debugPrint('Phase 4.12: universe hybrid fallback threw: $e — '
           'trying without orderBy');
       // No-orderBy fallback (composite index missing on
       // search_keywords + type + createdAt).
       try {
-        Query query = _moviesRef
-            .where('search_keywords', arrayContains: queryKey);
+        Query query;
+        if (isUniverse) {
+          query = _moviesRef.where(
+            'search_keywords',
+            arrayContainsAny: universeTokens,
+          );
+        } else {
+          query = _moviesRef.where(
+            'search_keywords',
+            arrayContains: queryKey,
+          );
+        }
         if (typeFilter != null) {
           query = query.where('type', isEqualTo: typeFilter);
         }
@@ -1657,6 +1711,7 @@ class FirestoreContentService {
         if (snapshot.docs.isEmpty) return null;
 
         final filteredDocs = snapshot.docs.where((doc) {
+          if (isUniverse) return true;
           final data = doc.data() as Map<String, dynamic>;
           final title = data['title']?.toString() ?? '';
           final titleLower =
@@ -1691,9 +1746,8 @@ class FirestoreContentService {
 
         final lastDoc = pageDocs.isNotEmpty ? pageDocs.last : null;
 
-        debugPrint('Phase 4.11: search_keywords no-orderBy fallback — '
-            'fetched ${snapshot.docs.length}, fuzzy-filtered to '
-            '${filteredDocs.length}, showing ${movies.length}');
+        debugPrint('Phase 4.12: no-orderBy fallback — '
+            'fetched ${snapshot.docs.length}, showing ${movies.length}');
 
         return {
           'movies': movies,
@@ -1701,7 +1755,7 @@ class FirestoreContentService {
           'lastDoc': lastDoc,
         };
       } catch (e2) {
-        debugPrint('Phase 4.11: search_keywords no-orderBy fallback also failed: $e2');
+        debugPrint('Phase 4.12: no-orderBy fallback also failed: $e2');
         return null;
       }
     }
