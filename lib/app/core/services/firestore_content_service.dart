@@ -1481,47 +1481,48 @@ class FirestoreContentService {
     }
   }
 
-  /// Phase 4.10 — Hybrid Strategy fallback for getMoviesByCollection.
+  /// Phase 4.11 — Ultimate Hybrid Strategy fallback for getMoviesByCollection.
   ///
   /// HISTORY:
   ///   - Phase 4.8 used `search_keywords arrayContains token` where token
-  ///     = the WHOLE collection name lowercased (e.g. "iron man"). This
-  ///     NEVER matched because _generateSearchKeywords splits titles on
-  ///     whitespace — "Iron Man" is stored as ["iron", "man"], not
-  ///     ["iron man"]. So multi-word collection names like "Iron Man",
-  ///     "Star Wars", "Marvel Cinematic" always returned zero results.
-  ///   - Phase 4.10 fix: use the FIRST word of the collection name as
-  ///     the arrayContains query token (e.g. "iron"), then over-fetch
-  ///     (limit * 3) and filter client-side by the FULL phrase
-  ///     (title_lowercase.contains("iron man")). This catches
-  ///     "Iron Man", "Iron Man 2", "Iron Man 3" when searching "Iron Man",
-  ///     and filters out unrelated "iron" matches like "Iron Giant".
+  ///     = the WHOLE collection name lowercased. Never matched because
+  ///     search_keywords stores SPLIT words.
+  ///   - Phase 4.10 used the FIRST word (split on whitespace) as the
+  ///     queryKey and filtered by full phrase client-side. Worked for
+  ///     "Iron Man" but BROKE for:
+  ///       * "Spider-Man" (hyphen — firstWord became "spider-man" which
+  ///         is NOT in search_keywords; DB stores "spider" and "man")
+  ///       * "Scooby-Doo!" (same hyphen + exclamation problem)
+  ///       * "Lord of the Rings" (firstWord="lord" worked, but "the"
+  ///         and "of" caused client filter on the WHOLE phrase
+  ///         "lord of the rings" to match exactly with spaces — fragile)
+  ///       * "Godzilla x Kong" (firstWord="godzilla" worked, but "x"
+  ///         in the phrase filter caused issues)
+  ///   - Phase 4.11 fix: 3-step pipeline (per Bro's request, based on
+  ///     another AI's suggestion):
+  ///       1. PUNCTUATION STRIP — replace all non-word chars with space,
+  ///          split, discard empties. "Spider-Man" → ["spider", "man"].
+  ///          "Scooby-Doo!" → ["scooby", "doo"].
+  ///       2. STOP-WORD FILTER — drop common English noise words
+  ///          (the, of, and, a, an, in, or, x, vs, to, for, by, with,
+  ///          at, on, from). "Lord of the Rings" → ["lord", "rings"].
+  ///          "Godzilla x Kong" → ["godzilla", "kong"].
+  ///          If ALL words are stop words (rare), fall back to original
+  ///          token list to avoid empty queryKey.
+  ///       3. PICK LONGEST WORD AS queryKey — longest word is the most
+  ///          specific token, minimizing false positives. ["spider",
+  ///          "man"] → "spider". ["godzilla", "kong"] → "godzilla".
+  ///          ["lord", "rings"] → "rings".
+  ///     Then on the client side, FUZZY NORMALIZE both phrase and title
+  ///     (strip ALL non-word chars → "spider-man" → "spiderman", "Spider
+  ///     Man" → "spiderman") and check `titleNormalized.contains(
+  ///     phraseNormalized)`. This handles all punctuation discrepancies
+  ///     between collection name and movie title.
   ///
-  /// BEHAVIOR:
-  ///   - Single-word collection (e.g. "Marvel"): firstWord == phrase,
-  ///     so the client-side filter is trivially true. Identical to old
-  ///     Phase 4.8 behavior, just with 3x over-fetch (harmless).
-  ///   - Multi-word collection (e.g. "Iron Man"): firstWord="iron",
-  ///     phrase="iron man". Query pulls all "iron" movies; client filter
-  ///     keeps only those whose title contains "iron man".
-  ///
-  /// PAGINATION + CURSOR:
-  ///   - The cursor returned to the caller is the LAST SHOWN doc (the
-  ///     limit-th doc after filtering), NOT the last fetched doc. This
-  ///     is critical: startAfterDocument uses the cursor's createdAt
-  ///     value to start the next query, so page 2 will correctly skip
-  ///     past everything shown on page 1.
-  ///   - On page 2+, the over-fetch window may re-include some "iron"
-  ///     docs that page 1 fetched but filtered out — they'll be filtered
-  ///     out again on page 2. Slightly redundant but correct.
-  ///   - hasMore is computed from the FILTERED count (> limit), not the
-  ///     raw fetched count. So if 60 docs fetched but only 5 pass the
-  ///     phrase filter, hasMore=false and the user sees all 5.
-  ///
-  /// Returns null if (a) the query threw, (b) snapshot is empty, or
-  /// (c) snapshot had docs but NONE passed the phrase filter. Caller
-  /// treats null as "no fallback results" and falls through to empty
-  /// handling.
+  /// PAGINATION + CURSOR (preserved from Phase 4.10):
+  ///   - lastDoc = pageDocs.last (last SHOWN doc, NOT last fetched).
+  ///   - hasMore = filteredDocs.length > limit (FILTERED count, not raw).
+  ///   - Over-fetch 3x for filter headroom.
   Future<Map<String, dynamic>?> _getMoviesByCollectionFallback({
     required String collectionName,
     required int limit,
@@ -1531,22 +1532,57 @@ class FirestoreContentService {
     final token = collectionName.toLowerCase().trim();
     if (token.isEmpty) return null;
 
-    // Split into words; use first word as the Firestore query token.
-    // e.g. "Iron Man" → firstWord="iron", phrase="iron man"
-    final words = token.split(RegExp(r'\s+'));
-    final firstWord = words.first;
-    final phrase = token; // full lowercased collection name
+    // === Step 1: Punctuation strip + tokenize ===
+    // Replace all non-word chars (hyphens, exclamation, etc.) with space,
+    // then split on whitespace. "Spider-Man" → ["spider", "man"].
+    final cleanTokens = token
+        .replaceAll(RegExp(r'[^\w\s]'), ' ')
+        .split(RegExp(r'\s+'))
+        .where((w) => w.isNotEmpty)
+        .toList();
+    if (cleanTokens.isEmpty) return null;
+
+    // === Step 2: Stop-word filter ===
+    // Drop common English noise words. This prevents "the" from being
+    // the queryKey (which would match nearly every movie). For "Godzilla
+    // x Kong" the "x" is dropped, leaving ["godzilla", "kong"]. For
+    // "Lord of the Rings" the "of" and "the" are dropped, leaving
+    // ["lord", "rings"].
+    const stopWords = {
+      'the', 'of', 'and', 'a', 'an', 'in', 'or', 'x', 'vs', 'to',
+      'for', 'by', 'with', 'at', 'on', 'from',
+    };
+    var searchTokens = cleanTokens
+        .where((w) => !stopWords.contains(w))
+        .toList();
+    // Edge case: collection name is ALL stop words (e.g. "The X"). Fall
+    // back to original token list so we don't end up with an empty
+    // queryKey.
+    if (searchTokens.isEmpty) {
+      searchTokens = cleanTokens;
+    }
+
+    // === Step 3: Pick longest word as queryKey ===
+    // Longest word is the most specific → fewest false positives in the
+    // Firestore query. ["spider", "man"] → "spider" (length 6 > 3).
+    // ["godzilla", "kong"] → "godzilla" (length 8 > 4).
+    searchTokens.sort((a, b) => b.length.compareTo(a.length));
+    final queryKey = searchTokens.first;
+
+    // === Fuzzy normalization helper ===
+    // Strip ALL non-word chars → "spider-man" → "spiderman".
+    // Used for client-side phrase matching so punctuation differences
+    // between collection name and movie title don't break matches.
+    String normalize(String s) =>
+        s.toLowerCase().replaceAll(RegExp(r'[^\w]'), '');
+    final normalizedPhrase = normalize(token);
 
     try {
       Query query = _moviesRef
-          .where('search_keywords', arrayContains: firstWord);
+          .where('search_keywords', arrayContains: queryKey);
       if (typeFilter != null) {
         query = query.where('type', isEqualTo: typeFilter);
       }
-      // Over-fetch 3x — gives client-side phrase filter enough headroom.
-      // If filter ratio is poor (e.g. "iron" matches many non-"iron man"
-      // titles), user may see <limit movies on a page; they can scroll
-      // again to load more.
       query = query
           .orderBy('createdAt', descending: true)
           .limit(limit * 3);
@@ -1558,15 +1594,17 @@ class FirestoreContentService {
       final snapshot = await query.get();
       if (snapshot.docs.isEmpty) return null;
 
-      // === Client-side phrase filter ===
-      // For single-word collections this is a no-op (phrase == firstWord).
-      // For multi-word collections this keeps only movies whose title
-      // actually contains the full phrase (e.g. "iron man"), filtering
-      // out partial matches like "iron giant".
+      // === Client-side fuzzy phrase filter ===
+      // Normalize both sides: collection name "Spider-Man" → "spiderman",
+      // movie title "Spider-Man: Homecoming" → "spidermanhomecoming".
+      // Then check contains. This catches both "Spider Man" and
+      // "Spider-Man" spellings.
       final filteredDocs = snapshot.docs.where((doc) {
         final data = doc.data() as Map<String, dynamic>;
-        final titleLower = data['title_lowercase'] as String? ?? '';
-        return titleLower.contains(phrase);
+        final title = data['title']?.toString() ?? '';
+        final titleLower =
+            data['title_lowercase']?.toString() ?? title.toLowerCase();
+        return normalize(titleLower).contains(normalizedPhrase);
       }).toList();
 
       if (filteredDocs.isEmpty) return null;
@@ -1583,13 +1621,14 @@ class FirestoreContentService {
               ))
           .toList();
 
-      // Cursor: last SHOWN doc (not last fetched). This is critical for
-      // correct page 2+ pagination — see header comment above.
+      // Cursor: last SHOWN doc (preserved from Phase 4.10 — critical
+      // for correct page 2+ pagination with startAfterDocument).
       final lastDoc = pageDocs.isNotEmpty ? pageDocs.last : null;
 
-      debugPrint('Phase 4.10: collection "$collectionName" fallback — '
-          'fetched ${snapshot.docs.length} (firstWord="$firstWord"), '
-          'phrase-filtered to ${filteredDocs.length}, showing ${movies.length}, '
+      debugPrint('Phase 4.11 (Ultimate Hybrid): collection '
+          '"$collectionName" fallback — fetched ${snapshot.docs.length} '
+          '(queryKey="$queryKey"), fuzzy-filtered to '
+          '${filteredDocs.length}, showing ${movies.length}, '
           'hasMore=$hasMore');
 
       return {
@@ -1598,13 +1637,13 @@ class FirestoreContentService {
         'lastDoc': lastDoc,
       };
     } catch (e) {
-      debugPrint('Phase 4.10: hybrid fallback threw: $e — '
+      debugPrint('Phase 4.11: ultimate hybrid fallback threw: $e — '
           'trying without orderBy');
       // No-orderBy fallback (composite index missing on
       // search_keywords + type + createdAt).
       try {
         Query query = _moviesRef
-            .where('search_keywords', arrayContains: firstWord);
+            .where('search_keywords', arrayContains: queryKey);
         if (typeFilter != null) {
           query = query.where('type', isEqualTo: typeFilter);
         }
@@ -1619,8 +1658,10 @@ class FirestoreContentService {
 
         final filteredDocs = snapshot.docs.where((doc) {
           final data = doc.data() as Map<String, dynamic>;
-          final titleLower = data['title_lowercase'] as String? ?? '';
-          return titleLower.contains(phrase);
+          final title = data['title']?.toString() ?? '';
+          final titleLower =
+              data['title_lowercase']?.toString() ?? title.toLowerCase();
+          return normalize(titleLower).contains(normalizedPhrase);
         }).toList();
 
         if (filteredDocs.isEmpty) return null;
@@ -1650,8 +1691,8 @@ class FirestoreContentService {
 
         final lastDoc = pageDocs.isNotEmpty ? pageDocs.last : null;
 
-        debugPrint('Phase 4.10: search_keywords no-orderBy fallback — '
-            'fetched ${snapshot.docs.length}, phrase-filtered to '
+        debugPrint('Phase 4.11: search_keywords no-orderBy fallback — '
+            'fetched ${snapshot.docs.length}, fuzzy-filtered to '
             '${filteredDocs.length}, showing ${movies.length}');
 
         return {
@@ -1660,7 +1701,7 @@ class FirestoreContentService {
           'lastDoc': lastDoc,
         };
       } catch (e2) {
-        debugPrint('Phase 4.10: search_keywords no-orderBy fallback also failed: $e2');
+        debugPrint('Phase 4.11: search_keywords no-orderBy fallback also failed: $e2');
         return null;
       }
     }
