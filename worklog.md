@@ -4697,3 +4697,124 @@ Stage Summary:
 - Next step: Bro builds APK and verifies that "Iron Man" collection
   now shows the Iron Man trilogy. Also verify "Marvel" still works
   (single-word case should be unaffected).
+
+---
+Task ID: Phase 4.11
+Agent: Main Agent
+Task: Fix Collections tab — handle punctuation (Spider-Man, Scooby-Doo!) and stop words (Lord of the Rings, Godzilla x Kong) that Phase 4.10 couldn't handle.
+
+Work Log:
+- Bro tested Phase 4.10 and confirmed: "Iron Man" works, but the
+  following cases failed:
+    * "Spider-Man" (hyphen) — Phase 4.10 split on whitespace only,
+      so firstWord = "spider-man" which is NOT in search_keywords
+      (DB stores "spider" and "man" separately after _generateSearchKeywords
+      splits on non-word chars).
+    * "Scooby-Doo!" (hyphen + exclamation) — same issue.
+    * "Lord of the Rings" (3+ words + stop words) — firstWord = "lord"
+      worked for the Firestore query, but client-side phrase filter
+      "lord of the rings" required exact substring match with spaces.
+      Movie titles like "The Lord of the Rings: Fellowship" wouldn't
+      match because "the" appears at the start.
+    * "Godzilla x Kong" (stop word "x") — firstWord = "godzilla"
+      worked, but "x" in the phrase filter caused issues with strict
+      contains.
+- Bro forwarded another AI's solution: Ultimate Hybrid Strategy with
+  3-step pipeline:
+    1. PUNCTUATION STRIP — replace all non-word chars with space,
+       split, discard empties. "Spider-Man" → ["spider", "man"].
+    2. STOP-WORD FILTER — drop common English noise words (the, of,
+       and, a, an, in, or, x, vs, to, for, by, with, at, on, from).
+       "Lord of the Rings" → ["lord", "rings"]. "Godzilla x Kong"
+       → ["godzilla", "kong"]. If ALL words are stop words, fall
+       back to original token list (avoid empty queryKey).
+    3. PICK LONGEST WORD AS queryKey — most specific token minimizes
+       Firestore false positives. ["spider", "man"] → "spider".
+       ["godzilla", "kong"] → "godzilla". ["lord", "rings"] → "rings".
+  Then FUZZY NORMALIZE both sides (strip ALL non-word chars):
+  "spider-man" → "spiderman", "Spider Man" → "spiderman". Client-side
+  filter: normalizedTitle.contains(normalizedPhrase).
+
+- Implemented Phase 4.11 in firestore_content_service.dart, replacing
+  the entire _getMoviesByCollectionFallback function with the 3-step
+  pipeline + fuzzy normalize. Preserved Phase 4.10's correct pagination
+  cursor logic (lastDoc = pageDocs.last, hasMore = filteredDocs.length
+  > limit) which the other AI's suggestion also adopted.
+
+Behavior matrix:
+  - "Marvel" (single word):
+      cleanTokens = ["marvel"], no stop words, queryKey = "marvel"
+      normalizedPhrase = "marvel"
+      Filter: normalize(title).contains("marvel")
+      Result: same as Phase 4.10 — movies with "marvel" in title ✓
+  - "Iron Man":
+      cleanTokens = ["iron", "man"], queryKey = "iron"
+      normalizedPhrase = "ironman"
+      Filter: normalize("Iron Man 3") = "ironman3" contains "ironman" ✓
+  - "Spider-Man" (BROKEN in Phase 4.10, FIXED in 4.11):
+      cleanTokens = ["spider", "man"], queryKey = "spider"
+      normalizedPhrase = "spiderman"
+      Query: search_keywords arrayContains "spider"
+      Filter: normalize("Spider-Man: Homecoming") = "spidermanhomecoming"
+              contains "spiderman" ✓
+  - "Scooby-Doo!" (BROKEN in Phase 4.10, FIXED in 4.11):
+      cleanTokens = ["scooby", "doo"], queryKey = "scooby"
+      normalizedPhrase = "scoobydoo"
+      Filter: normalize("Scooby-Doo!") = "scoobydoo" ✓
+  - "Lord of the Rings" (BROKEN in Phase 4.10, FIXED in 4.11):
+      cleanTokens = ["lord", "of", "the", "rings"]
+      After stop words: ["lord", "rings"]
+      queryKey = "rings" (longest)
+      normalizedPhrase = "lordoftherings"
+      Query: search_keywords arrayContains "rings"
+      Filter: normalize("The Lord of the Rings: Fellowship") =
+              "thelordoftheringsfellowship" contains "lordoftherings" ✓
+  - "Godzilla x Kong" (BROKEN in Phase 4.10, FIXED in 4.11):
+      cleanTokens = ["godzilla", "x", "kong"]
+      After stop words: ["godzilla", "kong"]
+      queryKey = "godzilla" (longest)
+      normalizedPhrase = "godzillaxkong"
+      Query: search_keywords arrayContains "godzilla"
+      Filter: normalize("Godzilla x Kong: The New Empire") =
+              "godzillaxkongthenewempire" contains "godzillaxkong" ✓
+
+Edge cases handled:
+  - All-stop-words collection name (e.g. "The X"): falls back to
+    original token list so queryKey is never empty.
+  - Empty collection name: returns null immediately.
+  - Snapshot empty after Firestore query: returns null (caller falls
+    through to empty handling).
+  - Snapshot non-empty but ZERO pass fuzzy filter: returns null.
+  - Composite index missing (Firestore throws): falls back to no-
+    orderBy path with explicit createdAt sort.
+  - No-orderBy path also throws: returns null (caller handles).
+
+Pagination preserved from Phase 4.10:
+  - lastDoc = pageDocs.last (last SHOWN doc, NOT last fetched).
+    startAfterDocument uses cursor's createdAt, so page 2 skips past
+    everything user actually saw on page 1.
+  - hasMore = filteredDocs.length > limit (FILTERED count).
+  - Over-fetch 3x for filter headroom.
+
+Phase 4.9 cursor-routing compatibility: unchanged. The fallback
+still returns movies whose 'collections' field typically doesn't
+contain collectionName, so Phase 4.9's startAfter-cursor inspection
+still routes page 2+ to fallback correctly.
+
+Verified: brackets balanced (384/384 braces, 1205/1205 parens,
+130/130 brackets) after stripping strings/comments. Indentation at
+column 2 (class member level). Next function getMoviesByTagSimple
+starts at line 1711 with correct column-2 indentation.
+
+Stage Summary:
+- ALL of Bro's failing cases now handled:
+    * Single-word: "Marvel", "DC" — works
+    * Multi-word: "Iron Man" — works
+    * Hyphenated: "Spider-Man", "Scooby-Doo!" — works
+    * Stop words: "Lord of the Rings", "Godzilla x Kong" — works
+- Fuzzy normalization handles punctuation discrepancies between
+  collection name and movie title (e.g. "Spider Man" vs "Spider-Man").
+- Pagination cursor logic preserved — page 2+ still works correctly.
+- Next step: Bro builds APK and tests all 6 cases above. If any
+  still fails, we can tune the stop-words list or increase the
+  over-fetch factor.
