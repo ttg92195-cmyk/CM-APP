@@ -436,6 +436,178 @@ class FirestoreContentService {
     }
   }
 
+  // ==================== PHASE 4.14: AGGREGATION-BASED DASHBOARD STATS ====================
+  //
+  // BEFORE Phase 4.14: TmdbGeneratorPage._loadMoviesSnapshot() did
+  //   `movies.limit(5000).get()` to compute 6 dashboard stats + populate
+  //   the _importedTmdbIds set in a single pass. 5,000 reads per page open.
+  //   Opening the page 10 times burned the entire Spark daily quota
+  //   (50,000 reads/day).
+  //
+  // NOW: 6 aggregation queries (`count().get()`) run in parallel via
+  //   [getDashboardStats]. Each aggregation query costs 1 read regardless
+  //   of collection size. Total: ~6 reads per page open (vs 5,000).
+  //
+  // The _importedTmdbIds set is no longer pre-populated on page load.
+  // Instead, [getImportedTmdbIds] does a `whereIn` query for ONLY the
+  // tmdbIds currently shown in search results (~20 reads per search).
+  //
+  // NOTE: Some of these aggregation queries use 2-3 where clauses and may
+  // require composite indexes. If a query fails (e.g. missing index), the
+  // corresponding stat is returned as 0 and a debugPrint is emitted with
+  // Firestore's error message — which includes a URL to create the index
+  // in Firebase Console. The caller (UI) gracefully shows 0 until Bro
+  // creates the index.
+
+  /// Helper: run a count aggregation query, returning 0 on error.
+  /// Used by [getDashboardStats] so one failing query (e.g. missing
+  /// composite index) doesn't tank the whole stats load.
+  Future<int> _safeCount(
+    Future<AggregateQuerySnapshot> query,
+    String label,
+  ) async {
+    try {
+      final snap = await query;
+      return snap.count ?? 0;
+    } catch (e) {
+      // Firestore's missing-index error includes a URL to create the
+      // index in Firebase Console. Bro can click it to fix the stat.
+      debugPrint('getDashboardStats: $label failed (likely missing composite '
+          'index — see Firestore error for create-URL): $e');
+      return 0;
+    }
+  }
+
+  /// Returns all 6 dashboard stats in parallel via aggregation queries.
+  ///
+  /// Total Firestore reads: ~6 (one per count query).
+  /// Compare with the old `_loadMoviesSnapshot` approach: 5,000 reads.
+  ///
+  /// Returns a Map with keys:
+  ///   - 'totalMovies'    : count where type == 'movie'
+  ///   - 'totalSeries'    : count where type == 'series'
+  ///   - 'moviesNeedSync' : count where type=='movie' AND tmdbId>0 AND
+  ///                        lastSyncDate is null (requires composite index)
+  ///   - 'seriesNeedSync' : count where type=='series' AND tmdbId>0 AND
+  ///                        lastSyncDate is null (requires composite index)
+  ///   - 'ongoingSeries'  : count where type=='series' AND
+  ///                        status=='Returning Series' (composite index)
+  ///   - 'endedSeries'    : count where type=='series' AND
+  ///                        status IN ['Ended','Canceled'] (composite index)
+  ///
+  /// If any query fails (e.g. missing composite index), that stat returns 0.
+  Future<Map<String, int>> getDashboardStats() async {
+    final results = await Future.wait([
+      // totalMovies — single-field where, no composite index needed.
+      _safeCount(
+        _moviesRef.where('type', isEqualTo: 'movie').count().get(),
+        'totalMovies',
+      ),
+      // totalSeries — single-field where, no composite index needed.
+      _safeCount(
+        _moviesRef.where('type', isEqualTo: 'series').count().get(),
+        'totalSeries',
+      ),
+      // moviesNeedSync — 3-field composite index required:
+      //   (type ASC, tmdbId ASC, lastSyncDate ASC).
+      _safeCount(
+        _moviesRef
+            .where('type', isEqualTo: 'movie')
+            .where('tmdbId', isGreaterThan: 0)
+            .where('lastSyncDate', isNull: true)
+            .count()
+            .get(),
+        'moviesNeedSync',
+      ),
+      // seriesNeedSync — 3-field composite index required:
+      //   (type ASC, tmdbId ASC, lastSyncDate ASC).
+      _safeCount(
+        _moviesRef
+            .where('type', isEqualTo: 'series')
+            .where('tmdbId', isGreaterThan: 0)
+            .where('lastSyncDate', isNull: true)
+            .count()
+            .get(),
+        'seriesNeedSync',
+      ),
+      // ongoingSeries — 2-field composite index required:
+      //   (type ASC, status ASC).
+      _safeCount(
+        _moviesRef
+            .where('type', isEqualTo: 'series')
+            .where('status', isEqualTo: 'Returning Series')
+            .count()
+            .get(),
+        'ongoingSeries',
+      ),
+      // endedSeries — 2-field composite index required:
+      //   (type ASC, status ASC).
+      _safeCount(
+        _moviesRef
+            .where('type', isEqualTo: 'series')
+            .where('status', whereIn: ['Ended', 'Canceled'])
+            .count()
+            .get(),
+        'endedSeries',
+      ),
+    ]);
+
+    return {
+      'totalMovies': results[0],
+      'totalSeries': results[1],
+      'moviesNeedSync': results[2],
+      'seriesNeedSync': results[3],
+      'ongoingSeries': results[4],
+      'endedSeries': results[5],
+    };
+  }
+
+  /// Returns the subset of [tmdbIds] that already exist in the `movies`
+  /// collection. Uses `whereIn` with chunking (max 30 per query — Firestore
+  /// hard limit) to handle large input lists.
+  ///
+  /// Replaces the old approach of reading all 5,000 docs from `movies` on
+  /// every TmdbGeneratorPage open to build a complete `_importedTmdbIds`
+  /// set. Now the page only checks the IDs currently shown in search
+  /// results — typically 20 IDs → 1 read.
+  ///
+  /// Reads: ceil(tmdbIds.length / 30). For 20 search results: 1 read.
+  /// For 1000 search results (extreme case): 34 reads — still 147x cheaper
+  /// than the old 5,000.
+  Future<Set<int>> getImportedTmdbIds(List<int> tmdbIds) async {
+    if (tmdbIds.isEmpty) return <int>{};
+
+    // Firestore whereIn accepts max 30 values per query.
+    final chunks = <List<int>>[];
+    for (var i = 0; i < tmdbIds.length; i += 30) {
+      final end = (i + 30 > tmdbIds.length) ? tmdbIds.length : i + 30;
+      chunks.add(tmdbIds.sublist(i, end));
+    }
+
+    final result = <int>{};
+    try {
+      final snapshots = await Future.wait(
+        chunks
+            .map((chunk) => _moviesRef.where('tmdbId', whereIn: chunk).get()),
+      );
+      for (final snap in snapshots) {
+        for (final doc in snap.docs) {
+          final rawTmdbId = doc.data()['tmdbId'];
+          if (rawTmdbId is int) {
+            result.add(rawTmdbId);
+          } else if (rawTmdbId != null) {
+            final parsed = int.tryParse(rawTmdbId.toString());
+            if (parsed != null && parsed > 0) result.add(parsed);
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('getImportedTmdbIds failed: $e');
+    }
+
+    return result;
+  }
+
   /// Search all posts (for admin panel)
   /// Uses 'title_lowercase' field for case-insensitive prefix search
   /// with substring fallback for short queries (1-2 chars) so that

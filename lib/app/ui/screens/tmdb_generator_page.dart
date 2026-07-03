@@ -225,109 +225,114 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
   /// Bro reported Firebase usage rising from 4.4% → 19% in one week; this
   /// page was a major contributor since it's opened often during imports.
   ///
-  /// NOW: one query, one pass. _importedTmdbIds + all dashboard stats are
-  /// populated in the same setState. Callers that previously invoked
-  /// `_loadImportedTmdbIds(); _loadDashboardStats();` in pairs now call
-  /// `_loadMoviesSnapshot();` once.
+  /// Phase 4.10 (one-pass): combined the two queries into one
+  /// `movies.limit(5000).get()` to halve reads.
+  ///
+  /// =========================================================================
+  /// PHASE 4.14: AGGREGATION-BASED STATS (no more limit(5000).get())
+  /// =========================================================================
+  /// The Phase 4.10 fix still read up to 5,000 docs on every page open.
+  /// Opening the page 10 times burned the entire Spark plan daily quota
+  /// (50,000 reads/day). Bro forwarded another AI's analysis identifying
+  /// two hot spots:
+  ///
+  ///   1. `_loadMoviesSnapshot()` reads 5,000 docs every page open.
+  ///   2. `_importSelected()` calls `verifyAdmin()` per-movie inside the
+  ///      import loop (one read per movie — 50 movies = 50 redundant reads).
+  ///
+  /// FIX (this method): replace `limit(5000).get()` with 6 parallel
+  /// `count().get()` aggregation queries via `getDashboardStats()`. Each
+  /// aggregation costs 1 read regardless of collection size. Total: ~6
+  /// reads per page open (vs 5,000) — an 833x cost reduction.
+  ///
+  /// The `_importedTmdbIds` set is NO LONGER pre-populated here. Instead,
+  /// it's lazily refreshed per-search via `_refreshImportedTmdbIds()`,
+  /// which uses `whereIn` to check ONLY the IDs currently shown (typically
+  /// 20 IDs → 1 read per search). The import loop already had its own
+  /// `findByTmdbId()` per-item safety check (line ~539), so removing the
+  /// pre-populated set doesn't break import correctness — at worst, a few
+  /// already-imported items may appear in search results and get silently
+  /// skipped at import time.
+  ///
+  /// NOTE: Some aggregation queries use 2-3 where clauses and require
+  /// composite indexes. If a query fails (e.g. missing index), the
+  /// corresponding stat is returned as 0 and a debugPrint is emitted
+  /// with Firestore's error message (which includes a URL to create the
+  /// index in Firebase Console). The page gracefully shows 0 until Bro
+  /// creates the index. See FirestoreContentService._safeCount.
   ///
   /// Public aliases `_loadImportedTmdbIds()` and `_loadDashboardStats()`
   /// are kept as thin wrappers so external references (e.g., the refresh
-  /// button on line 1131) continue to work without code churn.
+  /// button on the dashboard) continue to work without code churn.
   /// =========================================================================
   Future<void> _loadMoviesSnapshot() async {
     if (mounted) setState(() => _isStatsLoading = true);
     try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('movies')
-          .limit(5000)
-          .get();
-
-      // Local accumulators — populated in a single pass.
-      final importedTmdbIds = <int>{};
-      int totalMovies = 0;
-      int totalSeries = 0;
-      int moviesNeedSync = 0;
-      int seriesNeedSync = 0;
-      int ongoingSeries = 0;
-      int endedSeries = 0;
-
-      for (final doc in snapshot.docs) {
-        final data = doc.data();
-        final rawTmdbId = data['tmdbId'];
-
-        // --- collect tmdbId for _importedTmdbIds ---
-        if (rawTmdbId != null) {
-          final tmdbId = rawTmdbId is int
-              ? rawTmdbId
-              : int.tryParse(rawTmdbId.toString());
-          if (tmdbId != null && tmdbId > 0) {
-            importedTmdbIds.add(tmdbId);
-          }
-        }
-
-        // --- compute dashboard stats ---
-        final type = data['type']?.toString();
-        if (type == 'movie') {
-          totalMovies++;
-          // Need sync: has tmdbId but no lastSyncDate
-          if (rawTmdbId != null && rawTmdbId is int && rawTmdbId > 0) {
-            if (!data.containsKey('lastSyncDate')) {
-              moviesNeedSync++;
-            }
-          }
-        } else if (type == 'series') {
-          totalSeries++;
-          // Need sync: has tmdbId but no lastSyncDate
-          if (rawTmdbId != null && rawTmdbId is int && rawTmdbId > 0) {
-            if (!data.containsKey('lastSyncDate')) {
-              seriesNeedSync++;
-            }
-          }
-          // Check series status
-          final status = data['status']?.toString() ?? '';
-          if (status == 'Returning Series') {
-            ongoingSeries++;
-          } else if (status == 'Ended' || status == 'Canceled') {
-            endedSeries++;
-          }
-        }
-      }
+      // 6 parallel count() aggregations — total ~6 reads (vs 5,000 before).
+      final stats = await _contentService.getDashboardStats();
 
       if (mounted) {
         setState(() {
-          _importedTmdbIds
-            ..clear()
-            ..addAll(importedTmdbIds);
-          _totalMovies = totalMovies;
-          _totalSeries = totalSeries;
-          _moviesNeedSync = moviesNeedSync;
-          _seriesNeedSync = seriesNeedSync;
-          _ongoingSeries = ongoingSeries;
-          _endedSeries = endedSeries;
-          _syncRemainingMovies = moviesNeedSync;
-          _syncRemainingSeries = seriesNeedSync;
+          _totalMovies = stats['totalMovies'] ?? 0;
+          _totalSeries = stats['totalSeries'] ?? 0;
+          _moviesNeedSync = stats['moviesNeedSync'] ?? 0;
+          _seriesNeedSync = stats['seriesNeedSync'] ?? 0;
+          _ongoingSeries = stats['ongoingSeries'] ?? 0;
+          _endedSeries = stats['endedSeries'] ?? 0;
+          _syncRemainingMovies = _moviesNeedSync;
+          _syncRemainingSeries = _seriesNeedSync;
           _isStatsLoading = false;
         });
-        debugPrint('Movies snapshot loaded: '
-            '${_importedTmdbIds.length} tmdbIds, '
-            '$totalMovies movies, $totalSeries series, '
-            '$moviesNeedSync movies need sync, $seriesNeedSync series need sync');
+        debugPrint('Dashboard stats loaded: '
+            '${stats['totalMovies']} movies, ${stats['totalSeries']} series, '
+            '${stats['moviesNeedSync']} movies need sync, '
+            '${stats['seriesNeedSync']} series need sync, '
+            '${stats['ongoingSeries']} ongoing, ${stats['endedSeries']} ended');
       }
     } catch (e) {
-      debugPrint('Error loading movies snapshot: $e');
+      debugPrint('Error loading dashboard stats: $e');
       if (mounted) {
         setState(() => _isStatsLoading = false);
       }
     }
   }
 
+  /// Phase 4.14: Lazy-fetch imported status for the given tmdbIds.
+  ///
+  /// Uses `whereIn` (chunked at 30 per Firestore hard limit) to check ONLY
+  /// the given IDs against the `movies` collection, instead of pre-fetching
+  /// all 5,000 imported IDs on page load. Merges results into the existing
+  /// `_importedTmdbIds` set (does not clear it — old IDs may still be
+  /// relevant for previous search selections).
+  ///
+  /// Reads: ceil(tmdbIds.length / 30). For 20 search results: 1 read.
+  /// Called from `_performSearch` and `_loadMorePages` after each TMDB
+  /// page returns, before the existing `!_importedTmdbIds.contains(id)`
+  /// filter runs.
+  Future<void> _refreshImportedTmdbIds(List<int> tmdbIdsToCheck) async {
+    if (tmdbIdsToCheck.isEmpty) return;
+    try {
+      final importedIds =
+          await _contentService.getImportedTmdbIds(tmdbIdsToCheck);
+      if (mounted) {
+        setState(() {
+          _importedTmdbIds.addAll(importedIds);
+        });
+      }
+    } catch (e) {
+      debugPrint('Error refreshing imported tmdbIds: $e');
+    }
+  }
+
   /// Thin wrapper kept for backward compatibility with existing call sites
-  /// (e.g. the refresh button on the dashboard). Always refreshes BOTH the
-  /// imported tmdbId set AND the dashboard stats in a single Firestore query.
+  /// (e.g. the refresh button on the dashboard). Phase 4.14: only refreshes
+  /// dashboard stats via aggregation (~6 reads). The `_importedTmdbIds` set
+  /// is no longer touched here — it's lazily refreshed per-search via
+  /// `_refreshImportedTmdbIds()`.
   Future<void> _loadImportedTmdbIds() => _loadMoviesSnapshot();
 
-  /// Thin wrapper kept for backward compatibility. Always refreshes BOTH
-  /// the imported tmdbId set AND the dashboard stats in a single query.
+  /// Thin wrapper kept for backward compatibility. Always refreshes
+  /// dashboard stats via aggregation (~6 reads).
   Future<void> _loadDashboardStats() => _loadMoviesSnapshot();
 
   // ==================== SEARCH & IMPORT ====================
@@ -378,6 +383,16 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
       }
 
       final rawResults = List<Map<String, dynamic>>.from(response['results'] ?? []);
+
+      // Phase 4.14: Lazy-fetch imported status for ONLY these search-result
+      // IDs (typically 20 → 1 Firestore read via `whereIn`), instead of
+      // pre-fetching all 5,000 imported IDs on page open. Merges into
+      // `_importedTmdbIds` so the filter below works correctly.
+      final rawTmdbIds = rawResults
+          .map((e) => e['id'])
+          .whereType<int>()
+          .toList();
+      await _refreshImportedTmdbIds(rawTmdbIds);
 
       final results = rawResults.where((item) {
         final id = item['id'];
@@ -444,6 +459,14 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
         }
 
         final rawMoreResults = List<Map<String, dynamic>>.from(response['results'] ?? []);
+
+        // Phase 4.14: Lazy-fetch imported status for this page's IDs too.
+        final moreRawTmdbIds = rawMoreResults
+            .map((e) => e['id'])
+            .whereType<int>()
+            .toList();
+        await _refreshImportedTmdbIds(moreRawTmdbIds);
+
         final moreResults = rawMoreResults.where((item) {
           final id = item['id'];
           return id == null || !_importedTmdbIds.contains(id);
@@ -513,6 +536,27 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
 
     if (confirmed != true) return;
 
+    // =========================================================================
+    // Phase 4.14: Verify admin ONCE before the loop, then pass
+    // `skipAdminCheck: true` to every `addMovie()` call inside the loop.
+    // BEFORE this fix, each `addMovie()` invocation triggered
+    // `_requireAdmin()` → `verifyAdmin()` → user-doc read. Importing 50
+    // movies wasted 50 redundant reads. Now: 1 read for the whole batch.
+    // =========================================================================
+    try {
+      await _contentService.verifyAdmin();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Admin verification failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
     setState(() {
       _isImporting = true;
       _importProgress = 0;
@@ -570,7 +614,8 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
 
         debugPrint('IMPORT: tmdbId=$tmdbId title=${firestoreData['title']} duration=${firestoreData['duration']}');
 
-        await _contentService.addMovie(firestoreData);
+        // Phase 4.14: skipAdminCheck:true — admin already verified above.
+        await _contentService.addMovie(firestoreData, skipAdminCheck: true);
 
         if (mounted) {
           setState(() {
