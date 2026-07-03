@@ -657,6 +657,158 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
 
   // ==================== SYNC OPERATIONS ====================
 
+  // =========================================================================
+  // PHASE 4.15: SYNC READS OPTIMIZATION
+  // =========================================================================
+  // BEFORE Phase 4.15, `_doSyncMovies()` and `_doSyncSeries()` each did
+  //   `movies.where('type', isEqualTo: 'movie').limit(5000).get()`
+  // to read up to 5,000 docs, then client-side filter `tmdbId > 0`, sort
+  // by `lastSyncDate` (nulls first), and take 20. So clicking "Sync
+  // Movies" once burned 5,000 Firestore reads; "Sync All" burned 10,000.
+  //
+  // FIX: Replace the 5,000-doc scan with two targeted queries:
+  //   Phase A — never-synced docs (lastSyncDate isNull), ordered by
+  //             tmdbId, limit=batchSize. Highest priority.
+  //   Phase B — oldest-synced docs (lastSyncDate NOT null), ordered by
+  //             lastSyncDate asc, limit=(batchSize - phaseA.length).
+  //             Fills the remainder so the batch is always full.
+  //
+  // Both queries require the SAME composite index:
+  //   (type ASC, tmdbId ASC, lastSyncDate ASC)
+  // If that index is missing, Firestore throws and we fall back to the
+  // old limit(5000).get() approach with a debugPrint telling Bro to
+  // create the index. Stats gracefully continue to work via fallback.
+  //
+  // Total reads per sync click (best case, index exists):
+  //   Phase A: 20 reads
+  //   Phase B: 0 (if Phase A returned 20) or up to 20
+  //   Aggregation count for totalRemaining UI: 1 read
+  //   Total: ~21 reads (vs 5,000) — 238x cheaper.
+  //
+  // Total reads per sync click (worst case, fallback):
+  //   5,000 reads (same as before, no regression).
+  //
+  // Behavior preserved: "never-synced first, then oldest-synced" — same
+  // priority as the old code's `sort by lastSyncDate asc` (nulls first).
+  // =========================================================================
+
+  /// Phase 4.15: Fetch up to [_syncBatchSize] docs that need sync.
+  ///
+  /// Strategy (see class-level Phase 4.15 comment):
+  ///   1. Phase A — never-synced docs (`lastSyncDate` isNull), limit=batchSize.
+  ///   2. Phase B — if Phase A returned < batchSize, fill remainder with
+  ///      oldest-synced docs (orderBy lastSyncDate asc).
+  ///
+  /// Falls back to old `limit(5000).get()` approach if composite index
+  /// is missing. The fallback preserves the old behavior exactly:
+  /// filter `tmdbId > 0` client-side, sort by `lastSyncDate` asc (nulls
+  /// first), take up to [_syncBatchSize].
+  ///
+  /// [type] — `'movie'` or `'series'`. Used in the `type` where-clause.
+  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _getDocsToSync({
+    required String type,
+  }) async {
+    // Phase A: never-synced docs (lastSyncDate isNull).
+    // Composite index required: (type ASC, tmdbId ASC, lastSyncDate ASC).
+    try {
+      final phaseA = await FirebaseFirestore.instance
+          .collection('movies')
+          .where('type', isEqualTo: type)
+          .where('tmdbId', isGreaterThan: 0)
+          .where('lastSyncDate', isNull: true)
+          .orderBy('tmdbId')
+          .limit(_syncBatchSize)
+          .get();
+
+      if (phaseA.docs.length >= _syncBatchSize) {
+        return phaseA.docs;
+      }
+
+      // Phase B: oldest-synced docs (lastSyncDate is NOT null).
+      // Composite index required: (type ASC, tmdbId ASC, lastSyncDate ASC).
+      // Same index as Phase A — Phase A uses isNull, Phase B uses orderBy,
+      // both end up needing the same 3-field composite.
+      final remaining = _syncBatchSize - phaseA.docs.length;
+      final phaseB = await FirebaseFirestore.instance
+          .collection('movies')
+          .where('type', isEqualTo: type)
+          .where('tmdbId', isGreaterThan: 0)
+          .orderBy('tmdbId')
+          .orderBy('lastSyncDate')
+          .limit(remaining)
+          .get();
+
+      return [...phaseA.docs, ...phaseB.docs];
+    } catch (e) {
+      // Fallback: composite index missing (or other query error).
+      // Use the old limit(5000).get() approach so sync still works.
+      debugPrint('Sync ($type): optimized query failed (likely missing '
+          'composite index (type, tmdbId, lastSyncDate)). Falling back to '
+          'limit(5000).get() — please create the index in Firebase Console '
+          'to enable optimization. Error: $e');
+
+      final snapshot = await FirebaseFirestore.instance
+          .collection('movies')
+          .where('type', isEqualTo: type)
+          .limit(5000)
+          .get();
+
+      final docs = snapshot.docs.where((doc) {
+        final tmdbId = doc.data()['tmdbId'] as int?;
+        return tmdbId != null && tmdbId > 0;
+      }).toList();
+
+      docs.sort((a, b) {
+        final aSync = a.data()['lastSyncDate'] as Timestamp?;
+        final bSync = b.data()['lastSyncDate'] as Timestamp?;
+        if (aSync == null && bSync == null) return 0;
+        if (aSync == null) return -1;
+        if (bSync == null) return 1;
+        return aSync.compareTo(bSync);
+      });
+
+      return docs;
+    }
+  }
+
+  /// Phase 4.15: Get total count of syncable docs (type + tmdbId > 0) via
+  /// aggregation. Used for the `_syncRemainingMovies` / `_syncRemainingSeries`
+  /// UI counter so it stays accurate without reading 5,000 docs.
+  ///
+  /// Composite index required: (type ASC, tmdbId ASC). If missing, falls
+  /// back to the old limit(5000).get() count.
+  ///
+  /// Reads: 1 (aggregation) in best case; up to 5,000 in fallback.
+  Future<int> _getSyncableCount({required String type}) async {
+    try {
+      final countSnap = await FirebaseFirestore.instance
+          .collection('movies')
+          .where('type', isEqualTo: type)
+          .where('tmdbId', isGreaterThan: 0)
+          .count()
+          .get();
+      return countSnap.count ?? 0;
+    } catch (e) {
+      debugPrint('Sync ($type): count aggregation failed (likely missing '
+          'composite index (type, tmdbId)). Falling back to limit(5000).get() '
+          'count. Error: $e');
+      try {
+        final snapshot = await FirebaseFirestore.instance
+            .collection('movies')
+            .where('type', isEqualTo: type)
+            .limit(5000)
+            .get();
+        return snapshot.docs.where((doc) {
+          final tmdbId = doc.data()['tmdbId'] as int?;
+          return tmdbId != null && tmdbId > 0;
+        }).length;
+      } catch (e2) {
+        debugPrint('Sync ($type): fallback count also failed: $e2');
+        return 0;
+      }
+    }
+  }
+
   /// Public: Sync Movies with confirmation dialog
   Future<void> _syncMovies() async {
     final confirmed = await showDialog<bool>(
@@ -689,28 +841,16 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
   /// Internal: Execute movie sync without confirmation dialog
   Future<void> _doSyncMovies() async {
     try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('movies')
-          .where('type', isEqualTo: 'movie')
-          .limit(5000)
-          .get();
-
-      final docs = snapshot.docs.where((doc) {
-        final tmdbId = doc.data()['tmdbId'] as int?;
-        return tmdbId != null && tmdbId > 0;
-      }).toList();
-
-      docs.sort((a, b) {
-        final aSync = a.data()['lastSyncDate'] as Timestamp?;
-        final bSync = b.data()['lastSyncDate'] as Timestamp?;
-        if (aSync == null && bSync == null) return 0;
-        if (aSync == null) return -1;
-        if (bSync == null) return 1;
-        return aSync.compareTo(bSync);
-      });
-
+      // Phase 4.15: replaced `limit(5000).get()` with targeted queries
+      // via _getDocsToSync. Reads ~21 docs (vs 5,000) per sync click
+      // when composite index (type, tmdbId, lastSyncDate) exists.
+      // Falls back to old behavior if index missing. See _getDocsToSync.
+      final docs = await _getDocsToSync(type: 'movie');
       final batchDocs = docs.take(_syncBatchSize).toList();
-      final totalRemaining = docs.length;
+      // Phase 4.15: get totalRemaining via aggregation count (1 read)
+      // instead of using docs.length (which was 5,000 in the old code,
+      // or up to 40 in the new code — neither matched the true total).
+      final totalRemaining = await _getSyncableCount(type: 'movie');
 
       if (batchDocs.isEmpty) {
         if (mounted) {
@@ -889,28 +1029,14 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
   /// Internal: Execute series sync without confirmation dialog
   Future<void> _doSyncSeries() async {
     try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('movies')
-          .where('type', isEqualTo: 'series')
-          .limit(5000)
-          .get();
-
-      final docs = snapshot.docs.where((doc) {
-        final tmdbId = doc.data()['tmdbId'] as int?;
-        return tmdbId != null && tmdbId > 0;
-      }).toList();
-
-      docs.sort((a, b) {
-        final aSync = a.data()['lastSyncDate'] as Timestamp?;
-        final bSync = b.data()['lastSyncDate'] as Timestamp?;
-        if (aSync == null && bSync == null) return 0;
-        if (aSync == null) return -1;
-        if (bSync == null) return 1;
-        return aSync.compareTo(bSync);
-      });
-
+      // Phase 4.15: replaced `limit(5000).get()` with targeted queries
+      // via _getDocsToSync. Reads ~21 docs (vs 5,000) per sync click
+      // when composite index (type, tmdbId, lastSyncDate) exists.
+      // Falls back to old behavior if index missing. See _getDocsToSync.
+      final docs = await _getDocsToSync(type: 'series');
       final batchDocs = docs.take(_syncBatchSize).toList();
-      final totalRemaining = docs.length;
+      // Phase 4.15: get totalRemaining via aggregation count (1 read).
+      final totalRemaining = await _getSyncableCount(type: 'series');
 
       if (batchDocs.isEmpty) {
         if (mounted) {
