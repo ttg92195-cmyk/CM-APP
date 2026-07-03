@@ -5017,3 +5017,187 @@ Stage Summary:
     3. Login again on phone A.
     4. Check Profile → device list should show ONE "Oppo A16" entry,
        not two.
+
+
+---
+Task ID: Phase 4.14
+Agent: Main Agent
+Task: Firestore Reads optimization for TmdbGeneratorPage — replace limit(5000).get() with aggregation queries + lazy whereIn tmdbId check; eliminate per-movie admin verification in _importSelected() loop.
+
+Work Log:
+- Bro forwarded another AI's analysis identifying two Firestore
+  read-cost hot spots on the TMDB Generator page:
+
+  1. `_loadMoviesSnapshot()` did `movies.limit(5000).get()` on every
+     page open — read up to 5,000 docs to compute 6 dashboard stats
+     + populate the `_importedTmdbIds` set in one pass. Opening the
+     page 10 times burned the entire Spark plan daily quota
+     (50,000 reads/day).
+
+  2. `_importSelected()` called `_contentService.addMovie(...)` in a
+     loop, and `addMovie` internally called `_requireAdmin()` →
+     `verifyAdmin()` → user-doc Firestore read on EVERY iteration.
+     Importing 50 movies wasted 50 redundant admin-verification
+     reads. The infrastructure to skip this already existed
+     (`skipAdminCheck: true` parameter on `addMovie`, used by
+     `BatchImportService`), but the page wasn't using it.
+
+- FIX 1 (this commit) — skipAdminCheck in _importSelected:
+  Added an `await _contentService.verifyAdmin()` call ONCE before
+  the import for-loop (with try/catch + SnackBar on failure), then
+  passed `skipAdminCheck: true` to every `addMovie()` call inside
+  the loop. 50 movies → 1 admin read (vs 50).
+
+- FIX 2 (this commit) — aggregation-based dashboard stats:
+  Rewrote `_loadMoviesSnapshot()` to call the new
+  `FirestoreContentService.getDashboardStats()` method, which runs
+  6 parallel `count().get()` aggregation queries:
+    * totalMovies       — where type=movie
+    * totalSeries       — where type=series
+    * moviesNeedSync    — where type=movie AND tmdbId>0 AND
+                          lastSyncDate isNull
+    * seriesNeedSync    — where type=series AND tmdbId>0 AND
+                          lastSyncDate isNull
+    * ongoingSeries     — where type=series AND
+                          status='Returning Series'
+    * endedSeries       — where type=series AND
+                          status IN ['Ended','Canceled']
+
+  Each aggregation costs exactly 1 Firestore read regardless of
+  collection size. Total per page open: ~6 reads (vs 5,000). That's
+  an 833x cost reduction.
+
+- FIX 2b — lazy whereIn for _importedTmdbIds:
+  The old code pre-populated `_importedTmdbIds` with ALL imported
+  tmdbIds (up to 5,000) on page load, so the search filter
+  `!_importedTmdbIds.contains(id)` could hide already-imported
+  items from search results with zero extra reads at search time.
+  Removing this pre-population (necessary for the aggregation fix)
+  would break the search filter.
+
+  Solution: added `_refreshImportedTmdbIds(List<int> tmdbIds)`
+  method on the page + `getImportedTmdbIds(List<int> tmdbIds)`
+  method on FirestoreContentService. After each TMDB search page
+  returns, we extract the ~20 result IDs and call
+  `getImportedTmdbIds` which does a `whereIn` query (chunked at
+  30 per Firestore hard limit). Only the IDs actually shown are
+  checked — 1 read per search (vs 5,000 on page load).
+
+  The set is merged (addAll), not cleared, so previous search
+  selections remain valid. The import loop's existing
+  `findByTmdbId()` per-item safety check (line ~583) catches any
+  items that slip through (e.g. user imports while set is stale).
+
+- Composite index handling:
+  Some aggregation queries use 2-3 where clauses (e.g. type + tmdbId
+  + lastSyncDate) and require composite indexes that Firestore does
+  NOT auto-create. If a query fails (missing index), the helper
+  `_safeCount` catches the error and returns 0, then logs a
+  debugPrint with Firestore's full error message — which INCLUDES
+  a clickable URL to create the index in Firebase Console.
+
+  So the page gracefully shows 0 for any stat whose composite index
+  doesn't exist yet. Bro can run the app, see which stats show 0,
+  check the debug console for the create-index URL, click it, and
+  the stat starts working immediately. No code changes needed.
+
+  Composite indexes Bro may need to create in Firebase Console:
+    * (type ASC, tmdbId ASC, lastSyncDate ASC) — for moviesNeedSync,
+      seriesNeedSync
+    * (type ASC, status ASC) — for ongoingSeries, endedSeries
+
+  Single-field indexes (for totalMovies, totalSeries) are
+  auto-created by Firestore — no action needed.
+
+Files modified:
+  * lib/app/core/services/firestore_content_service.dart
+    - Added _safeCount helper
+    - Added getDashboardStats() — 6 parallel count() aggregations
+    - Added getImportedTmdbIds() — chunked whereIn query
+
+  * lib/app/ui/screens/tmdb_generator_page.dart
+    - Rewrote _loadMoviesSnapshot() — calls getDashboardStats()
+    - Added _refreshImportedTmdbIds() — lazy whereIn for search results
+    - Updated _performSearch() — calls _refreshImportedTmdbIds before
+      the existing !_importedTmdbIds.contains filter
+    - Updated _loadMorePages() — same lazy refresh per page
+    - Updated _importSelected() — verifyAdmin() ONCE before loop,
+      passes skipAdminCheck:true to addMovie()
+
+What did NOT change (intentionally):
+  * `_doSyncMovies()` and `_doSyncSeries()` still use
+    `.limit(5000).get()` — same anti-pattern as the old
+    _loadMoviesSnapshot. The other AI's analysis didn't call these
+    out, and fixing them requires either (a) composite indexes or
+    (b) a different sync-strategy design. Deferred to a future phase
+    if Bro wants. Each sync click costs ~5,000 reads today.
+
+  * The existing `findByTmdbId()` per-item check inside the import
+    loop is preserved — it's a safety net that catches already-
+    imported items even if `_importedTmdbIds` is stale.
+
+  * The Phase 4.10 one-pass query docstring is preserved at the top
+    of `_loadMoviesSnapshot` for historical context.
+
+Behavior matrix:
+  - Page open (no search):
+      BEFORE: 5,000 reads (limit(5000).get)
+      AFTER:  ~6 reads (6 parallel count() aggregations)
+      Improvement: 833x cheaper.
+
+  - Search (20 results):
+      BEFORE: 0 extra reads (used pre-populated set)
+      AFTER: 1 read (whereIn for 20 IDs)
+      Trade-off: +1 read per search, but -5,000 reads per page open.
+      Net: huge win for the common case (page open >> search count).
+
+  - Search (1000 results, _postLimit=1000):
+      BEFORE: 0 extra reads (pre-populated set covered everything)
+      AFTER: 34 reads (ceil(1000/30) whereIn chunks)
+      Trade-off: +34 reads for the extreme case. Still 147x cheaper
+      than the old 5,000 per page open.
+
+  - Import 50 movies:
+      BEFORE: 50 admin-verification reads (one per addMovie call)
+      AFTER: 1 admin-verification read (verifyAdmin before loop)
+      Improvement: 50x cheaper.
+
+  - Dashboard refresh button:
+      Same as page open — 6 reads (vs 5,000).
+
+  - Sync Movies/Series click:
+      UNCHANGED — still 5,000 reads. (Deferred to future phase.)
+
+Total estimated daily reads (typical admin session):
+  BEFORE: 10 page opens × 5,000 + 1 import × 50 + 2 syncs × 5,000
+        = 60,050 reads/day
+  AFTER:  10 page opens × 6 + 5 searches × 1 + 1 import × 1 + 2 syncs × 5,000
+        = 10,066 reads/day
+  Reduction: ~83% (10,066 vs 60,050)
+
+  If sync is also optimized in a future phase:
+        = 66 reads/day
+  Reduction: ~99.9% (66 vs 60,050)
+
+Stage Summary:
+- TMDB Generator page now uses ~6 Firestore reads per open instead
+  of 5,000. The Spark plan daily quota (50,000 reads) now lasts
+  ~833x longer for this page.
+- Import loop no longer wastes 1 admin-verification read per movie.
+- The `_importedTmdbIds` set is lazily populated per-search via
+  whereIn (typically 1 read per search) instead of pre-fetched all
+  at once.
+- Composite indexes needed for full stats: Bro creates them via
+  the URLs in Firestore's error messages (debugPrint). Stats
+  gracefully show 0 until then.
+- Next step: Bro builds APK and tests:
+    1. Open TMDB Generator page → dashboard stats should display
+       (totalMovies, totalSeries will work immediately; needSync,
+       ongoing, ended may show 0 until composite indexes created).
+    2. Search for a movie → results should hide already-imported
+       items (same behavior as before).
+    3. Import 5-10 movies → should succeed with no admin errors.
+    4. Check Firebase Console → Firestore reads should be drastically
+       lower than before for the same session activity.
+    5. (Optional) Create composite indexes in Firebase Console using
+       URLs from debugPrint to enable needSync/ongoing/ended stats.
