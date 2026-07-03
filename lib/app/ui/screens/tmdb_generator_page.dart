@@ -692,25 +692,40 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
   // priority as the old code's `sort by lastSyncDate asc` (nulls first).
   // =========================================================================
 
-  /// Phase 4.15: Fetch up to [_syncBatchSize] docs that need sync.
+  /// Phase 4.15: Fetch up to [_syncBatchSize] docs that need sync,
+  /// ALONG WITH the total count of syncable docs (for the UI counter).
+  ///
+  /// Returns a record `({docs, totalCount})`:
+  ///   - `docs` — up to [_syncBatchSize] docs to sync this batch.
+  ///   - `totalCount` — total count of syncable docs (type + tmdbId > 0),
+  ///     used for the `_syncRemainingMovies` / `_syncRemainingSeries` UI counter.
   ///
   /// Strategy (see class-level Phase 4.15 comment):
   ///   1. Phase A — never-synced docs (`lastSyncDate` isNull), limit=batchSize.
   ///   2. Phase B — if Phase A returned < batchSize, fill remainder with
   ///      oldest-synced docs (orderBy lastSyncDate asc).
+  ///   3. Count — via aggregation (1 read).
   ///
   /// Falls back to old `limit(5000).get()` approach if composite index
-  /// is missing. The fallback preserves the old behavior exactly:
-  /// filter `tmdbId > 0` client-side, sort by `lastSyncDate` asc (nulls
-  /// first), take up to [_syncBatchSize].
+  /// is missing. The fallback reads ONE snapshot and uses it for BOTH
+  /// the docs list AND the total count — so the fallback costs the same
+  /// as before Phase 4.15 (5,000 reads), NOT 2x.
   ///
   /// [type] — `'movie'` or `'series'`. Used in the `type` where-clause.
-  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _getDocsToSync({
+  Future<({
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+    int totalCount,
+  })> _getDocsToSyncWithCount({
     required String type,
   }) async {
-    // Phase A: never-synced docs (lastSyncDate isNull).
-    // Composite index required: (type ASC, tmdbId ASC, lastSyncDate ASC).
+    // Optimized path: Phase A + Phase B + aggregation count.
+    // Required composite indexes:
+    //   - (type ASC, tmdbId ASC, lastSyncDate ASC) for Phase A + B
+    //   - (type ASC, tmdbId ASC) for count aggregation
+    //   (In practice, the first index often covers the second via prefix
+    //   matching, but Firestore may require both explicitly.)
     try {
+      // Phase A: never-synced docs (lastSyncDate isNull).
       final phaseA = await FirebaseFirestore.instance
           .collection('movies')
           .where('type', isEqualTo: type)
@@ -720,28 +735,57 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
           .limit(_syncBatchSize)
           .get();
 
+      final List<QueryDocumentSnapshot<Map<String, dynamic>>> docs;
       if (phaseA.docs.length >= _syncBatchSize) {
-        return phaseA.docs;
+        docs = phaseA.docs;
+      } else {
+        // Phase B: oldest-synced docs (orderBy lastSyncDate asc).
+        final remaining = _syncBatchSize - phaseA.docs.length;
+        final phaseB = await FirebaseFirestore.instance
+            .collection('movies')
+            .where('type', isEqualTo: type)
+            .where('tmdbId', isGreaterThan: 0)
+            .orderBy('tmdbId')
+            .orderBy('lastSyncDate')
+            .limit(remaining)
+            .get();
+        docs = [...phaseA.docs, ...phaseB.docs];
       }
 
-      // Phase B: oldest-synced docs (lastSyncDate is NOT null).
-      // Composite index required: (type ASC, tmdbId ASC, lastSyncDate ASC).
-      // Same index as Phase A — Phase A uses isNull, Phase B uses orderBy,
-      // both end up needing the same 3-field composite.
-      final remaining = _syncBatchSize - phaseA.docs.length;
-      final phaseB = await FirebaseFirestore.instance
-          .collection('movies')
-          .where('type', isEqualTo: type)
-          .where('tmdbId', isGreaterThan: 0)
-          .orderBy('tmdbId')
-          .orderBy('lastSyncDate')
-          .limit(remaining)
-          .get();
+      // Count via aggregation (1 read). Separate try/catch so a missing
+      // (type, tmdbId) index doesn't tank the docs fetch — we fall
+      // through to the outer catch's limit(5000) fallback only if the
+      // DOCS query itself fails.
+      int totalCount;
+      try {
+        final countSnap = await FirebaseFirestore.instance
+            .collection('movies')
+            .where('type', isEqualTo: type)
+            .where('tmdbId', isGreaterThan: 0)
+            .count()
+            .get();
+        totalCount = countSnap.count ?? 0;
+      } catch (eCount) {
+        // Count aggregation failed (likely missing (type, tmdbId) index).
+        // We already have the optimized docs — just compute a lower-bound
+        // count from what we have. Not perfectly accurate, but avoids
+        // burning 5,000 extra reads on a fallback. The dashboard refresh
+        // at end of sync will eventually get the accurate count via
+        // _loadMoviesSnapshot's aggregation queries.
+        debugPrint('Sync ($type): count aggregation failed (likely missing '
+            'composite index (type, tmdbId)). Using lower-bound count from '
+            'fetched docs. Create the index for accurate count. Error: $eCount');
+        // Lower bound: at least as many as we fetched (Phase A + Phase B).
+        // Could be much higher in reality, but this avoids the 2x regression.
+        totalCount = docs.length;
+      }
 
-      return [...phaseA.docs, ...phaseB.docs];
+      return (docs: docs, totalCount: totalCount);
     } catch (e) {
-      // Fallback: composite index missing (or other query error).
-      // Use the old limit(5000).get() approach so sync still works.
+      // Fallback: composite index for docs query is missing.
+      // Use the old limit(5000).get() approach. Read ONE snapshot and
+      // use it for BOTH docs AND count — so this fallback costs the
+      // same as before Phase 4.15 (5,000 reads), NOT 2x.
       debugPrint('Sync ($type): optimized query failed (likely missing '
           'composite index (type, tmdbId, lastSyncDate)). Falling back to '
           'limit(5000).get() — please create the index in Firebase Console '
@@ -767,45 +811,8 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
         return aSync.compareTo(bSync);
       });
 
-      return docs;
-    }
-  }
-
-  /// Phase 4.15: Get total count of syncable docs (type + tmdbId > 0) via
-  /// aggregation. Used for the `_syncRemainingMovies` / `_syncRemainingSeries`
-  /// UI counter so it stays accurate without reading 5,000 docs.
-  ///
-  /// Composite index required: (type ASC, tmdbId ASC). If missing, falls
-  /// back to the old limit(5000).get() count.
-  ///
-  /// Reads: 1 (aggregation) in best case; up to 5,000 in fallback.
-  Future<int> _getSyncableCount({required String type}) async {
-    try {
-      final countSnap = await FirebaseFirestore.instance
-          .collection('movies')
-          .where('type', isEqualTo: type)
-          .where('tmdbId', isGreaterThan: 0)
-          .count()
-          .get();
-      return countSnap.count ?? 0;
-    } catch (e) {
-      debugPrint('Sync ($type): count aggregation failed (likely missing '
-          'composite index (type, tmdbId)). Falling back to limit(5000).get() '
-          'count. Error: $e');
-      try {
-        final snapshot = await FirebaseFirestore.instance
-            .collection('movies')
-            .where('type', isEqualTo: type)
-            .limit(5000)
-            .get();
-        return snapshot.docs.where((doc) {
-          final tmdbId = doc.data()['tmdbId'] as int?;
-          return tmdbId != null && tmdbId > 0;
-        }).length;
-      } catch (e2) {
-        debugPrint('Sync ($type): fallback count also failed: $e2');
-        return 0;
-      }
+      // Reuse the same snapshot for the count — no extra reads.
+      return (docs: docs, totalCount: docs.length);
     }
   }
 
@@ -842,15 +849,13 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
   Future<void> _doSyncMovies() async {
     try {
       // Phase 4.15: replaced `limit(5000).get()` with targeted queries
-      // via _getDocsToSync. Reads ~21 docs (vs 5,000) per sync click
-      // when composite index (type, tmdbId, lastSyncDate) exists.
-      // Falls back to old behavior if index missing. See _getDocsToSync.
-      final docs = await _getDocsToSync(type: 'movie');
+      // via _getDocsToSyncWithCount. Reads ~21 docs (vs 5,000) per sync
+      // click when composite index (type, tmdbId, lastSyncDate) exists.
+      // Falls back to old behavior if index missing. See helper doc.
+      final result = await _getDocsToSyncWithCount(type: 'movie');
+      final docs = result.docs;
       final batchDocs = docs.take(_syncBatchSize).toList();
-      // Phase 4.15: get totalRemaining via aggregation count (1 read)
-      // instead of using docs.length (which was 5,000 in the old code,
-      // or up to 40 in the new code — neither matched the true total).
-      final totalRemaining = await _getSyncableCount(type: 'movie');
+      final totalRemaining = result.totalCount;
 
       if (batchDocs.isEmpty) {
         if (mounted) {
@@ -1030,13 +1035,13 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
   Future<void> _doSyncSeries() async {
     try {
       // Phase 4.15: replaced `limit(5000).get()` with targeted queries
-      // via _getDocsToSync. Reads ~21 docs (vs 5,000) per sync click
-      // when composite index (type, tmdbId, lastSyncDate) exists.
-      // Falls back to old behavior if index missing. See _getDocsToSync.
-      final docs = await _getDocsToSync(type: 'series');
+      // via _getDocsToSyncWithCount. Reads ~21 docs (vs 5,000) per sync
+      // click when composite index (type, tmdbId, lastSyncDate) exists.
+      // Falls back to old behavior if index missing. See helper doc.
+      final result = await _getDocsToSyncWithCount(type: 'series');
+      final docs = result.docs;
       final batchDocs = docs.take(_syncBatchSize).toList();
-      // Phase 4.15: get totalRemaining via aggregation count (1 read).
-      final totalRemaining = await _getSyncableCount(type: 'series');
+      final totalRemaining = result.totalCount;
 
       if (batchDocs.isEmpty) {
         if (mounted) {
