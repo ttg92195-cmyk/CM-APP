@@ -399,6 +399,46 @@ class DeviceManagementService {
           );
         }
 
+        // === Phase 4.13 — Smart Deduplication (same device name) ===
+        // HISTORY: When a user reinstalls the app (or updates it) on the
+        // SAME physical phone, Android's ANDROID_ID is stable across
+        // reinstalls — but our fallback UUID path (used when the
+        // MethodChannel call fails or on iOS where identifierForVendor
+        // is null) generates a FRESH UUID on each reinstall. This caused
+        // the "Oppo A16" clone bug: the same phone appeared TWICE in the
+        // device list, once with the old UUID and once with the new one.
+        //
+        // FIX: If deviceId doesn't match but deviceName DOES match an
+        // existing entry, overwrite that entry in-place with the new
+        // device's info (new ID, fresh login time). This keeps the
+        // device count stable (no clone) and refreshes the stale entry.
+        //
+        // EDGE CASE — two distinct phones with the same model name
+        // (e.g. two "Oppo A16" phones owned by the same user): the
+        // second phone would overwrite the first. This is acceptable
+        // because (a) it's rare for a single user to own two identical
+        // models, (b) the device-limit feature's purpose is to limit
+        // DISTINCT physical phones, and (c) the alternative (treating
+        // them as separate) would let users bypass the limit by
+        // clearing app data on the same phone. The trade-off favors
+        // preventing clone-bypass over supporting the rare 2-same-model
+        // case.
+        final sameNameIndex = devicesList
+            .indexWhere((d) => d['deviceName'] == currentDevice.deviceName);
+        if (sameNameIndex >= 0) {
+          devicesList[sameNameIndex] = currentDevice.toMap();
+          tx.update(userDocRef, {'logged_in_devices': devicesList});
+          final parsed = devicesList
+              .map((e) => DeviceInfo.fromMap(e))
+              .toList();
+          return DeviceLimitResult(
+            allowed: true,
+            maxDevices: maxDevices,
+            currentDevices: devicesList.length,
+            devices: parsed,
+          );
+        }
+
         // Admin bypasses limit.
         if (isAdmin) {
           devicesList.add(currentDevice.toMap());
