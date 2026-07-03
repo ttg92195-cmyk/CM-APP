@@ -592,7 +592,12 @@ class FirestoreContentService {
       );
       for (final snap in snapshots) {
         for (final doc in snap.docs) {
-          final rawTmdbId = doc.data()['tmdbId'];
+          // _moviesRef is an untyped CollectionReference, so doc.data()
+          // returns Object? — must cast to Map<String, dynamic>? before
+          // indexing. Same pattern used elsewhere in this file (e.g. line
+          // ~2023 in addMovie: existingByTmdbId.data() as Map<String, dynamic>).
+          final data = doc.data() as Map<String, dynamic>?;
+          final rawTmdbId = data?['tmdbId'];
           if (rawTmdbId is int) {
             result.add(rawTmdbId);
           } else if (rawTmdbId != null) {
