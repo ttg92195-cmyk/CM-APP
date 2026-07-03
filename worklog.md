@@ -5201,3 +5201,48 @@ Stage Summary:
        lower than before for the same session activity.
     5. (Optional) Create composite indexes in Firebase Console using
        URLs from debugPrint to enable needSync/ongoing/ended stats.
+
+
+---
+Task ID: Phase 4.14-hotfix1
+Agent: Main Agent
+Task: Fix build failure — doc.data()['tmdbId'] compile error in getImportedTmdbIds.
+
+Work Log:
+- Bro ran the GitHub Actions build after Phase 4.14 and got:
+    lib/app/core/services/firestore_content_service.dart:595:39:
+    Error: The operator '[]' isn't defined for the class 'Object?'.
+              final rawTmdbId = doc.data()['tmdbId'];
+
+- Root cause: `_moviesRef` in FirestoreContentService is declared as
+    CollectionReference get _moviesRef => _firestore.collection('movies');
+  Without a generic type parameter, this is `CollectionReference<dynamic>`,
+  so `QuerySnapshot.docs[i].data()` returns `Object?` (dynamic). The
+  `[]` operator is not defined on `Object?`.
+
+  This is in contrast to calls like
+    FirebaseFirestore.instance.collection('movies').get()
+  which returns `CollectionReference<Map<String, dynamic>>` (typed),
+  so `doc.data()['tmdbId']` works fine there. The two existing
+  `doc.data()['tmdbId']` usages in tmdb_generator_page.dart
+  (_doSyncMovies line 699, _doSyncSeries line 899) are unaffected
+  because they use the typed API directly.
+
+- Fix: cast `doc.data()` to `Map<String, dynamic>?` before indexing:
+    final data = doc.data() as Map<String, dynamic>?;
+    final rawTmdbId = data?['tmdbId'];
+
+  Same pattern already used elsewhere in this file (e.g. line ~2023
+  in addMovie: `existingByTmdbId.data() as Map<String, dynamic>`).
+
+- Other AI suggested using `if (data is Map<String, dynamic>)` type
+  check with a `doc.get('tmdbId')` fallback. That's overly defensive
+  — the `movies` collection always stores Maps, and the simple cast
+  is consistent with the rest of the codebase. Went with the simple
+  cast.
+
+- Verified: brace/paren/bracket balance = 0/0/0 after fix.
+
+Stage Summary:
+- Build error fixed. Pushed as commit 5460ed5.
+- Next step: Bro re-runs the GitHub Actions build. Should pass now.
