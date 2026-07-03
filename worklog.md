@@ -4921,3 +4921,99 @@ Stage Summary:
 - To extend: Bro adds new universe entries to _universeKeywords Map.
 - Next step: Bro builds APK and tests all 7 universe collections +
   verifies non-universe collections still work.
+
+---
+Task ID: Phase 4.13
+Agent: Main Agent
+Task: Fix "Oppo A16" clone bug — when a user reinstalls/updates the app on the SAME phone, the device appeared TWICE in the Profile device list (one stale entry + one fresh entry).
+
+Work Log:
+- Root cause: Android's ANDROID_ID is stable across app reinstalls, so
+  the deviceId check (existingIndex >= 0) usually catches reinstalls
+  on the same phone. BUT two paths generate a FRESH deviceId on each
+  install:
+    1. Android fallback UUID (when MethodChannel call fails) — generated
+       via _generateFallbackDeviceId and persisted to SharedPreferences.
+       SharedPreferences is wiped on app uninstall, so a fresh UUID is
+       generated on reinstall → deviceId changes → existingIndex = -1.
+    2. iOS fallback UUID (when identifierForVendor is null) — same
+       SharedPreferences issue.
+  So a user with no real ANDROID_ID (or on iOS with null ifv) who
+  reinstalls the app would appear as a NEW device, even though it's
+  the same physical phone. The device list would show:
+    [0] Oppo A16 (old UUID, stale loginTime)
+    [1] Oppo A16 (new UUID, fresh loginTime)
+  This is confusing for users and wastes a device-limit slot.
+
+- Bro forwarded another AI's solution: Phase 4.13 Smart Deduplication.
+  If deviceId doesn't match BUT deviceName does match an existing
+  entry, overwrite that entry in-place with the new device's info.
+
+- Implemented Phase 4.13 in device_management_service.dart:
+  Added a new block AFTER the existing deviceId check and BEFORE the
+  admin bypass. The block:
+    * Finds the index of any existing device with the same deviceName.
+    * If found, replaces that entry with the current device's full
+      info (new deviceId + fresh loginTime).
+    * Writes via tx.update (atomic transaction).
+    * Returns DeviceLimitResult(allowed=true) without incrementing
+      the device count (since we replaced, not added).
+
+  The new block sits BEFORE the admin bypass and limit check, so:
+    * Same-name dedup applies to admins too (admins shouldn't have
+      clones either).
+    * Same-name dedup bypasses the device limit (since we're replacing,
+      not adding — the count stays the same).
+
+- EDGE CASE considered: two DISTINCT physical phones with the same
+  model name (e.g. two "Oppo A16" phones owned by the same user).
+  The second phone would overwrite the first. This is acceptable
+  because:
+    (a) It's rare for a single user to own two identical models.
+    (b) The device-limit feature's purpose is to limit DISTINCT
+        physical phones, not model names.
+    (c) The alternative (treating same-name phones as separate) would
+        let users bypass the limit by clearing app data on the same
+        phone — generating fresh UUIDs infinitely.
+  The trade-off favors preventing clone-bypass over supporting the
+  rare 2-same-model case. Documented in code comment.
+
+Behavior matrix:
+  - Same phone, same ANDROID_ID, reinstall:
+      deviceId matches → existingIndex >= 0 → refresh in place.
+      (Phase 4.13 block NOT reached — handled by existing code.)
+  - Same phone, fallback UUID, reinstall:
+      deviceId DIFFERS (new UUID), deviceName matches → Phase 4.13
+      block overwrites the old entry. No clone. ✓
+  - Different phone, different model:
+      deviceId differs, deviceName differs → falls through to admin
+      bypass / limit check / add new device. Normal flow. ✓
+  - Different phone, SAME model (e.g. two Oppo A16):
+      deviceId differs, deviceName matches → Phase 4.13 block
+      overwrites the first phone's entry. Second phone replaces first.
+      (Documented trade-off — see code comment.)
+
+Phase 4.6 compatibility: unchanged. The Phase 4.6 self-create-doc
+branch (when !userDoc.exists) runs before the deviceId/name checks,
+so new users still get a fresh doc with the current device.
+
+Atomicity: still inside the same Firestore transaction. If another
+concurrent login modified the user doc between our read and write,
+Firestore retries the whole transaction — so the same-name check is
+always evaluated against the freshest device list.
+
+Verified: brackets balanced (60/60 braces, 183/183 parens, 27/27
+brackets) after stripping strings/comments. New block sits at column 8
+(inside the transaction callback), correctly indented.
+
+Stage Summary:
+- Reinstalling/updating the app on the same phone no longer creates
+  a clone entry in the Profile device list. The old entry is replaced
+  in-place with the new deviceId + fresh loginTime.
+- Device-limit slots are no longer wasted by stale clone entries.
+- Next step: Bro builds APK and tests by:
+    1. Login on phone A (e.g. Oppo A16).
+    2. Uninstall + reinstall app on phone A.
+    3. Login again on phone A.
+    4. Check Profile → device list should show ONE "Oppo A16" entry,
+       not two.
