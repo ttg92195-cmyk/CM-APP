@@ -5495,3 +5495,25 @@ Stage Summary:
 - Commit: `9b2312b` on main, pushed to origin.
 - Risk: Low — the 416 handler runs BEFORE the existing cancel/stall/network-retry logic, so existing error paths are unchanged. Only 416 responses take the new path.
 - Next: Bro to test by retrying a download that previously hit the 416 loop.
+
+---
+Task ID: phase-4.16.1
+Agent: Main Agent
+Task: Review 3 download_manager_service.dart bug claims from another AI; apply only the valid one.
+
+Work Log:
+- Verified latest commit on GitHub main: `9b2312b` (Phase 4.16).
+- Read `startDownload()` (lines 841-940) and `_isValidDownloadUrl()` (lines 1625-1655) to verify each of the 3 claims.
+- Claim #1 (Race Condition): Reviewed UI call sites (`download_page.dart:615` resume button, `download_page.dart:957` retry button). Both buttons only appear in `isPaused` / `isFailed` states — downloading state has no trigger button. Existing guard at line 846 (`if (task.status == DownloadStatus.downloading) return;`) is synchronous. The proposed patch would also break the path-fixing logic at lines 850-860 because it shifts `_activeDownloadCount++` and status update before the path correction. Verdict: NOT a real bug — rejected.
+- Claim #2 (Crash resume): Read the resume logic at lines 937-948. The code requires BOTH `downloadedBytes > 0` AND `file.exists()` to resume; otherwise falls through to `startByte = 0`. `FileMode.write` (line 1009) correctly overwrites stale partial files. The proposed fix (use file size directly) would resume from corrupt partials and re-trigger the 416 loop just fixed in Phase 4.16. Verdict: NOT a real bug — rejected.
+- Claim #3 (URL `contains` -> `endsWith`): Verified. `lastSegment.contains(ext)` at line 1643 returns true for non-media filenames like `movie.mp4.bak` or `.mp4trash`, allowing URL-validation bypass. The proposed `endsWith` is correct and doesn't break legitimate media URLs (pathSegments strips query strings, so `file.mp4?token=xxx` → lastSegment=`file.mp4` → `endsWith('.mp4')` = true). Verdict: REAL bug — applied.
+- Applied fix: changed `contains(ext)` to `endsWith(ext)` at line 1643, added Phase 4.16.1 comment explaining the rationale.
+- Verified brace balance: 289 open = 289 close (no change from Phase 4.16).
+- Committed as `8222147` and pushed to GitHub main.
+
+Stage Summary:
+- 1 of 3 claims was a real bug; applied that one only.
+- Files modified: `lib/app/core/services/download_manager_service.dart` (+5 lines, -1 deletion).
+- Commit: `8222147` on main, pushed to origin.
+- Risk: Very low — `endsWith` is strictly stricter than `contains`. Any URL that matched `contains` AND was a real media URL also matches `endsWith`. Only false positives (non-media URLs) lose their match, which is the intended behavior.
+- Next: Bro can either test the download flow, or move on to the next deferred item (Light Mode / Video Player Icon).
