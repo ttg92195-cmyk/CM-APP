@@ -5467,3 +5467,31 @@ Stage Summary:
   Sync All buttons. Watch debugPrint for missing-index warnings —
   click the URLs in the error messages to create composite indexes
   in Firebase Console.
+
+---
+Task ID: phase-4.16
+Agent: Main Agent
+Task: Phase 4.16 — Fix Infinite 416 Loop Bug in download_manager_service.dart
+
+Work Log:
+- Read `/home/z/my-project/cm-app/lib/app/core/services/download_manager_service.dart` to verify the bug claim from another AI.
+- Confirmed the bug exists by tracing the actual code flow:
+  - Line 937 in `startDownload()`: `if (currentTask.downloadedBytes > 0 && await file.exists())` triggers `Range: bytes=N-` header.
+  - Line 973: `validateStatus` only accepts 200/206, so 416 throws `DioException` with `type: badResponse`.
+  - Line 1141 `on DioException catch (e)`: catch block set status=failed with message "Resume not supported. Will restart download." but did NOT reset `downloadedBytes` to 0 or delete the partial file.
+  - Line 1340 `retryDownload()`: comment "Reset error state but keep downloadedBytes for resume" — explicitly preserved the stale `downloadedBytes`.
+  - On retry, `startDownload()` re-entered line 937 condition (downloadedBytes > 0 + file exists) → sent the same Range request → got 416 again → INFINITE LOOP.
+  - User could only escape by uninstalling + reinstalling the app.
+- Applied fix at the top of `on DioException catch (e)` block (before `CancelToken.isCancel(e)` check), so 416 is handled as a server-response issue, not a transport issue.
+- Fix: when `e.response?.statusCode == 416`, reset `progress=0.0`, `downloadedBytes=0`, `totalBytes=null`, delete the partial file, show clearer error message "Tap retry to restart download from beginning.", save + notify + return early.
+- Verified brace balance (289 open = 289 close) and confirmed imports (`dart:io` for `File`) were already present.
+- Used `eCleanup` as catch variable to avoid shadowing the outer `e`.
+- Committed as `9b2312b` and pushed to GitHub main.
+
+Stage Summary:
+- Bug: Real and confirmed. The error message "Will restart download" was misleading — no auto-restart code existed.
+- Fix: 43-line addition to `download_manager_service.dart`. Single-file, single-concern change.
+- Files modified: `lib/app/core/services/download_manager_service.dart` (+43 lines, 0 deletions).
+- Commit: `9b2312b` on main, pushed to origin.
+- Risk: Low — the 416 handler runs BEFORE the existing cancel/stall/network-retry logic, so existing error paths are unchanged. Only 416 responses take the new path.
+- Next: Bro to test by retrying a download that previously hit the 416 loop.
