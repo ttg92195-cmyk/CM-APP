@@ -1142,6 +1142,49 @@ class DownloadManagerService extends ChangeNotifier {
         final idx = _tasks.indexWhere((t) => t.id == taskId);
         if (idx == -1) return;
 
+        // === PHASE 4.16: 416 Range Not Satisfiable — break infinite loop ===
+        //
+        // BUG (before this fix): When a partial download fails and the user
+        // taps Retry, startDownload() sees downloadedBytes > 0 + partial file
+        // exists, so it sends `Range: bytes=N-` to resume. If the server
+        // rejects that range (e.g., partial file is corrupt, server file
+        // changed, or server doesn't support the range), it returns 416.
+        // The old catch block set status=failed with message "Resume not
+        // supported. Will restart download." but DID NOT reset
+        // downloadedBytes to 0 or delete the partial file. So the next
+        // Retry sent the same Range request → same 416 → infinite loop.
+        // The user could only escape by uninstalling+reinstalling the app.
+        //
+        // FIX: On 416, reset progress to 0, delete the partial file, and
+        // tell the user to tap Retry (which will now start fresh from byte
+        // 0 because downloadedBytes=0 and file is gone).
+        if (e.response?.statusCode == 416) {
+          debugPrint('Phase 4.16: 416 Range Not Satisfiable for $taskId — '
+              'resetting progress to 0 and deleting partial file');
+          _tasks[idx] = _tasks[idx].copyWith(
+            status: DownloadStatus.failed,
+            errorMessage: 'Resume not supported. Tap retry to restart download from beginning.',
+            progress: 0.0,
+            downloadedBytes: 0,
+            totalBytes: null,
+            speedBytesPerSec: 0.0,
+            etaSeconds: null,
+          );
+          try {
+            final file = File(_tasks[idx].savePath);
+            if (await file.exists()) {
+              await file.delete();
+            }
+          } catch (eCleanup) {
+            debugPrint('Phase 4.16: failed to delete partial file for $taskId '
+                '(non-fatal): $eCleanup');
+          }
+          await _saveTasks();
+          notifyListeners();
+          DownloadNotificationService.instance.showDownloadFailed(_tasks[idx]);
+          return;
+        }
+
         if (CancelToken.isCancel(e)) {
           // Check if user explicitly paused (via _pausedByUser flag or cancel reason)
           final reason = e.message ?? (e.error?.toString() ?? '');
