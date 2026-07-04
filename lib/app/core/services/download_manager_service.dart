@@ -1637,10 +1637,14 @@ class DownloadManagerService extends ChangeNotifier {
       for (final ext in _mediaExtensions) {
         if (pathLower.endsWith(ext)) return true;
         // Handle URLs with query params after extension, e.g. file.mp4?token=xxx
+        // Phase 4.16.1: Use endsWith instead of contains to avoid false positives.
+        //   contains('.mp4') would match 'movie.mp4.bak' or '.mp4trash', allowing
+        //   attackers to bypass the media-URL check with non-media filenames.
+        //   endsWith ensures the segment actually terminates with the extension.
         final pathSegments = uri.pathSegments;
         if (pathSegments.isNotEmpty) {
           final lastSegment = pathSegments.last.toLowerCase();
-          if (lastSegment.contains(ext)) return true;
+          if (lastSegment.endsWith(ext)) return true;
         }
       }
 
