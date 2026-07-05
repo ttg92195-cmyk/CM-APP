@@ -5598,3 +5598,43 @@ Stage Summary:
 - Files modified: `lib/app/ui/components/device_limit_dialog.dart` (lines 192-209 modified, +5 net lines including comment).
 - Risk: Very low. Pure UI-disable logic, no behavior change for single-delete flow. After fix: only one delete can be in-flight at a time; user must wait for current deletion to complete before starting another.
 - Next: Bro to build & test locally — open device limit dialog, start deleting one device, verify other delete buttons become disabled (grey, non-clickable) until first deletion completes.
+
+---
+Task ID: 4.20
+Agent: Main Agent
+Task: Verify and fix the two Logical Bugs claimed by another AI in `download_notification_banner.dart`:
+  (1) Swipe-to-Dismiss immediately undone by 250ms progress updates re-setting _dismissed=false
+  (2) Dead AnimationController consuming CPU/battery — _progressAnimController.forward(from:0.0) called on every progress change but its .value is never read by any widget
+
+Work Log:
+- Located file: `/home/z/my-project/cm-app/lib/app/ui/components/download_notification_banner.dart`
+- Read the file end-to-end (590 lines).
+- Verified Bug 1 claim against actual code:
+  - Line 130: `onDismissed: (_) { setState(() => _dismissed = true); }` — swipe sets _dismissed=true.
+  - Line 54: `if (downloadingTasks.isNotEmpty && _dismissed) { setState(() => _dismissed = false); }` — every progress tick (250ms from download_manager_service) immediately re-shows the banner.
+  - Conclusion: AI's claim is **VALID**. Real UX bug.
+- Verified Bug 2 claim against actual code:
+  - Lines 27, 33-36: `_progressAnimController` instantiated with `SingleTickerProviderStateMixin`.
+  - Line 63: `_progressAnimController.forward(from: 0.0)` called on every progress change.
+  - Lines 333-338: `LinearProgressIndicator(value: aggregateProgress.clamp(0.0, 1.0), ...)` — uses `aggregateProgress` directly, NOT `_progressAnimController.value`.
+  - Confirmed via Grep: `_progressAnimController` only appears at lines 27, 33, 44, 63 — never in a widget's `value:` or `animation:` property.
+  - Conclusion: AI's claim is **VALID**. Dead code, real CPU/battery waste.
+- Applied both fixes in one MultiEdit:
+  1. Removed `with SingleTickerProviderStateMixin` from class declaration.
+  2. Replaced `late AnimationController _progressAnimController;` and `double _previousProgress = 0.0;` with `int _previousTaskCount = 0;` (only the count tracker is needed for the dismiss logic).
+  3. Removed `_progressAnimController = AnimationController(...)` from initState.
+  4. Removed `_progressAnimController.dispose();` from dispose.
+  5. Rewrote `_onDownloadManagerUpdate`: now checks `if (downloadingTasks.length > _previousTaskCount && _dismissed)` before resetting `_dismissed = false`. Updates `_previousTaskCount` at end of method.
+- Did NOT include AI'suggested full code rewrite — kept the change minimal and surgical, preserving all other existing logic (addListener, build method, _buildBanner, _buildDownloadIcon, helpers, DownloadMiniIndicator class).
+- Added Burmese inline comments explaining the smart-fix rationale.
+- Verified: no remaining references to `_progressAnimController` or `_previousProgress` or `SingleTickerProviderStateMixin` in the file.
+- Committed as `f1db833` and pushed to GitHub main.
+
+Stage Summary:
+- Issues: both real and confirmed.
+- Files modified: `lib/app/ui/components/download_notification_banner.dart` (+11 lines, -20 deletions, net -9 lines).
+- Commit: `f1db833` on main, pushed to origin.
+- Risk: Low.
+  - Bug 1 fix: behavior change — banner will no longer auto-resurrect on progress updates. User must start a NEW download (task count increases) to bring it back. This matches the AI's intended UX and is the correct fix.
+  - Bug 2 fix: pure dead-code removal. No UI behavior change since the controller's value was never read.
+- Next: Bro to test — start a download, swipe-dismiss the banner, confirm it does NOT immediately reappear; only starts a new download should bring it back.
