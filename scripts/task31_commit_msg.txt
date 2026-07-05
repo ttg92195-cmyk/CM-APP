@@ -1,0 +1,55 @@
+fix(detail+search,Task31): re-imported movies crash detail page + unsearchable
+
+Root cause analysis (3 bugs found, all fixed in this commit):
+
+BUG 1 - 'An Error Occurred' on movie detail page
+  MovieDetail.fromMap used unsafe `as` casts. When a Batch Import JSON
+  file updated an existing movie (via addMovie -> _buildSafeUpdateMap),
+  fields like `casts` got coerced to List<String>. But MovieDetail.fromMap
+  expected `casts` to be List<Map<String, dynamic>> for CastMember. So
+  opening the detail page of any re-imported movie threw, showing the
+  'An Error Occurred' fallback UI. Same issue for isAdult (int vs bool),
+  tmdbId (int vs string), isTrending (bool vs int), and nested lists.
+
+  FIX: Rewrite MovieDetail.fromMap with defensive helpers that NEVER
+  throw. Mirrors the same approach already used in Movie.fromMap (Task
+  27).
+
+BUG 2 - casts field written to Firestore in wrong shape
+  _buildSafeUpdateMap ran _coerceToStringList on `casts`, producing a
+  List<String>. That was written to Firestore successfully, but
+  MovieDetail.fromMap (and CastMember.fromMap) expected List<Map>.
+  This was the WRITE-SIDE cause of Bug 1.
+
+  FIX: Add _coerceToCastMaps helper that produces a proper
+  List<Map<String, dynamic>> in CastMember shape. Applied to both the
+  update path (_buildSafeUpdateMap) and the create path (addMovie
+  new-doc branch).
+
+BUG 3 - Search can't find re-imported movies with new titles
+  _tmdbUpdateFields did not include `search_keywords`. When a Batch
+  Import JSON file updated an existing movie with a new title, `title`
+  and `title_lowercase` got overwritten, but `search_keywords` was NOT
+  updated. Home Search uses `search_keywords arrayContains` as one of
+  its main query strategies; with stale tokens, searches for the new
+  title found nothing.
+
+  FIX: Add `search_keywords` to _tmdbUpdateFields AND synthesize it
+  from `title` in _buildSafeUpdateMap.
+
+Bro-reported symptom: 'Obsession 2026' was re-imported via Batch Import
+on top of an older post. After import, the movie became unsearchable
+in Admin Panel + Home Search (by exact name), showed 'An Error Occurred'
+when opened via the Thriller genre chip path, and the user could only
+delete it via Task 30's My Posts tab. All three bugs combined to make
+re-imported movies look like 'Error Posts' that exist in Firestore but
+are unreachable by normal browse/search paths.
+
+Files changed:
+  - lib/app/core/models/movie_detail.dart
+      Defensive parsing in fromMap (helpers added at file bottom)
+  - lib/app/core/services/firestore_content_service.dart
+      _coerceToCastMaps helper (companion to _coerceToStringList)
+      casts field uses _coerceToCastMaps in both create + update paths
+      search_keywords added to _tmdbUpdateFields
+      _buildSafeUpdateMap synthesizes search_keywords from title

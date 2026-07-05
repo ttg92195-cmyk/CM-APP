@@ -1,0 +1,173 @@
+{
+  "movies": [
+    {
+      "title": "Obsession 2026",
+      "year": "2026",
+      "poster": "https://image.tmdb.org/t/p/w500/xxxxx.jpg",
+      "overview": "A short synopsis of the movie.",
+      "type": "movie",
+      "tmdbId": 1234567,
+      "categories": ["Thriller", "Drama"],
+
+      "resolution": "4K / 1080p / 720p",
+      "fileSize": "4 GB / 3 GB / 1.5 GB",
+      "format": "MKV / MP4",
+
+      "downloadLinks": [
+        {
+          "serverName": "Server 1 (4K)",
+          "url": "https://example.com/download/obsession-4k.mkv",
+          "size": "4 GB",
+          "quality": "4K",
+          "fileName": "Obsession.2026.4K.mkv"
+        },
+        {
+          "serverName": "Server 1 (1080p)",
+          "url": "https://example.com/download/obsession-1080p.mp4",
+          "size": "3 GB",
+          "quality": "1080p",
+          "fileName": "Obsession.2026.1080p.mp4"
+        },
+        {
+          "serverName": "Server 2 (720p)",
+          "url": "https://example.com/download/obsession-720p.mp4",
+          "size": "1.5 GB",
+          "quality": "720p",
+          "fileName": "Obsession.2026.720p.mp4"
+        }
+      ],
+
+      "watchLinks": [
+        {
+          "serverName": "Player 1 (1080p)",
+          "url": "https://example.com/embed/obsession-1080p",
+          "size": "3 GB",
+          "quality": "1080p"
+        },
+        {
+          "serverName": "Player 2 (720p)",
+          "url": "https://example.com/embed/obsession-720p",
+          "size": "1.5 GB",
+          "quality": "720p"
+        }
+      ],
+
+      "seasons": []
+    },
+
+    {
+      "title": "Single Quality Example",
+      "year": "2025",
+      "poster": "https://image.tmdb.org/t/p/w500/single.jpg",
+      "overview": "Single-quality example.",
+      "type": "movie",
+      "tmdbId": 7654321,
+      "categories": ["Action"],
+
+      "resolution": "1080p",
+      "fileSize": "2 GB",
+      "format": "MP4",
+
+      "downloadLinks": [
+        {
+          "serverName": "Main Server",
+          "url": "https://example.com/download/single.mp4",
+          "size": "2 GB",
+          "quality": "1080p"
+        }
+      ],
+
+      "watchLinks": [
+        {
+          "serverName": "Stream",
+          "url": "https://example.com/embed/single",
+          "quality": "1080p"
+        }
+      ],
+
+      "seasons": []
+    },
+
+    {
+      "title": "Series Example",
+      "year": "2025",
+      "poster": "https://image.tmdb.org/t/p/w500/series.jpg",
+      "overview": "A series example with one season and three episodes.",
+      "type": "series",
+      "tmdbId": 9999999,
+      "categories": ["Drama", "Mystery"],
+
+      "resolution": "1080p",
+      "fileSize": "",
+      "format": "",
+
+      "downloadLinks": [],
+      "watchLinks": [],
+
+      "seasons": [
+        {
+          "name": "Season 1",
+          "episodes": [
+            {
+              "name": "Episode 1",
+              "videoUrl": "https://example.com/embed/s1e1",
+              "downloadLinks": [
+                {
+                  "serverName": "Server 1",
+                  "url": "https://example.com/download/s1e1.mp4",
+                  "size": "800 MB",
+                  "quality": "1080p"
+                }
+              ],
+              "watchLinks": [
+                {
+                  "serverName": "Player 1",
+                  "url": "https://example.com/embed/s1e1",
+                  "quality": "1080p"
+                }
+              ]
+            },
+            {
+              "name": "Episode 2",
+              "videoUrl": "https://example.com/embed/s1e2",
+              "downloadLinks": [
+                {
+                  "serverName": "Server 1",
+                  "url": "https://example.com/download/s1e2.mp4",
+                  "size": "750 MB",
+                  "quality": "1080p"
+                }
+              ],
+              "watchLinks": [
+                {
+                  "serverName": "Player 1",
+                  "url": "https://example.com/embed/s1e2",
+                  "quality": "1080p"
+                }
+              ]
+            },
+            {
+              "name": "Episode 3",
+              "videoUrl": "https://example.com/embed/s1e3",
+              "downloadLinks": [
+                {
+                  "serverName": "Server 1",
+                  "url": "https://example.com/download/s1e3.mp4",
+                  "size": "820 MB",
+                  "quality": "1080p"
+                }
+              ],
+              "watchLinks": [
+                {
+                  "serverName": "Player 1",
+                  "url": "https://example.com/embed/s1e3",
+                  "quality": "1080p"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

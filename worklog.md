@@ -5517,3 +5517,32 @@ Stage Summary:
 - Commit: `8222147` on main, pushed to origin.
 - Risk: Very low — `endsWith` is strictly stricter than `contains`. Any URL that matched `contains` AND was a real media URL also matches `endsWith`. Only false positives (non-media URLs) lose their match, which is the intended behavior.
 - Next: Bro can either test the download flow, or move on to the next deferred item (Light Mode / Video Player Icon).
+
+---
+Task ID: phase-4.17
+Agent: Main Agent
+Task: Phase 4.17 — Download notification tap navigates to Downloads screen + UX cleanup.
+
+Work Log:
+- Verified latest commit on GitHub main: `8222147` (Phase 4.16.1).
+- Read full `download_notification_service.dart` (389 lines).
+- Reviewed another AI's 3-step proposal:
+  1. AppConfig.navigatorKey → REJECTED. navigatorKey already exists as a global in `fcm_notification_service.dart` line 10 (verified via grep). main.dart imports it (line 21) and uses it at line 619. Adding AppConfig.navigatorKey would create a redundant second key.
+  2. pushNamed('/downloads') → REJECTED. main.dart routes table (line 643-648) only declares '/movie-detail'. The rest of the codebase uses push(MaterialPageRoute(...)) for DownloadPage (home_page.dart:343, movie_download_screen.dart:140, series_download_screen.dart:135). Followed existing convention.
+  3. payload: 'downloads' + remove auto-cancel Future.delayed → ACCEPTED. Both are real UX improvements.
+- Applied MultiEdit with 6 changes to download_notification_service.dart:
+  - Added 3 imports (flutter/material.dart, fcm_notification_service.dart show navigatorKey, download_page.dart).
+  - Rewrote _onNotificationTapped: if payload == 'downloads', push DownloadPage via navigatorKey.currentState. Includes null-check on currentState for the early-startup edge case.
+  - Added payload: 'downloads' to all 4 show() call sites (showDownloadStarted, updateDownloadProgress, showDownloadCompleted, showDownloadFailed).
+  - Removed 5-second auto-cancel Future.delayed from showDownloadCompleted.
+  - Removed 10-second auto-cancel Future.delayed from showDownloadFailed.
+- Verified: brace balance 47=47, payload count = 4 (matches 4 show() call sites), no live Future.delayed calls remaining (only 2 textual mentions in comments).
+- Committed as `6865b6d` and pushed to GitHub main.
+
+Stage Summary:
+- Feature: Download notification tap now opens Downloads screen.
+- UX cleanup: completion/failure notifications no longer auto-dismiss — users have time to tap them.
+- Files modified: `lib/app/core/services/download_notification_service.dart` (+41 lines, -17 deletions).
+- Commit: `6865b6d` on main, pushed to origin.
+- Risk: Low. navigatorKey.currentState null-check guards the early-startup case. DownloadPage is a normal StatelessWidget push, consistent with all other call sites in the codebase. No behavior change for users who don't tap notifications.
+- Next: Bro can test by starting a download, minimizing the app, and tapping the notification — should open the Downloads screen.
