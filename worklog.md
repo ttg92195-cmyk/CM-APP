@@ -5638,3 +5638,38 @@ Stage Summary:
   - Bug 1 fix: behavior change — banner will no longer auto-resurrect on progress updates. User must start a NEW download (task count increases) to bring it back. This matches the AI's intended UX and is the correct fix.
   - Bug 2 fix: pure dead-code removal. No UI behavior change since the controller's value was never read.
 - Next: Bro to test — start a download, swipe-dismiss the banner, confirm it does NOT immediately reappear; only starts a new download should bring it back.
+
+---
+Task ID: 4.21
+Agent: Main Agent
+Task: Add an "Edited" badge + "Edited X ago" text to posts in the Admin Panel Tab so admins can see at a glance which posts have been edited. Scope: Option A — Admin Panel only (not My Posts, not MovieCard).
+
+Work Log:
+- Pulled latest from GitHub main (no changes, already up-to-date).
+- Used Explore subagent to map post data model + edit flow + existing badge patterns:
+  - Post model = `Movie` class in `lib/app/core/models/movie.dart`.
+  - Fields `createdAt` (line 18) and `updatedAt` (line 19) BOTH already exist.
+  - `updateMovie` in `firestore_content_service.dart` line 2665 sets `updatedAt = FieldValue.serverTimestamp()` and does NOT touch `createdAt`. So `updatedAt > createdAt` is a reliable edit signal.
+  - Admin Panel list item is `_buildPostListItem` in `admin_panel_page.dart` (line 1028).
+  - Existing badge pattern at line 1131-1159: Container with horizontal:6, vertical:2 padding, borderRadius:4, color.withOpacity(0.2) bg + solid color text, fontSize 9, fontWeight bold. 6px SizedBox spacing between badges.
+  - Existing timeAgo display at line 1124-1127 (year • rating • timeAgo row).
+- Decision: derive edit state from existing `updatedAt`/`createdAt` fields. NO new Firestore field added (zero migration cost).
+- Modified `lib/app/core/models/movie.dart`:
+  - Added `bool get wasEdited` after the existing `timeAgo` getter (line 144).
+    - Returns false if updatedAt is null.
+    - Returns true if createdAt is null but updatedAt is not.
+    - Otherwise compares: `updatedAt.difference(createdAt) > Duration(seconds: 1)` — the 1-second threshold avoids false-positives when both fields are set by `FieldValue.serverTimestamp()` on the same write.
+  - Added `String get editedAgo` (line 152). Returns empty string if not edited, otherwise mirrors the same time-ago formatting as `timeAgo` ("Edited 3h ago", "Edited 1 day ago", "Edited just now", etc.).
+- Modified `lib/app/ui/screens/admin_panel_page.dart`:
+  - EDITED badge (line 1158-1176): inserted after MOVIE/SERIES badge, gated by `if (post.wasEdited)`. Uses `Color(0xFFFF6D00)` (amber/orange) — distinct from red TRENDING and blue/green type badges. Identical Container/BoxDecoration/Text style to existing badges for visual consistency.
+  - "Edited X ago" text (line 1128-1139): appended to the year/rating/timeAgo row, gated by `if (post.wasEdited && post.editedAgo.isNotEmpty)`. Orange italic text to differentiate from gray timeAgo. Prefixed with bullet (' • ') to match row separator convention.
+- Did NOT modify My Posts tab (`tmdb_generator_page.dart`) or `MovieCard` — keeping scope minimal per Bro's Option A choice.
+- Committed as `c471f51` and pushed to GitHub main.
+
+Stage Summary:
+- Feature: Admin Panel Tab now shows EDITED badge + "Edited X ago" text for any post whose `updatedAt > createdAt` by more than 1 second.
+- Files modified: `lib/app/core/models/movie.dart` (+34 lines), `lib/app/ui/screens/admin_panel_page.dart` (+30 lines).
+- Commit: `c471f51` on main, pushed to origin.
+- Risk: Very low. Pure additive UI. No Firestore schema change. No new API calls. Existing posts without `updatedAt` will simply not show the badge (wasEdited returns false).
+- Backward compat: Old posts created before `updatedAt` was added (if any) → wasEdited returns false → no badge shown. Safe.
+- Next: Bro to test — open Admin Panel, edit a post via the edit icon, save, return to list. The edited post should now show orange EDITED badge + italic "Edited just now"/"Edited X min ago" text.
