@@ -137,6 +137,39 @@ class Movie {
       return 'Just now';
     }
   }
+
+  /// Phase 4.21 — Post ကို admin ပြင်လိုက်ပြီလား (updatedAt > createdAt)။
+  /// updatedAt နဲ့ createdAt နှစ်ခုလုံး server timestamp ဖြစ်တဲ့အတွက်
+  /// ၁ စက္ကန့်ထက်ကွာတာမှ edited အဖြစ် သတ်မှတ်ပါမယ် (false positive ကာကွယ်)။
+  bool get wasEdited {
+    if (updatedAt == null) return false;
+    if (createdAt == null) return true;
+    return updatedAt!.difference(createdAt!) > const Duration(seconds: 1);
+  }
+
+  /// Phase 4.21 — "Edited 3h ago" စာသား။ edited မဖြစ်ရင် ဆိုင်ရာ display ကို
+  /// ချန်ထားဖို့ empty string ပြန်ပါတယ်။
+  String get editedAgo {
+    if (!wasEdited || updatedAt == null) return '';
+    final now = DateTime.now();
+    final diff = now.difference(updatedAt!);
+
+    if (diff.inDays > 365) {
+      final years = (diff.inDays / 365).floor();
+      return 'Edited $years year${years > 1 ? 's' : ''} ago';
+    } else if (diff.inDays > 30) {
+      final months = (diff.inDays / 30).floor();
+      return 'Edited $months month${months > 1 ? 's' : ''} ago';
+    } else if (diff.inDays > 0) {
+      return 'Edited ${diff.inDays} day${diff.inDays > 1 ? 's' : ''} ago';
+    } else if (diff.inHours > 0) {
+      return 'Edited ${diff.inHours} hour${diff.inHours > 1 ? 's' : ''} ago';
+    } else if (diff.inMinutes > 0) {
+      return 'Edited ${diff.inMinutes} min ago';
+    } else {
+      return 'Edited just now';
+    }
+  }
 }
 
 /// Helper to parse DateTime from Firestore Timestamp, DateTime, Map, or String

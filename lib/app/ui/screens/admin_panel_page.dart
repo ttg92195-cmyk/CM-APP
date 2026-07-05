@@ -1125,6 +1125,18 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                         post.timeAgo.isNotEmpty ? post.timeAgo : 'Unknown',
                         style: TextStyle(fontSize: 12, color: isDark ? Colors.white38 : Colors.black38),
                       ),
+                      // Phase 4.21 — "Edited 3h ago" စာသား: edit လုပ်ခဲ့ရင် နောက်ဆုံးပြင်ချိန်
+                      if (post.wasEdited && post.editedAgo.isNotEmpty) ...[
+                        const Text(' \u2022 ', style: TextStyle(fontSize: 12)),
+                        Text(
+                          post.editedAgo,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: const Color(0xFFFF6D00).withOpacity(isDark ? 0.85 : 0.7),
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                   const SizedBox(height: 2),
@@ -1155,6 +1167,25 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                           ),
                         ),
                       ),
+                      // Phase 4.21 — EDITED badge: post ကို admin ပြင်လိုက်ပြီဆိုရင်ပြပါ
+                      if (post.wasEdited) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFF6D00).withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text(
+                            'EDITED',
+                            style: TextStyle(
+                              color: Color(0xFFFF6D00),
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ],
