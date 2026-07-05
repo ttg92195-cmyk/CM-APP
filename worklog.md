@@ -5571,3 +5571,30 @@ Stage Summary:
 - Commit: `7f17c82` on main, pushed to origin.
 - Risk: Low. The try-catch wrappers are pure additions — they only convert throws to debugPrint + safe defaults. The movieTitle display is additive (only shown when title is non-null/non-empty), no existing layout change.
 - Next: Bro can test by opening an adult-rated movie — dialog should now show the movie's title, and the dialog should not crash even on Keystore-corrupted devices.
+
+---
+Task ID: 4.18
+Agent: Main Agent
+Task: Verify and fix the Concurrency UI Bug claimed by another AI in `device_limit_dialog.dart` — when user starts deleting phone A, phone B's delete button remains clickable, causing `_removingDeviceId` overwrite, spinner visual glitch, and parallel Firestore transactions.
+
+Work Log:
+- Located file: `/home/z/my-project/cm-app/lib/app/ui/components/device_limit_dialog.dart`
+- Read the file end-to-end (245 lines).
+- Verified the bug claim against actual code:
+  - Line 144: `final isRemoving = _isRemoving && _removingDeviceId == device.deviceId;` — only the device currently being removed shows spinner.
+  - Line 192-198: For non-removing devices, IconButton has `onPressed: () => _removeDevice(device.deviceId)` — no `_isRemoving` guard, so other buttons remain clickable during deletion.
+  - Line 27-31: `_removeDevice` does NOT check `if (_isRemoving) return;` — it overwrites `_removingDeviceId` directly, causing phone A's spinner to disappear and phone A's pending Firestore call to continue in the background while phone B starts a parallel transaction.
+  - Line 36-41: When phone A's `await _deviceService.removeDevice` resolves, `setState` clears `_isRemoving=false` and `_removingDeviceId=null` — this also kills phone B's spinner (since `_isRemoving` is shared state), but phone B's Firestore call is still pending.
+- Conclusion: AI's claim is **VALID**. Real concurrency UI bug.
+- Applied the AI's proposed fix exactly:
+  - Changed IconButton's `icon` from `const Icon(Icons.delete_outline, color: Color(0xFFE50914), size: 20)` to `Icon(Icons.delete_outline, color: _isRemoving ? Colors.grey : const Color(0xFFE50914), size: 20)` — explicit grey for visual feedback during disable.
+  - Changed `onPressed: () => _removeDevice(device.deviceId)` to `onPressed: _isRemoving ? null : () => _removeDevice(device.deviceId)` — null disables the button (Flutter handles disabled state automatically).
+  - Added 2-line Burmese comment explaining the concurrency bug rationale.
+- Did NOT add `if (_isRemoving) return;` guard in `_removeDevice` itself — kept the fix minimal and exactly matching AI's proposal. The UI-level guard is sufficient since the IconButton is the only call site for `_removeDevice`.
+- Verified syntax by reading the file back — braces balanced, no compile errors expected.
+
+Stage Summary:
+- Issue: real, confirmed.
+- Files modified: `lib/app/ui/components/device_limit_dialog.dart` (lines 192-209 modified, +5 net lines including comment).
+- Risk: Very low. Pure UI-disable logic, no behavior change for single-delete flow. After fix: only one delete can be in-flight at a time; user must wait for current deletion to complete before starting another.
+- Next: Bro to build & test locally — open device limit dialog, start deleting one device, verify other delete buttons become disabled (grey, non-clickable) until first deletion completes.
