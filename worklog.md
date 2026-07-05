@@ -5546,3 +5546,28 @@ Stage Summary:
 - Commit: `6865b6d` on main, pushed to origin.
 - Risk: Low. navigatorKey.currentState null-check guards the early-startup case. DownloadPage is a normal StatelessWidget push, consistent with all other call sites in the codebase. No behavior change for users who don't tap notifications.
 - Next: Bro can test by starting a download, minimizing the app, and tapping the notification — should open the Downloads screen.
+
+---
+Task ID: phase-4.18
+Agent: Main Agent
+Task: Phase 4.18 — Age Rating Gate UX + safety hardening (movieTitle display + SecureStorage try-catch).
+
+Work Log:
+- Verified latest commit on GitHub main: `6865b6d` (Phase 4.17).
+- Read full `age_rating_gate.dart` (253 lines).
+- Reviewed another AI's 2-issue proposal. Both verified as real:
+  - Issue 1 (movieTitle unused): confirmed. `showAgeGate()` accepts `movieTitle`, passes to `_AgeGateDialog`, the field exists at line 75, but `build()` only renders `widget.appConfig.translate('age_gate_desc')` at line 167 — movieTitle was never displayed. Call sites verified to pass titles: `movie_detail_screen.dart:63` `movieTitle: detail.title`, `series_detail_screen.dart:60`. So the data was being plumbed but dropped on the floor.
+  - Issue 2 (SecureStorage uncaught): confirmed. `isVerifiedThisSession()` had try-catch only around `DateTime.parse(value)`, NOT around `_storage.read()`. `_storage.write()` and `_storage.delete()` had NO try-catch at all. Android Keystore corruption (older OS, app backup/restore) would have caused `PlatformException` → app crash right when user tried to open an adult movie.
+- Applied MultiEdit with 2 changes:
+  1. showAgeGate: wrapped `_storage.write()` in try-catch (debugPrint + non-fatal). isVerifiedThisSession: moved the try-catch outer to cover `_storage.read()` too. clearVerification: wrapped `_storage.delete()` in try-catch. All three now log via debugPrint and degrade gracefully instead of crashing.
+  2. _AgeGateDialog build: added an `if (widget.movieTitle != null && widget.movieTitle!.isNotEmpty)` block rendering the title as a separate emphasized line below the description, with maxLines: 2 + TextOverflow.ellipsis for long titles.
+- Rejected the AI's proposed inline format `"${desc} \n(${title})"` — preferred a separate Text widget for cleaner styling (different font weight + color) and proper line-break semantics.
+- Verified: brace balance 20=20, try-catch count = 3 (read/write/delete), catch count = 3, movieTitle rendered at line 210.
+- Committed as `7f17c82` and pushed to GitHub main.
+
+Stage Summary:
+- Issues: both real and confirmed.
+- Files modified: `lib/app/ui/components/age_rating_gate.dart` (+58 lines, -12 deletions).
+- Commit: `7f17c82` on main, pushed to origin.
+- Risk: Low. The try-catch wrappers are pure additions — they only convert throws to debugPrint + safe defaults. The movieTitle display is additive (only shown when title is non-null/non-empty), no existing layout change.
+- Next: Bro can test by opening an adult-rated movie — dialog should now show the movie's title, and the dialog should not crash even on Keystore-corrupted devices.
