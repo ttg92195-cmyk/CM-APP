@@ -5806,3 +5806,91 @@ Stage Summary:
   tapping the Switch and the screen turning dark).
 - On/off both improved (same code path for both directions).
 - Single file changed: lib/more_libs/setting/app_config.dart (+11/-1).
+
+---
+Task ID: 4.25
+Agent: Main Agent
+Task: Redesign Collections tab — Bro reported that with many collections (Marvel, DC, Harry Potter, Scooby-Doo!, etc.) the tab became a flat wall of identical red rectangles, hard to scan/navigate. Bring Collections up to/beyond Genres/Tags polish.
+
+Work Log:
+- Pulled latest from GitHub main (already at 8b0461e — Phase 4.24 dark mode fix).
+- Used Explore subagent to map the file: genres_tags_collections_page.dart
+  (721 lines, all 3 tabs in one StatefulWidget). Collections tab was the
+  simplest: SingleChildScrollView wrapping shrinkWrap GridView of solid-red
+  _NeonGlowButton rectangles. No sub-tabs, no search, no sort, no headers,
+  no lazy recycling. Genres and Tags both already had Movies/Series sub-tabs.
+- Inspected TagAndGenres model: has `name` + optional `moviesCount`. Count
+  badge is feasible.
+- Inspected FirestoreContentService.getMoviesByCollection: already supports
+  typeFilter param. FilterResultPage already supports typeFilter + collectionName.
+
+CHANGES MADE:
+
+1. _GenresTagsCollectionsPageState (lines 21-63):
+   - Switched mixin: SingleTickerProviderStateMixin -> TickerProviderStateMixin
+     (now need 4 tickers: 1 main + 3 sub-tab controllers).
+   - Added _collectionsSubTabController (Movies/Series sub-tabs).
+   - Added _collectionSearchController (TextEditingController).
+   - Added _collectionSearchQuery (String) + _collectionSortBy (String, 'az' default).
+   - Updated initState() and dispose() accordingly.
+
+2. _buildCollectionsTab — full rewrite (was 10 lines, now ~120):
+   - Column layout: Movies/Series TabBar + Search/sort bar + Expanded(TabBarView)
+   - Search: TextField with prefix icon, clear (X) button, Netflix-red focused border.
+   - Sort: PopupMenuButton with 3 options (az/za/most), compact icon-button style.
+
+3. _buildCollectionSortDropdown (new): builds the sort PopupMenuButton.
+
+4. _buildCollectionGrid (new) — one grid per Movies/Series sub-tab:
+   - Applies search filter (case-insensitive substring).
+   - Applies sort (az/za/most).
+   - Alphabetical section headers interleaved with cards when sorted az/za.
+     Digits/symbols group under '#'.
+   - LAZY GridView.builder (no shrinkWrap, no NeverScrollable physics).
+   - 2-column, aspect ratio 1.6, 10px gutters.
+   - Empty state with icon + 'No results found'.
+
+5. _sectionKeyFor (new static helper): returns first-letter section key.
+
+6. _CollectionListItem (new class): wrapper for header/card entries in
+   the flat item list.
+
+7. _CollectionCard (new StatefulWidget): the new card design.
+   - Circular avatar (44x44) with first letter, stable hue from name hash.
+   - Collection name (max 2 lines, ellipsis).
+   - Optional movies-count badge ('24 movies' / '5 series').
+   - Subtle diagonal gradient bg + Netflix-red border on press.
+   - 150ms tap animation with red glow shadow.
+   - On tap, navigates to FilterResultPage(collectionName, typeFilter).
+
+8. i18n: added 4 keys to en.json + my.json:
+   - search_collections / "Search collections..." / "Collection ရှာဖွေရန်..."
+   - sort_a_to_z / "A → Z" / "A → Z"
+   - sort_z_to_a / "Z → A" / "Z → A"
+   - sort_most_movies / "Most Movies" / "အများဆုံး ရုပ်ရှင်"
+
+UNCHANGED:
+- _NeonGlowButton still used by Genres and Tags tabs (no regression).
+- FilterResultPage unchanged.
+- FirestoreContentService.getCollections() unchanged.
+
+VERIFIED:
+- Brace/paren/bracket balance: OK (Python check)
+- 9 classes defined in file (was 7 — added _CollectionListItem +
+  _CollectionCard + _CollectionCardState).
+- JSON validated for en.json and my.json.
+
+Committed as 324962b and pushed to origin/main.
+
+Stage Summary:
+- Collections tab is now structured like Genres/Tags (Movies/Series sub-tabs).
+- New search + sort let users find "Marvel" / "DC" instantly even with 100+
+  collections.
+- 2-column lazy grid with first-letter avatar cards = scannable, premium feel.
+- Alphabetical section headers (M, D, S, H...) break up long lists.
+- Optional count badge surfaces the biggest collections at a glance.
+- Perf: lazy GridView.builder replaces shrinkWrap+NeverScrollable (cards recycle).
+- Single file changed: lib/app/ui/screens/genres_tags_collections_page.dart
+  (+572 lines, -7 lines). Plus 4 new i18n keys in en.json + my.json.
+- Risk: Low. Pure UI redesign. No Firestore query changes. _NeonGlowButton
+  preserved for Genres/Tags so no regression there.
