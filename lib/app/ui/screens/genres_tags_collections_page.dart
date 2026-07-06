@@ -733,7 +733,7 @@ class _CollectionCardState extends State<_CollectionCard> {
     }
     // Restrict hue to warm red-orange-pink range (0–50, 330–360) so
     // avatars stay on-brand with the Netflix-red palette.
-    final hue = (hash % 80);
+    final hue = (hash % 80).toDouble();
     return HSLColor.fromAHSL(
       1.0,
       hue < 30 ? hue + 350 : hue,
