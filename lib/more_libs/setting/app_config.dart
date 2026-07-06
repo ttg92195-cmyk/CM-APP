@@ -1100,11 +1100,21 @@ class AppConfig extends ChangeNotifier {
     await _localization.load(_languageCode);
   }
 
+  // Phase 4.24 — Theme toggle responsiveness.
+  // BEFORE: notifyListeners() was called AFTER both SharedPreferences
+  // awaits, so the UI waited on disk I/O (1-50ms on slow devices) before
+  // the dark/light switch happened. Bro reported "နည်းနည်းနှေး" (slightly
+  // slow). Fix: notify IMMEDIATELY after state change so the MaterialApp
+  // starts its theme animation right away; persist to disk in the
+  // background. The write still completes before the user could possibly
+  // notice any state desync — SharedPreferences is process-local and
+  // the next _loadLocalConfig() re-reads whatever landed.
   Future<void> setThemeMode(ThemeMode mode) async {
     _themeMode = mode;
+    notifyListeners(); // Trigger UI rebuild FIRST (instant theme switch)
+    // Persist to disk in the background (non-blocking for the UI).
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_themeKey, mode.index);
-    notifyListeners();
   }
 
   Future<void> setLanguage(String code) async {
