@@ -5762,3 +5762,47 @@ Stage Summary:
 - Backward compat: Old movie docs without certification/status fields → filters won't match them (graceful). Bro can run TMDB Sync on old posts to backfill.
 - Firestore index: single-field `certification` index auto-created on first query. (type ASC, status ASC) already exists for series statuses.
 - Next: Bro to test — open Search, tap Filter icon, try the new Content Rating + Status chips. Apply and verify the results match the filter.
+
+---
+Task ID: 4.24
+Agent: Main Agent
+Task: Fix Dark Mode toggle feeling "နည်းနည်းနှေး" (slightly slow) in Settings
+
+Work Log:
+- Bro reported: Dark Mode on/off toggle in Settings Bar feels slightly laggy when switching to dark
+- Inspected settings_page.dart (line 771-780): Switch.onChanged calls
+  `appConfig.setThemeMode(v ? ThemeMode.dark : ThemeMode.light)`
+- Inspected app_config.dart setThemeMode (line 1103-1108):
+  ```dart
+  Future<void> setThemeMode(ThemeMode mode) async {
+    _themeMode = mode;
+    final prefs = await SharedPreferences.getInstance();  // AWAIT 1
+    await prefs.setInt(_themeKey, mode.index);            // AWAIT 2 (disk)
+    notifyListeners();  // <-- UI update happens AFTER both awaits
+  }
+  ```
+- Root cause: notifyListeners() was called AFTER awaiting two
+  SharedPreferences I/O operations. On slower devices disk write can
+  take 5-50ms, which is exactly the "နည်းနည်းနှေး" Bro felt.
+- Fix: moved notifyListeners() to fire IMMEDIATELY after
+  `_themeMode = mode`. SharedPreferences write now runs in the
+  background (still completes synchronously relative to user perception,
+  SharedPreferences is process-local).
+- Verified main.dart MaterialApp setup (line 616-625): uses standard
+  theme/darkTheme/themeMode, no themeAnimationDuration override. The
+  default Flutter ~200ms theme animation is by design and feels nice —
+  no need to disable.
+
+Other notes:
+- Same anti-pattern exists in setLanguage() and setVideoPlayerMode()
+  (both await prefs before notifyListeners). Bro only asked about Dark
+  Mode this round — kept the change surgical. If Bro ever complains
+  about language switch lag, apply the same fix.
+
+Committed as 8b0461e and pushed to origin/main.
+
+Stage Summary:
+- Dark Mode toggle should now feel instant (no perceptible delay between
+  tapping the Switch and the screen turning dark).
+- On/off both improved (same code path for both directions).
+- Single file changed: lib/more_libs/setting/app_config.dart (+11/-1).
