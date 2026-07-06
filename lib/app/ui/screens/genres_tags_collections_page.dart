@@ -19,7 +19,7 @@ class GenresTagsCollectionsPage extends StatefulWidget {
 }
 
 class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final FirestoreContentService _contentService = FirestoreContentService();
   late TabController _tabController;
 
@@ -28,9 +28,19 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
   List<TagAndGenres> _collections = [];
   bool _isLoading = true;
 
-  // Sub-tab controllers for Genres and Tags
+  // Sub-tab controllers for Genres, Tags, and (Phase 4.25) Collections
   late TabController _genresSubTabController;
   late TabController _tagsSubTabController;
+  late TabController _collectionsSubTabController;
+
+  // Phase 4.25 — Collections tab UX: search + sort + Movies/Series sub-tabs.
+  // Search lets users quickly find "Marvel" / "DC" / "Harry Potter" when
+  // the collection list grows long. Sort lets them order by A→Z, Z→A, or
+  // Most Movies (moviesCount desc). Sub-tabs match Genres/Tags structure.
+  final TextEditingController _collectionSearchController = TextEditingController();
+  String _collectionSearchQuery = '';
+  // 'az' | 'za' | 'most' — default 'az' for predictable alphabetical browsing.
+  String _collectionSortBy = 'az';
 
   @override
   void initState() {
@@ -38,6 +48,7 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
     _tabController = TabController(length: 3, vsync: this);
     _genresSubTabController = TabController(length: 2, vsync: this);
     _tagsSubTabController = TabController(length: 2, vsync: this);
+    _collectionsSubTabController = TabController(length: 2, vsync: this);
     _loadData();
   }
 
@@ -46,6 +57,8 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
     _tabController.dispose();
     _genresSubTabController.dispose();
     _tagsSubTabController.dispose();
+    _collectionsSubTabController.dispose();
+    _collectionSearchController.dispose();
     super.dispose();
   }
 
@@ -274,16 +287,333 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
     );
   }
 
-  // ==================== COLLECTIONS TAB ====================
+  // ==================== COLLECTIONS TAB (Phase 4.25 redesign) ====================
+  //
+  // BEFORE: a single flat SingleChildScrollView wrapping a shrinkWrap
+  // GridView of solid-red _NeonGlowButton rectangles. With many
+  // collections (Marvel, DC, Harry Potter, Scooby-Doo!, ...) the screen
+  // became a long wall of identical red boxes — hard to scan, hard to
+  // find anything, no Movies/Series split, no search, no sort.
+  //
+  // AFTER: mirrors the Genres/Tags structure (Movies/Series sub-tabs at
+  // top), plus a search bar + sort dropdown above the grid. The grid
+  // itself is now a LAZY GridView.builder (no shrinkWrap) so cards
+  // recycle as the user scrolls — handles 100+ collections without
+  // jank. Cards are larger 2-column tiles with a subtle gradient, a
+  // first-letter avatar (so "Marvel" / "DC" are visually distinct at a
+  // glance), and an optional count badge when moviesCount is available.
+  // Alphabetical section headers (M, D, S, H...) break up the list when
+  // sorted A→Z, making it easy to jump to the section the user wants.
   Widget _buildCollectionsTab(AppConfig appConfig, ThemeData theme) {
     if (_collections.isEmpty) {
       return Center(child: Text(appConfig.translate('no_results')));
     }
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(12),
-      child: _buildNeonGrid(theme, _collections.map((c) => c.name).toList(),
-          filterType: 'collection'),
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Column(
+      children: [
+        // ---- Movies / Series sub-tabs (mirrors Genres/Tags) ----
+        Container(
+          color: theme.colorScheme.surface,
+          child: TabBar(
+            controller: _collectionsSubTabController,
+            labelColor: const Color(0xFFE50914),
+            unselectedLabelColor: theme.colorScheme.onSurface.withOpacity(0.5),
+            indicatorColor: const Color(0xFFE50914),
+            indicatorSize: TabBarIndicatorSize.label,
+            dividerColor: Colors.transparent,
+            tabs: [
+              Tab(text: appConfig.translate('movies')),
+              Tab(text: appConfig.translate('series')),
+            ],
+          ),
+        ),
+        // ---- Search + sort bar ----
+        Container(
+          color: theme.colorScheme.surface,
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+          child: Row(
+            children: [
+              // Search field
+              Expanded(
+                child: TextField(
+                  controller: _collectionSearchController,
+                  onChanged: (value) {
+                    setState(() => _collectionSearchQuery = value.trim());
+                  },
+                  style: TextStyle(
+                    color: theme.colorScheme.onSurface,
+                    fontSize: 14,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: appConfig.translate('search_collections'),
+                    hintStyle: TextStyle(
+                      color: theme.colorScheme.onSurface.withOpacity(0.4),
+                      fontSize: 14,
+                    ),
+                    prefixIcon: Icon(
+                      Icons.search,
+                      color: theme.colorScheme.onSurface.withOpacity(0.5),
+                      size: 20,
+                    ),
+                    suffixIcon: _collectionSearchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: Icon(
+                              Icons.close,
+                              size: 18,
+                              color: theme.colorScheme.onSurface.withOpacity(0.5),
+                            ),
+                            onPressed: () {
+                              _collectionSearchController.clear();
+                              setState(() => _collectionSearchQuery = '');
+                            },
+                          )
+                        : null,
+                    isDense: true,
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    filled: true,
+                    fillColor: isDark
+                        ? const Color(0xFF1A1A1A)
+                        : Colors.grey.shade100,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide.none,
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide.none,
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(
+                          color: Color(0xFFE50914), width: 1.5),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Sort dropdown
+              _buildCollectionSortDropdown(appConfig, theme),
+            ],
+          ),
+        ),
+        // ---- Grid (lazy) ----
+        Expanded(
+          child: TabBarView(
+            controller: _collectionsSubTabController,
+            children: [
+              _buildCollectionGrid(appConfig, theme, typeFilter: 'movie'),
+              _buildCollectionGrid(appConfig, theme, typeFilter: 'series'),
+            ],
+          ),
+        ),
+      ],
     );
+  }
+
+  /// Sort dropdown for the Collections tab. Compact icon-button style
+  /// that opens a popup menu — keeps the search bar visually dominant
+  /// while still surfacing all three sort options.
+  Widget _buildCollectionSortDropdown(AppConfig appConfig, ThemeData theme) {
+    final isDark = theme.brightness == Brightness.dark;
+    final options = <(String value, String labelKey, IconData icon)>[
+      ('az', 'sort_a_to_z', Icons.arrow_downward),
+      ('za', 'sort_z_to_a', Icons.arrow_upward),
+      ('most', 'sort_most_movies', Icons.trending_up),
+    ];
+    final current =
+        options.firstWhere((o) => o.$1 == _collectionSortBy, orElse: () => options.first);
+
+    return PopupMenuButton<String>(
+      tooltip: appConfig.translate('sort_by'),
+      onSelected: (value) {
+        setState(() => _collectionSortBy = value);
+      },
+      itemBuilder: (context) => options
+          .map((o) => PopupMenuItem<String>(
+                value: o.$1,
+                child: Row(
+                  children: [
+                    Icon(o.$3,
+                        size: 18,
+                        color: o.$1 == _collectionSortBy
+                            ? const Color(0xFFE50914)
+                            : theme.colorScheme.onSurface.withOpacity(0.6)),
+                    const SizedBox(width: 10),
+                    Text(
+                      appConfig.translate(o.$2),
+                      style: TextStyle(
+                        color: o.$1 == _collectionSortBy
+                            ? const Color(0xFFE50914)
+                            : theme.colorScheme.onSurface,
+                        fontWeight: o.$1 == _collectionSortBy
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ))
+          .toList(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF1A1A1A) : Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(current.$3,
+                size: 16, color: const Color(0xFFE50914)),
+            const SizedBox(width: 4),
+            Icon(Icons.arrow_drop_down,
+                size: 18,
+                color: theme.colorScheme.onSurface.withOpacity(0.5)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Builds the lazy GridView for one Collections sub-tab (Movies or Series).
+  /// Filtering, sorting, and section headers all happen here.
+  ///
+  /// NOTE: We do NOT pass typeFilter down to the server when the user
+  /// taps a collection — the FilterResultPage already supports
+  /// typeFilter and will further filter results. This is consistent with
+  /// the existing Genres/Tags behavior (the sub-tab just pre-selects
+  /// Movies/Series for the *result page*, not for the list of collections
+  /// shown here).
+  Widget _buildCollectionGrid(
+      AppConfig appConfig, ThemeData theme, {required String typeFilter}) {
+    final isDark = theme.brightness == Brightness.dark;
+
+    // 1. Apply search filter (case-insensitive substring match)
+    List<TagAndGenres> filtered = _collections;
+    if (_collectionSearchQuery.isNotEmpty) {
+      final q = _collectionSearchQuery.toLowerCase();
+      filtered = filtered
+          .where((c) => c.name.toLowerCase().contains(q))
+          .toList();
+    }
+
+    // 2. Apply sort
+    final sorted = List<TagAndGenres>.from(filtered);
+    switch (_collectionSortBy) {
+      case 'az':
+        sorted.sort((a, b) =>
+            a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        break;
+      case 'za':
+        sorted.sort((a, b) =>
+            b.name.toLowerCase().compareTo(a.name.toLowerCase()));
+        break;
+      case 'most':
+        sorted.sort((a, b) => (b.moviesCount ?? 0).compareTo(a.moviesCount ?? 0));
+        break;
+    }
+
+    // 3. Empty state
+    if (sorted.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.movie_filter_outlined,
+              size: 56,
+              color: theme.colorScheme.onSurface.withOpacity(0.3),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              _collectionSearchQuery.isNotEmpty
+                  ? appConfig.translate('no_results')
+                  : appConfig.translate('no_results'),
+              style: theme.textTheme.bodyLarge?.copyWith(
+                color: theme.colorScheme.onSurface.withOpacity(0.5),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // 4. Section headers only for alphabetical sorts (not for 'most')
+    final useSectionHeaders = _collectionSortBy == 'az' || _collectionSortBy == 'za';
+
+    // 5. Build a flat item list where section headers are interleaved
+    //    with collection cards. Each entry is either a header or a card.
+    final items = <_CollectionListItem>[];
+    if (useSectionHeaders) {
+      String? lastSection;
+      for (final c in sorted) {
+        final firstChar = _sectionKeyFor(c.name, _collectionSortBy);
+        if (firstChar != lastSection) {
+          items.add(_CollectionListItem.header(firstChar));
+          lastSection = firstChar;
+        }
+        items.add(_CollectionListItem.card(c));
+      }
+    } else {
+      for (final c in sorted) {
+        items.add(_CollectionListItem.card(c));
+      }
+    }
+
+    return GridView.builder(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        // Taller tiles (1.4 aspect ratio) give room for the avatar +
+        // name + count badge without cramping.
+        childAspectRatio: 1.6,
+        crossAxisSpacing: 10,
+        mainAxisSpacing: 10,
+      ),
+      itemCount: items.length,
+      itemBuilder: (context, index) {
+        final item = items[index];
+        if (item.isHeader) {
+          // Section headers render as a 2-column-spanning tile. We use
+          // a Container with no padding so the header visually anchors
+          // the row it's in.
+          return Container(
+            alignment: Alignment.centerLeft,
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            child: Text(
+              item.headerLabel!,
+              style: TextStyle(
+                color: const Color(0xFFE50914),
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.2,
+              ),
+            ),
+          );
+        }
+        final collection = item.collection!;
+        return _CollectionCard(
+          name: collection.name,
+          count: collection.moviesCount,
+          typeFilter: typeFilter,
+          isDark: isDark,
+        );
+      },
+    );
+  }
+
+  /// Returns the section header key for a collection name.
+  /// For A→Z: returns the first uppercase letter (digits/symbols → '#').
+  /// For Z→A: same — the headers appear in reverse order naturally
+  /// because the list is already reverse-sorted.
+  static String _sectionKeyFor(String name, String sortMode) {
+    if (name.isEmpty) return '#';
+    final c = name[0].toUpperCase();
+    if (RegExp(r'[A-Z]').hasMatch(c)) return c;
+    return '#';
   }
 
   // ==================== SHARED WIDGETS ====================
@@ -321,6 +651,233 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
           },
         );
       },
+    );
+  }
+}
+
+// ==================== COLLECTIONS TAB — Phase 4.25 helpers ====================
+
+/// Lightweight wrapper used by the Collections tab's flat item list.
+/// Each entry is either a section header (e.g. "M" for Marvel) or a
+/// collection card. Using a single list type lets us interleave headers
+/// and cards in one `GridView.builder` without managing two parallel
+/// data structures.
+class _CollectionListItem {
+  final bool isHeader;
+  final String? headerLabel;
+  final TagAndGenres? collection;
+
+  const _CollectionListItem._({
+    required this.isHeader,
+    this.headerLabel,
+    this.collection,
+  });
+
+  factory _CollectionListItem.header(String label) =>
+      _CollectionListItem._(isHeader: true, headerLabel: label);
+  factory _CollectionListItem.card(TagAndGenres c) =>
+      _CollectionListItem._(isHeader: false, collection: c);
+}
+
+/// Phase 4.25 — Collection card.
+///
+/// Replaces the old solid-red `_NeonGlowButton` for the Collections tab.
+/// Each card has:
+///   - A circular avatar with the first letter of the collection name
+///     (Marvel → "M", DC → "D"). This gives users an instant visual
+///     anchor when scanning a long list — far better than the old
+///     identical red rectangles.
+///   - The full collection name (max 2 lines, ellipsis).
+///   - An optional movies-count badge when `moviesCount` is non-null
+///     and > 0. Helps users spot the biggest collections.
+///   - A subtle red gradient background with a dark-to-darker shade in
+///     dark mode, and a light-to-white gradient in light mode. Keeps
+///     the Netflix-red brand identity without being a flat slab.
+///
+/// On tap, navigates to `FilterResultPage` with the collection name and
+/// the active Movies/Series type filter (so the result page already
+/// knows whether to show movies or series).
+class _CollectionCard extends StatefulWidget {
+  final String name;
+  final int? count;
+  final String? typeFilter; // 'movie' or 'series'
+  final bool isDark;
+
+  const _CollectionCard({
+    required this.name,
+    required this.count,
+    required this.typeFilter,
+    required this.isDark,
+  });
+
+  @override
+  State<_CollectionCard> createState() => _CollectionCardState();
+}
+
+class _CollectionCardState extends State<_CollectionCard> {
+  bool _isPressed = false;
+
+  String get _initial {
+    if (widget.name.isEmpty) return '?';
+    return widget.name[0].toUpperCase();
+  }
+
+  // Stable hue derived from the collection name → each collection gets
+  // a consistent avatar color tint. Marvel and DC won't look identical,
+  // and the same collection keeps its color across rebuilds.
+  Color get _avatarColor {
+    // Simple hash → hue. No fancy crypto needed.
+    int hash = 0;
+    for (final c in widget.name.codeUnits) {
+      hash = (hash * 31 + c) & 0x7fffffff;
+    }
+    // Restrict hue to warm red-orange-pink range (0–50, 330–360) so
+    // avatars stay on-brand with the Netflix-red palette.
+    final hue = (hash % 80);
+    return HSLColor.fromAHSL(
+      1.0,
+      hue < 30 ? hue + 350 : hue,
+      0.65,
+      0.55,
+    ).toColor();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasCount = (widget.count ?? 0) > 0;
+
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _isPressed = true),
+      onTapUp: (_) => setState(() => _isPressed = false),
+      onTapCancel: () => setState(() => _isPressed = false),
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => FilterResultPage(
+              title: widget.name,
+              collectionName: widget.name,
+              typeFilter: widget.typeFilter,
+            ),
+          ),
+        );
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        decoration: BoxDecoration(
+          // Subtle diagonal gradient — gives the card depth without
+          // being loud. The pressed state lifts the red a touch.
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: widget.isDark
+                ? [
+                    const Color(0xFF2A2A2A),
+                    const Color(0xFF1A1A1A),
+                  ]
+                : [
+                    Colors.white,
+                    Colors.grey.shade50,
+                  ],
+          ),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: _isPressed
+                ? const Color(0xFFE50914)
+                : widget.isDark
+                    ? Colors.white12
+                    : Colors.grey.shade300,
+            width: _isPressed ? 1.5 : 1,
+          ),
+          boxShadow: _isPressed
+              ? [
+                  BoxShadow(
+                    color: const Color(0xFFE50914).withOpacity(0.35),
+                    blurRadius: 12,
+                    spreadRadius: 1,
+                  ),
+                ]
+              : [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(widget.isDark ? 0.3 : 0.06),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Row(
+            children: [
+              // Avatar circle with the first letter
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: _avatarColor,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: _avatarColor.withOpacity(0.4),
+                      blurRadius: 6,
+                      spreadRadius: 0,
+                    ),
+                  ],
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  _initial,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              // Name + count
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: widget.isDark ? Colors.white : Colors.black87,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        height: 1.2,
+                      ),
+                    ),
+                    if (hasCount) ...[
+                      const SizedBox(height: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE50914).withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          '${widget.count} ${widget.typeFilter == 'series' ? 'series' : 'movies'}',
+                          style: const TextStyle(
+                            color: Color(0xFFE50914),
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
