@@ -5894,3 +5894,28 @@ Stage Summary:
   (+572 lines, -7 lines). Plus 4 new i18n keys in en.json + my.json.
 - Risk: Low. Pure UI redesign. No Firestore query changes. _NeonGlowButton
   preserved for Genres/Tags so no regression there.
+
+---
+Task ID: 4.25.1
+Agent: Main Agent
+Task: Fix build error from Phase 4.25 — HSLColor hue type mismatch
+
+Work Log:
+- Bro reported build failure:
+  lib/app/ui/screens/genres_tags_collections_page.dart:739:16: Error:
+  The argument type 'num' can't be assigned to the parameter type 'double'.
+        hue < 30 ? hue + 350 : hue,
+                 ^
+- Root cause: `(hash % 80)` returns `int` (a `num`), but
+  HSLColor.fromAHSL() requires `double` for the hue parameter.
+  Dart's type inference kept `hue` as `int`, then `hue + 350` is `int`,
+  and the conditional expression type is `num` — not assignable to
+  `double`.
+- Fix: cast via `.toDouble()` at the source:
+  `final hue = (hash % 80).toDouble();`
+  Now `hue < 30 ? hue + 350 : hue` evaluates to `double`.
+- Committed as 52f740c and pushed to origin/main.
+
+Stage Summary:
+- Single-line fix (1 insertion, 1 deletion).
+- Build should now pass on GitHub Actions.
