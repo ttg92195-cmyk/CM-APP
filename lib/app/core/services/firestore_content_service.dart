@@ -651,16 +651,39 @@ class FirestoreContentService {
       // searches like "o" only returned movies starting with "o" (Ocean's,
       // Once Upon a Time, etc.) — Bro reported this exact bug on the Admin
       // Panel Tab too. Task 25.
+      //
+      // Phase 4.22 — OLD code used `_moviesRef.limit(200).get()` which only
+      // scanned the first 200 docs in Firestore's natural order. If a movie
+      // like "Your Name" was beyond doc #200, it was silently missed — same
+      // bug as the user-facing search. Fixed here by paginated full-scan
+      // (batch 500, cap 5000) using startAfterDocument cursor.
       if (lowerKeyword.length <= 2) {
         try {
-          final subSnapshot = await _moviesRef.limit(200).get();
-          final subResults = subSnapshot.docs
-              .map((doc) => Movie.fromMap(
-                    doc.data() as Map<String, dynamic>,
-                    docId: doc.id,
-                  ))
-              .where((m) => m.titleLowercase.contains(lowerKeyword))
-              .toList();
+          const int batchSize = 500;
+          const int maxTotalDocs = 5000;
+          QuerySnapshot? batchSnapshot;
+          int totalScanned = 0;
+          bool more = true;
+          final subResults = <Movie>[];
+          while (more && totalScanned < maxTotalDocs) {
+            Query batchQuery = _moviesRef.limit(batchSize);
+            if (batchSnapshot != null && batchSnapshot.docs.isNotEmpty) {
+              batchQuery = batchQuery.startAfterDocument(batchSnapshot.docs.last);
+            }
+            batchSnapshot = await batchQuery.get();
+            if (batchSnapshot.docs.isEmpty) break;
+            totalScanned += batchSnapshot.docs.length;
+            for (final doc in batchSnapshot.docs) {
+              final movie = Movie.fromMap(
+                doc.data() as Map<String, dynamic>,
+                docId: doc.id,
+              );
+              if (movie.titleLowercase.contains(lowerKeyword)) {
+                subResults.add(movie);
+              }
+            }
+            more = batchSnapshot.docs.length >= batchSize;
+          }
           // Merge prefix + substring, dedup by ID.
           final seenIds = <String>{};
           final merged = <Movie>[];
@@ -1312,17 +1335,50 @@ class FirestoreContentService {
         // Substring fallback for short queries (1-2 chars) — see Strategy 1.5
         // comment in the git history (Task 25). Lets "o" match "Thor",
         // "Iron Man 2", "Doctor Strange" too, not just prefix matches.
+        //
+        // Phase 4.22 — OLD code used `_moviesRef.limit(fetchLimit).get()`
+        // which only scanned the first 100 docs in Firestore's natural order.
+        // If a movie like "Your Name" was beyond doc #100, it was silently
+        // missed — even though its title contains "o". This is the root cause
+        // of Bro's bug report: "o" search was returning incomplete results.
+        //
+        // FIX: Paginated full-collection scan using `startAfterDocument`.
+        // Batch size 500, safety cap 5000 docs (10 batches). Catalog of
+        // 5000 movies is rare for an indie app; if exceeded, the user gets
+        // the first 5000-doc subset which is still far better than 100.
         if (lowerKeyword.length <= 2) {
           try {
-            final subSnapshot = await _moviesRef.limit(fetchLimit).get();
-            for (final doc in subSnapshot.docs) {
-              final movie = Movie.fromMap(
-                doc.data() as Map<String, dynamic>,
-                docId: doc.id,
-              );
-              if (movie.titleLowercase.contains(lowerKeyword)) {
-                substringResults.add(movie);
+            const int batchSize = 500;
+            const int maxTotalDocs = 5000;
+            QuerySnapshot? batchSnapshot;
+            int totalScanned = 0;
+            bool more = true;
+            while (more && totalScanned < maxTotalDocs) {
+              Query batchQuery = _moviesRef.limit(batchSize);
+              if (batchSnapshot != null && batchSnapshot.docs.isNotEmpty) {
+                batchQuery = batchQuery.startAfterDocument(batchSnapshot.docs.last);
               }
+              batchSnapshot = await batchQuery.get();
+              if (batchSnapshot.docs.isEmpty) break;
+              totalScanned += batchSnapshot.docs.length;
+              for (final doc in batchSnapshot.docs) {
+                final movie = Movie.fromMap(
+                  doc.data() as Map<String, dynamic>,
+                  docId: doc.id,
+                );
+                if (movie.titleLowercase.contains(lowerKeyword)) {
+                  substringResults.add(movie);
+                }
+              }
+              more = batchSnapshot.docs.length >= batchSize;
+            }
+            if (totalScanned >= maxTotalDocs) {
+              debugPrint(
+                '_searchWithKeyword substring fallback hit safety cap '
+                '($maxTotalDocs docs scanned for "$lowerKeyword"). '
+                'Catalog may be larger — consider backfilling search_keywords '
+                'with character n-grams for true server-side search.',
+              );
             }
           } catch (e) {
             debugPrint('_searchWithKeyword substring fallback failed: $e');
