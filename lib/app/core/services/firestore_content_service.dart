@@ -1113,6 +1113,9 @@ class FirestoreContentService {
     String? year,
     String? rating, // e.g. '7', '8' - minimum rating
     String? sortBy, // 'latest', 'rating', 'name'
+    // Phase 4.23 — content rating (e.g. 'PG-13') + TMDB status (e.g. 'Released')
+    String? certification,
+    String? status,
     int limit = 50,
     DocumentSnapshot? startAfter,
   }) async {
@@ -1130,6 +1133,8 @@ class FirestoreContentService {
           year: year,
           rating: rating,
           sortBy: sortBy,
+          certification: certification,
+          status: status,
           limit: limit,
           startAfter: startAfter,
         );
@@ -1144,6 +1149,22 @@ class FirestoreContentService {
       }
       if (genre != null && genre.isNotEmpty) {
         query = query.where('categories', arrayContains: genre);
+      }
+      // Phase 4.23 — server-side certification filter. Only apply when
+      // genre is NOT set, because `categories arrayContains` + `certification
+      // isEqualTo` would need a 3-field composite index we don't want to
+      // require. When genre IS set, certification is filtered client-side below.
+      if (certification != null &&
+          certification.isNotEmpty &&
+          (genre == null || genre.isEmpty)) {
+        query = query.where('certification', isEqualTo: certification);
+      }
+      // Phase 4.23 — server-side status filter. Same rationale as certification:
+      // skip server-side when genre is set to avoid 3-field composite index.
+      if (status != null &&
+          status.isNotEmpty &&
+          (genre == null || genre.isEmpty)) {
+        query = query.where('status', isEqualTo: status);
       }
 
       // Order by - only if we don't have genre filter (composite index issue)
@@ -1192,6 +1213,17 @@ class FirestoreContentService {
           final movieRating = double.tryParse(m.rating ?? '0') ?? 0.0;
           return movieRating >= minRating;
         }).toList();
+      }
+
+      // Phase 4.23 — certification filter (client-side fallback when genre is set)
+      if (certification != null && certification.isNotEmpty) {
+        filtered = filtered
+            .where((m) => m.certification == certification)
+            .toList();
+      }
+      // Phase 4.23 — status filter (client-side fallback when genre is set)
+      if (status != null && status.isNotEmpty) {
+        filtered = filtered.where((m) => m.status == status).toList();
       }
 
       // Client-side sort fallback for genre queries
@@ -1250,6 +1282,11 @@ class FirestoreContentService {
     String? year,
     String? rating,
     String? sortBy,
+    // Phase 4.23 — content rating + status (applied client-side here
+    // because the keyword path uses prefix/substring/arrayContains
+    // strategies that can't combine with extra where clauses cleanly).
+    String? certification,
+    String? status,
     int limit = 50,
     DocumentSnapshot? startAfter,
   }) async {
@@ -1427,6 +1464,15 @@ class FirestoreContentService {
           final movieRating = double.tryParse(m.rating ?? '0') ?? 0.0;
           return movieRating >= minRating;
         }).toList();
+      }
+      // Phase 4.23 — certification + status filters (client-side on keyword path)
+      if (certification != null && certification.isNotEmpty) {
+        filtered = filtered
+            .where((m) => m.certification == certification)
+            .toList();
+      }
+      if (status != null && status.isNotEmpty) {
+        filtered = filtered.where((m) => m.status == status).toList();
       }
 
       // Sort results

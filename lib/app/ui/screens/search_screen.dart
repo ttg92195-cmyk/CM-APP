@@ -48,8 +48,11 @@ class _SearchScreenState extends State<SearchScreen> {
   String? _selectedGenre;
   String? _selectedType; // 'movie' or 'series'
   String? _selectedYear;
-  String? _selectedRating; // minimum rating
+  String? _selectedRating; // minimum rating (numeric, e.g. '7')
   String _sortBy = 'latest'; // 'latest', 'rating', 'name'
+  // Phase 4.23 — content rating (e.g. 'PG-13') + TMDB status (e.g. 'Released')
+  String? _selectedCertification;
+  String? _selectedStatus;
 
   // Available filter options
   List<TagAndGenres> _genres = [];
@@ -122,6 +125,8 @@ class _SearchScreenState extends State<SearchScreen> {
       _selectedType != null ||
       _selectedYear != null ||
       _selectedRating != null ||
+      _selectedCertification != null ||
+      _selectedStatus != null ||
       _sortBy != 'latest';
 
   Future<void> _search() async {
@@ -163,6 +168,8 @@ class _SearchScreenState extends State<SearchScreen> {
         year: _selectedYear,
         rating: _selectedRating,
         sortBy: _sortBy,
+        certification: _selectedCertification,
+        status: _selectedStatus,
         limit: _pageSize,
       );
       if (mounted) {
@@ -196,6 +203,8 @@ class _SearchScreenState extends State<SearchScreen> {
       _selectedType = null;
       _selectedYear = null;
       _selectedRating = null;
+      _selectedCertification = null;
+      _selectedStatus = null;
       _sortBy = 'latest';
       _lastDoc = null;
       _hasMore = true;
@@ -239,6 +248,8 @@ class _SearchScreenState extends State<SearchScreen> {
         year: _selectedYear,
         rating: _selectedRating,
         sortBy: _sortBy,
+        certification: _selectedCertification,
+        status: _selectedStatus,
         limit: _pageSize,
         startAfter: _lastDoc,
       );
@@ -282,6 +293,12 @@ class _SearchScreenState extends State<SearchScreen> {
           break;
         case 'rating':
           _selectedRating = null;
+          break;
+        case 'certification':
+          _selectedCertification = null;
+          break;
+        case 'status':
+          _selectedStatus = null;
           break;
       }
     });
@@ -372,6 +389,8 @@ class _SearchScreenState extends State<SearchScreen> {
                               _selectedType = null;
                               _selectedYear = null;
                               _selectedRating = null;
+                              _selectedCertification = null;
+                              _selectedStatus = null;
                               _sortBy = 'latest';
                             });
                           },
@@ -412,6 +431,22 @@ class _SearchScreenState extends State<SearchScreen> {
                         _buildFilterSection(
                           title: appConfig.translate('year'),
                           child: _buildYearSelector(appConfig, theme, setModalState),
+                        ),
+
+                        const SizedBox(height: 20),
+
+                        // Phase 4.23 — Content Rating filter (PG-13, R, TV-MA, etc.)
+                        _buildFilterSection(
+                          title: appConfig.translate('content_rating'),
+                          child: _buildCertificationSelector(appConfig, theme, setModalState),
+                        ),
+
+                        const SizedBox(height: 20),
+
+                        // Phase 4.23 — Status filter (Released, Returning Series, Ended, etc.)
+                        _buildFilterSection(
+                          title: appConfig.translate('status'),
+                          child: _buildStatusSelector(appConfig, theme, setModalState),
                         ),
 
                         const SizedBox(height: 20),
@@ -675,6 +710,150 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
+  // ===========================================================================
+  // Phase 4.23 — Content Rating (certification) + Status selectors
+  // ===========================================================================
+  // TMDB already fetches and stores both fields on every movie/series doc
+  // (see tmdb_service.dart mapMovieToFirestore / mapTVToFirestore).
+  // Movies created before Task 38 Req 2 may have null fields — those are
+  // simply excluded from filtered results. Bro can run a TMDB Sync on older
+  // posts to backfill the certification/status fields.
+
+  Widget _buildCertificationSelector(
+      AppConfig appConfig, ThemeData theme, StateSetter setModalState) {
+    final isDark = theme.brightness == Brightness.dark;
+    // Common TMDB certifications — both movie and TV variants included.
+    // Filterable exactly as stored in Firestore (case-sensitive match).
+    final certifications = <String>[
+      'G', 'PG', 'PG-13', 'R', 'NC-17', 'NR',
+      'TV-G', 'TV-PG', 'TV-14', 'TV-MA',
+    ];
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        // "All" option
+        ChoiceChip(
+          label: Text(appConfig.translate('type_all')),
+          selected: _selectedCertification == null,
+          onSelected: (selected) {
+            setModalState(() {
+              _selectedCertification = null;
+            });
+          },
+          selectedColor: const Color(0xFFE50914).withOpacity(0.2),
+          backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
+          labelStyle: TextStyle(
+            color: _selectedCertification == null
+                ? const Color(0xFFE50914)
+                : isDark ? Colors.white70 : Colors.black87,
+            fontWeight: _selectedCertification == null ? FontWeight.bold : FontWeight.normal,
+          ),
+          side: BorderSide(
+            color: _selectedCertification == null
+                ? const Color(0xFFE50914)
+                : isDark ? Colors.white24 : Colors.grey.shade400,
+          ),
+        ),
+        ...certifications.map((cert) {
+          final isSelected = _selectedCertification == cert;
+          return ChoiceChip(
+            label: Text(cert),
+            selected: isSelected,
+            onSelected: (selected) {
+              setModalState(() {
+                _selectedCertification = selected ? cert : null;
+              });
+            },
+            selectedColor: const Color(0xFFE50914).withOpacity(0.2),
+            backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
+            labelStyle: TextStyle(
+              color: isSelected ? const Color(0xFFE50914) : isDark ? Colors.white70 : Colors.black87,
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            ),
+            side: BorderSide(
+              color: isSelected
+                  ? const Color(0xFFE50914)
+                  : isDark ? Colors.white24 : Colors.grey.shade400,
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  Widget _buildStatusSelector(
+      AppConfig appConfig, ThemeData theme, StateSetter setModalState) {
+    final isDark = theme.brightness == Brightness.dark;
+    // Phase 4.23 (Option A) — start with the three SERIES statuses that
+    // already have Firestore composite indexes for the admin dashboard
+    // (see firestore_content_service.dart ongoingSeries/endedSeries queries).
+    // Movies use "Released" — including it here so users can find movies
+    // that are out vs rumored/in-production. Future Phase can extend to the
+    // full TMDB status enum if Bro wants more granularity.
+    final statuses = <String>[
+      'Released',          // movies that are out
+      'Returning Series',  // ongoing series
+      'Ended',             // completed series
+      'Canceled',          // cancelled series
+    ];
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        // "All" option
+        ChoiceChip(
+          label: Text(appConfig.translate('type_all')),
+          selected: _selectedStatus == null,
+          onSelected: (selected) {
+            setModalState(() {
+              _selectedStatus = null;
+            });
+          },
+          selectedColor: const Color(0xFFE50914).withOpacity(0.2),
+          backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
+          labelStyle: TextStyle(
+            color: _selectedStatus == null
+                ? const Color(0xFFE50914)
+                : isDark ? Colors.white70 : Colors.black87,
+            fontWeight: _selectedStatus == null ? FontWeight.bold : FontWeight.normal,
+          ),
+          side: BorderSide(
+            color: _selectedStatus == null
+                ? const Color(0xFFE50914)
+                : isDark ? Colors.white24 : Colors.grey.shade400,
+          ),
+        ),
+        ...statuses.map((status) {
+          final isSelected = _selectedStatus == status;
+          return ChoiceChip(
+            label: Text(status),
+            selected: isSelected,
+            onSelected: (selected) {
+              setModalState(() {
+                _selectedStatus = selected ? status : null;
+              });
+            },
+            selectedColor: const Color(0xFFE50914).withOpacity(0.2),
+            backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
+            labelStyle: TextStyle(
+              color: isSelected ? const Color(0xFFE50914) : isDark ? Colors.white70 : Colors.black87,
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              fontSize: 13,
+            ),
+            side: BorderSide(
+              color: isSelected
+                  ? const Color(0xFFE50914)
+                  : isDark ? Colors.white24 : Colors.grey.shade400,
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
   Widget _buildSortSelector(AppConfig appConfig, StateSetter setModalState) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -879,6 +1058,19 @@ class _SearchScreenState extends State<SearchScreen> {
                             _buildActiveFilterChip(
                               label: '${_selectedRating}+ ★',
                               onRemove: () => _removeFilter('rating'),
+                              theme: theme,
+                            ),
+                          // Phase 4.23 — certification + status chips
+                          if (_selectedCertification != null)
+                            _buildActiveFilterChip(
+                              label: _selectedCertification!,
+                              onRemove: () => _removeFilter('certification'),
+                              theme: theme,
+                            ),
+                          if (_selectedStatus != null)
+                            _buildActiveFilterChip(
+                              label: _selectedStatus!,
+                              onRemove: () => _removeFilter('status'),
                               theme: theme,
                             ),
                           if (_sortBy != 'latest')

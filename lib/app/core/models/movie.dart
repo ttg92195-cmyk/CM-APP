@@ -15,6 +15,11 @@ class Movie {
   final List<String> categories;
   final String? type;
   final bool isTrending;
+  // Phase 4.23 — content rating (e.g. 'PG-13', 'R', 'TV-MA') + TMDB status
+  // (e.g. 'Released', 'Returning Series', 'Ended'). Both are nullable for
+  // backward compat with docs created before Task 38 Req 2.
+  final String? certification;
+  final String? status;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -33,6 +38,8 @@ class Movie {
     this.categories = const [],
     this.type,
     this.isTrending = false,
+    this.certification,
+    this.status,
     this.createdAt,
     this.updatedAt,
   });
@@ -83,6 +90,8 @@ class Movie {
       categories: _parseStringList(map['categories']),
       type: _parseNullableString(map['type']),
       isTrending: _parseBool(map['isTrending']),
+      certification: _parseNullableString(map['certification']),
+      status: _parseNullableString(map['status']),
       createdAt: _parseDateTime(map['createdAt']),
       updatedAt: _parseDateTime(map['updatedAt']),
     );
@@ -104,6 +113,8 @@ class Movie {
       'categories': categories,
       'type': type,
       'isTrending': isTrending,
+      'certification': certification,
+      'status': status,
       'createdAt': createdAt?.toIso8601String(),
       'updatedAt': updatedAt?.toIso8601String(),
     };
