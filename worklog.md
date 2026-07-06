@@ -5715,3 +5715,50 @@ Stage Summary:
   - Catalogs >5000 movies will see a debugPrint warning but search still works for the first 5000 docs.
 - Future improvement (not in this phase): backfill `search_keywords` with character bigrams so Strategy 2 can do true server-side substring search. This would eliminate the need for the substring fallback entirely. Requires a one-time migration script over all movie docs.
 - Next: Bro to test — search "o", "a", "x" etc. in BOTH the user-facing Search screen AND the Admin Panel All Posts search. Previously-missing movies like "Your Name" should now appear.
+
+---
+Task ID: 4.23
+Agent: Main Agent
+Task: Add two new filters to the Search filter modal: (1) Content Rating (PG-13, R, TV-MA, etc.) and (2) Status (Released, Returning Series, Ended, Canceled). Bro chose Option A (Series statuses only, plus "Released" for movies) + No backfill.
+
+Work Log:
+- Pulled latest from GitHub main (no changes, already at f926f3d).
+- Used Explore subagent to fully map search screen + service + Movie model + TMDB cert parsing:
+  - `Movie` model did NOT have `certification` or `status` fields, but `MovieDetail` did.
+  - TMDB service ALREADY fetches + parses + writes both fields to Firestore movie docs (Task 38 Req 2 work).
+  - `_selectedRating` filter is NUMERIC (TMDB vote_average ≥ N), NOT content rating. New filter is distinct.
+  - `(type ASC, status ASC)` composite index already exists for admin dashboard queries — reusable.
+- Modified `lib/app/core/models/movie.dart`:
+  - Added `final String? certification;` and `final String? status;` fields with Phase 4.23 comment.
+  - Added both to constructor as named optional params.
+  - Added both to `fromMap` via existing `_parseNullableString` helper (defensive — never throws).
+  - Added both to `toMap` for round-trip support.
+- Modified `lib/app/core/services/firestore_content_service.dart`:
+  - `searchMoviesWithFilters`: added `String? certification, String? status` params. Server-side `where` clause ONLY when genre is NOT set (avoids 3-field composite index requirement). Client-side fallback added for the genre-branch.
+  - `_searchWithKeyword`: same params added. Both filtered client-side because the keyword path uses prefix/substring/arrayContains strategies that can't combine with extra where clauses cleanly.
+- Modified `lib/app/ui/screens/search_screen.dart`:
+  - Added `_selectedCertification` and `_selectedStatus` state vars.
+  - Updated `_hasActiveFilters` getter to include both new vars.
+  - Updated `_clearFilters`, `_removeFilter` (added 'certification' + 'status' switch cases).
+  - Updated both `_search()` and `_loadMore()` calls to pass the new params to `searchMoviesWithFilters`.
+  - Updated modal's "Clear Filters" button to also reset both new vars.
+  - Added two new filter sections in the modal between Year and Min Rating:
+    * Content Rating section with `_buildCertificationSelector` (10 chips + All)
+    * Status section with `_buildStatusSelector` (4 chips + All)
+  - Added entries in the active-filter-chip strip for both new filters.
+- Modified `assets/lang/en.json` and `assets/lang/my.json`:
+  - Added `content_rating` and `status` keys.
+  - English: "Content Rating", "Status".
+  - Burmese: "အသက်အရွယ် သတ်မှတ်ချက်", "အခြေအနေ".
+  - JSON validated via `python3 -c "import json; ..."`.
+- Verified syntax via Python brace/paren balance check — all 3 modified .dart files have 0 diff.
+- Committed as `30bff45` and pushed to GitHub main.
+
+Stage Summary:
+- Feature: Search filter modal now has Content Rating + Status sections. Users can filter by PG-13, R, TV-MA, etc. and by Released / Returning Series / Ended / Canceled.
+- Files modified: 5 (movie.dart, firestore_content_service.dart, search_screen.dart, en.json, my.json).
+- Commit: `30bff45` on main, pushed to origin.
+- Risk: Low. Pure additive UI + service params. No existing filter behavior changed.
+- Backward compat: Old movie docs without certification/status fields → filters won't match them (graceful). Bro can run TMDB Sync on old posts to backfill.
+- Firestore index: single-field `certification` index auto-created on first query. (type ASC, status ASC) already exists for series statuses.
+- Next: Bro to test — open Search, tap Filter icon, try the new Content Rating + Status chips. Apply and verify the results match the filter.
