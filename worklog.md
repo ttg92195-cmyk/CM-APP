@@ -5673,3 +5673,45 @@ Stage Summary:
 - Risk: Very low. Pure additive UI. No Firestore schema change. No new API calls. Existing posts without `updatedAt` will simply not show the badge (wasEdited returns false).
 - Backward compat: Old posts created before `updatedAt` was added (if any) → wasEdited returns false → no badge shown. Safe.
 - Next: Bro to test — open Admin Panel, edit a post via the edit icon, save, return to list. The edited post should now show orange EDITED badge + italic "Edited just now"/"Edited X min ago" text.
+
+---
+Task ID: 4.22
+Agent: Main Agent
+Task: Fix incomplete search results for short keywords (1-2 chars). Bro reported that searching "o" did not return "Your Name" even though "Your Name" was imported. Pagination was NOT the issue (Bro explicitly clarified). The issue is that short-query matches return incomplete sets, not just the visible page.
+
+Work Log:
+- Pulled latest from GitHub main (no changes, already up-to-date at c471f51).
+- Used Explore subagent to fully map the search pipeline:
+  - Search UI: `lib/app/ui/screens/search_screen.dart` — debounced 400ms, page size 20, cursor pagination via `startAfterDocument`.
+  - Service: `firestore_content_service.dart` — `_searchWithKeyword` (line 1223) for user search, `searchAllPosts` (line 620) for admin panel.
+  - Three strategies in `_searchWithKeyword`:
+    * Strategy 1 (prefix on title_lowercase) — paginated, the only cursor-stable one
+    * Strategy 2 (arrayContains on search_keywords) — page 1 only, word-level tokenizer so "o" only matches titles where "o" is a whole word (e.g. "O Brother")
+    * Strategy 1.5 (substring fallback) — page 1 only, ≤2-char queries only. OLD CODE: `_moviesRef.limit(fetchLimit).get()` with fetchLimit=100, no orderBy.
+  - `_generateSearchKeywords` (line 2860) is WORD-level, not character n-grams. Confirmed by reading the function.
+- Root cause confirmed: For query "o" searching for movie "Your Name":
+  * Strategy 1 misses (title doesn't start with "o")
+  * Strategy 2 misses (search_keywords=["your","name"], no "o" element)
+  * Strategy 1.5 WOULD match via `titleLowercase.contains("o")` BUT only scanned first 100 docs in Firestore natural order. "Your Name" beyond doc #100 → silently missed.
+- Same bug exists in `searchAllPosts` (admin panel) at line 656 with limit 200.
+- Applied identical fix to BOTH call sites:
+  * Replaced bare `.limit(N).get()` with paginated full-scan loop
+  * Batch size: 500 docs per Firestore round-trip
+  * Safety cap: 5000 docs total (10 batches) — bounds cost on large catalogs
+  * Uses `startAfterDocument(batchSnapshot.docs.last)` cursor to advance
+  * Logs a debugPrint warning if safety cap is hit (suggests backfilling character n-grams as future improvement)
+- Preserved all existing merge logic (Strategy 1 first, then 2, then 1.5), all existing filters (genre/type/year/rating), all existing sort options (rating/name/latest), all existing cursor return logic.
+- Added detailed Phase 4.22 inline comments explaining the bug + fix at both call sites for future maintainers.
+- Verified `QuerySnapshot` type is in scope via `package:cloud_firestore/cloud_firestore.dart` import at line 3.
+- Committed as `f926f3d` and pushed to GitHub main.
+
+Stage Summary:
+- Bug: real, confirmed, root-caused to two specific lines (1317 and 656).
+- Files modified: `lib/app/core/services/firestore_content_service.dart` (+72 lines, -16 deletions, net +56 lines including comments).
+- Commit: `f926f3d` on main, pushed to origin.
+- Risk: Low.
+  - Only the 1-2 char query path is affected. 3+ char queries use Strategy 1+2 unchanged.
+  - Scan is bounded at 5000 docs → worst-case 10 sequential Firestore round-trips ≈ 1-3s. Acceptable for the rare short-query case.
+  - Catalogs >5000 movies will see a debugPrint warning but search still works for the first 5000 docs.
+- Future improvement (not in this phase): backfill `search_keywords` with character bigrams so Strategy 2 can do true server-side substring search. This would eliminate the need for the substring fallback entirely. Requires a one-time migration script over all movie docs.
+- Next: Bro to test — search "o", "a", "x" etc. in BOTH the user-facing Search screen AND the Admin Panel All Posts search. Previously-missing movies like "Your Name" should now appear.
