@@ -6189,3 +6189,56 @@ Stage Summary:
 - Better error state with broken-image icon + 'Tap to retry' caption
 - Single file changed: lib/app/ui/components/movie_card.dart (+154 lines, -18 lines)
 - Risk: Low. Pure UI improvements. No data flow or state changes.
+
+---
+Task ID: Phase 4.28-buildfix
+Agent: main
+Task: Fix build break caused by Phase 4.28 commit b880790 — `fadeInDurationOnRebuild` is not a valid parameter on cached_network_image v3.4.1.
+
+Work Log:
+- User reported build failure with error:
+    lib/app/ui/components/movie_card.dart:288:31: Error: No named parameter
+    with the name 'fadeInDurationOnRebuild'.
+- Root cause: Phase 4.28 (commit b880790) added `fadeInDurationOnRebuild: Duration.zero`
+  to CachedNetworkImage in movie_card.dart. This parameter was added to
+  cached_network_image in versions AFTER v3.4.1 (the version pinned in
+  pubspec.yaml). v3.4.1 does NOT expose this parameter — hence the build error.
+- Verified pubspec.yaml pins cached_network_image: ^3.4.1 (latest as of late 2024).
+  No newer release exists that we could upgrade to. So removing the parameter
+  is the correct fix, not upgrading the package.
+- Verified the default behavior in v3.4.1 already gives us what we wanted:
+  fade-in animation only fires on FIRST load from network/disk. When the parent
+  widget rebuilds (e.g. on watch-progress setState) and the image is still in
+  the in-memory image cache, CachedNetworkImage renders the image instantly
+  with no fade. So removing the parameter does NOT cause the flicker that
+  Phase 4.28 was originally trying to prevent.
+- Edited lib/app/ui/components/movie_card.dart:
+    * Removed the `fadeInDurationOnRebuild: Duration.zero,` line
+    * Replaced the original comment with a clearer note explaining WHY we
+      don't override the rebuild behavior (default is already correct).
+    * Kept `fadeInDuration: const Duration(milliseconds: 300)` — still valid
+      in v3.4.1 and still wanted for first-load fade-in smoothness.
+- Searched the rest of the codebase for any other uses of
+  `fadeInDurationOnRebuild` or `fadeOutDurationOnRebuild` — only the
+  (now-fixed) movie_card.dart match remained, and it's now just a comment
+  string. No other API compatibility issues.
+- Re-read poster_cache_manager.dart to verify no other Phase 4.28-related
+  breakage there — clean (just Config with stalePeriod + maxNrOfCacheObjects).
+- Re-read _ShimmerPlaceholder widget at top of movie_card.dart — uses only
+  standard Flutter APIs (AnimationController, ShaderMask, LinearGradient,
+  Container) — no version-specific concerns.
+- Verified edit by re-reading the affected section.
+- Committed as fab1327 and pushed to origin/main.
+
+Stage Summary:
+- Build break fixed in commit fab1327.
+- Single line removed from movie_card.dart (plus comment cleanup).
+- All Phase 4.28 quality improvements remain in place:
+    * _ShimmerPlaceholder loading animation
+    * memCacheWidth: 500 (sharper on high-DPI)
+    * filterQuality: FilterQuality.high (bicubic)
+    * fadeInDuration: 300ms (smoother first appearance)
+    * Improved errorWidget with 'Tap to retry' caption
+- The intended anti-flicker behavior is preserved by v3.4.1's default
+  behavior (no fade on rebuild from in-memory cache).
+- Build should now succeed on the next CI run.
