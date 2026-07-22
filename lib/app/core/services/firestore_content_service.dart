@@ -1166,15 +1166,40 @@ class FirestoreContentService {
           (genre == null || genre.isEmpty)) {
         query = query.where('status', isEqualTo: status);
       }
+      // Phase 4.26 — server-side year filter. Previously this was client-side
+      // only, which only filtered the 20 most recent docs — so picking an
+      // older year (e.g. 2010) returned 0 results. Now we ask Firestore for
+      // docs whose `year` field matches, and sort/paginate client-side.
+      // Same index-avoidance pattern as certification/status: skip when genre
+      // is set (3-field composite index would be required).
+      if (year != null &&
+          year.isNotEmpty &&
+          (genre == null || genre.isEmpty)) {
+        query = query.where('year', isEqualTo: year);
+      }
 
-      // Order by - only if we don't have genre filter (composite index issue)
-      if (sortBy == 'rating') {
-        query = query.orderBy('rating', descending: true);
-      } else if (sortBy == 'name') {
-        query = query.orderBy('title');
-      } else {
-        if (genre == null || genre.isEmpty) {
-          query = query.orderBy('createdAt', descending: true);
+      // Phase 4.26 — determine whether we can safely use server-side orderBy.
+      // Firestore requires a composite index for `where(X).orderBy(Y)` when
+      // X != Y. We have indexes for (type, createdAt) and (categories, createdAt)
+      // only — NOT for (certification, createdAt), (status, createdAt), or
+      // (year, createdAt). When any of those filters is active, we must skip
+      // server-side orderBy entirely and sort client-side instead.
+      final hasIndexlessFilter =
+          (certification != null && certification.isNotEmpty && (genre == null || genre.isEmpty)) ||
+          (status != null && status.isNotEmpty && (genre == null || genre.isEmpty)) ||
+          (year != null && year.isNotEmpty && (genre == null || genre.isEmpty));
+
+      // Order by - only if we don't have a genre filter AND none of the
+      // indexless filters (certification/status/year) are active.
+      if (!hasIndexlessFilter) {
+        if (sortBy == 'rating') {
+          query = query.orderBy('rating', descending: true);
+        } else if (sortBy == 'name') {
+          query = query.orderBy('title');
+        } else {
+          if (genre == null || genre.isEmpty) {
+            query = query.orderBy('createdAt', descending: true);
+          }
         }
       }
 
@@ -1201,8 +1226,9 @@ class FirestoreContentService {
         filtered = filtered.where((m) => m.type == type).toList();
       }
 
-      // Year filter
-      if (year != null && year.isNotEmpty) {
+      // Year filter (client-side fallback when genre is set — the server-side
+      // where clause is skipped in that case to avoid a 3-field composite index)
+      if (year != null && year.isNotEmpty && genre != null && genre.isNotEmpty) {
         filtered = filtered.where((m) => m.year == year).toList();
       }
 
@@ -1226,8 +1252,11 @@ class FirestoreContentService {
         filtered = filtered.where((m) => m.status == status).toList();
       }
 
-      // Client-side sort fallback for genre queries
-      if (genre != null && genre.isNotEmpty) {
+      // Client-side sort fallback for genre queries OR when we couldn't use
+      // server-side orderBy due to missing composite indexes (Phase 4.26).
+      final needsClientSort =
+          (genre != null && genre.isNotEmpty) || hasIndexlessFilter;
+      if (needsClientSort) {
         if (sortBy == 'rating') {
           filtered.sort((a, b) =>
               (double.tryParse(b.rating ?? '0') ?? 0.0)
@@ -1235,8 +1264,12 @@ class FirestoreContentService {
         } else if (sortBy == 'name') {
           filtered.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
         } else {
-          filtered.sort((a, b) => (b.createdAt ?? DateTime(2000))
-              .compareTo(a.createdAt ?? DateTime(2000)));
+          // 'latest' — sort by updatedAt with fallback to createdAt
+          filtered.sort((a, b) {
+            final aDate = a.updatedAt ?? a.createdAt ?? DateTime(2000);
+            final bDate = b.updatedAt ?? b.createdAt ?? DateTime(2000);
+            return bDate.compareTo(aDate);
+          });
         }
       }
 
