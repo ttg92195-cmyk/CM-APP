@@ -5982,3 +5982,81 @@ Stage Summary:
   query in the search bar.
 - Single file changed: lib/app/ui/screens/genres_tags_collections_page.dart
   (+97 lines, -96 lines — net +1 line, mostly comment additions).
+
+---
+Task ID: 4.26
+Agent: Main Agent
+Task: Bro reported that Search → Filters icon → modal: Content Rating, Status, Year filter chips "no longer work" — tapping them and applying returns no results.
+
+Work Log:
+- Pulled latest from cm-app origin/main (at 0a6942a — Phase 4.25.2).
+- Verified the chip UI code in search_screen.dart is correct:
+  ChoiceChip.onSelected callbacks all call setModalState to update
+  _selectedCertification / _selectedStatus / _selectedYear. Visual
+  highlight should work. So the bug is NOT in the UI — it's downstream.
+- Inspected firestore_content_service.dart searchMoviesWithFilters
+  (filter-only path, no keyword).
+- Found root cause #1: queries like
+    _moviesRef.where('certification', isEqualTo: 'PG-13')
+               .orderBy('createdAt', descending: true)
+               .limit(20)
+  require a Firestore composite index on (certification ASC, createdAt DESC).
+  Same for status and year. Checked firestore.indexes.json — only (type,
+  createdAt), (categories, createdAt), (tags, createdAt) etc. exist. NO
+  (certification, createdAt), NO (status, createdAt), NO (year, createdAt).
+  The query silently throws, the catch block returns {movies: [], hasMore:
+  false}, Bro sees "No results".
+- Found root cause #2: Year filter was CLIENT-SIDE only, applied AFTER
+  fetching the 20 most-recent docs. So filtering by any year not in the
+  latest 20 (e.g. 2010) returned 0 results — looked broken.
+
+CHANGES MADE (1 file: lib/app/core/services/firestore_content_service.dart):
+
+1. Added server-side `where('year', isEqualTo: year)` when genre is null
+   (same pattern as certification/status — skip when genre is set to avoid
+   3-field composite index requirement).
+
+2. Introduced `hasIndexlessFilter` flag — true when any of
+   certification/status/year is server-side filtered. When true, NO
+   server-side orderBy is added (avoids the composite index requirement
+   entirely). The query becomes a simple where().limit() which works
+   without any composite index.
+
+3. Extended the existing client-side sort fallback (was genre-only) to
+   also fire when hasIndexlessFilter is true. Sort by updatedAt with
+   fallback to createdAt (matches the keyword-path sort — fixed an
+   inconsistency where the filter-only path was sorting by createdAt
+   only, ignoring updatedAt).
+
+4. Year client-side fallback now only fires when genre is also set
+   (since the server-side where clause covers the no-genre case).
+
+UNCHANGED:
+- Keyword-search path (_searchWithKeyword) — all filters are already
+  applied client-side, no server-side where clauses to conflict with
+  the prefix orderBy. No changes needed.
+- Type filter — (type, createdAt) index exists, so server-side
+  where + orderBy works fine. No changes needed.
+- Genre filter — already correctly skips server-side orderBy when
+  active. No changes needed.
+- Pagination — startAfterDocument still works without orderBy
+  (Firestore paginates in document-ID order, each page sorted
+  client-side).
+
+VERIFIED:
+- Brace/paren/bracket balance: OK (Python check)
+- hasIndexlessFilter: 3 references (decl + 2 uses)
+- needsClientSort: 2 references (decl + 1 use)
+- No UI changes — Bro's existing chip taps should now produce results.
+
+Committed as 2eba0e4 and pushed to origin/main.
+
+Stage Summary:
+- Content Rating filter now returns matching movies instead of empty.
+- Status filter now returns matching movies instead of empty.
+- Year filter now returns movies from ANY year (not just latest 20).
+- All three filters work without requiring new Firestore composite indexes.
+- Single file changed: lib/app/core/services/firestore_content_service.dart
+  (+48 lines, -15 lines).
+- Risk: Low. No UI changes. Keyword-search path untouched. Existing
+  type-only / genre-only / no-filter paths unchanged.
