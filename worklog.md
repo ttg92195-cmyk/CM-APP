@@ -5919,3 +5919,66 @@ Work Log:
 Stage Summary:
 - Single-line fix (1 insertion, 1 deletion).
 - Build should now pass on GitHub Actions.
+
+---
+Task ID: 4.25.2
+Agent: Main Agent
+Task: Two follow-up fixes for Phase 4.25 Collections tab redesign:
+  (1) Remove Movies/Series sub-tabs (Bro doesn't want them on Collections)
+  (2) Auto-clear search field when returning from FilterResultPage
+
+Work Log:
+- Pulled latest from GitHub main (at 52f740c — Phase 4.25.1 build fix).
+
+CHANGE 1 — Remove Movies/Series sub-tabs from Collections tab:
+- Removed _collectionsSubTabController field.
+- Removed its initialization in initState().
+- Removed its disposal in dispose().
+- _buildCollectionsTab: removed the TabBar at top + TabBarView wrapper.
+  Now just: Column[search/sort bar, Expanded(single grid)].
+- _buildCollectionGrid: removed the {required String typeFilter} param.
+- _CollectionCard: removed the `String? typeFilter` field entirely.
+- Tapping a card now navigates to FilterResultPage with collectionName
+  ONLY (no typeFilter) — so both movies AND series for that collection
+  are shown.
+- Count badge simplified from '24 movies'/'5 series' to just '24' with
+  a small movie icon (since we no longer know which type the count
+  refers to without the sub-tab context).
+- Genres and Tags tabs UNCHANGED — they keep their Movies/Series sub-tabs
+  (Bro only asked about Collections).
+
+CHANGE 2 — Auto-clear search on return:
+- _CollectionCard no longer owns its navigation logic. Parent passes an
+  `onTap: Future<void> Function()?` callback.
+- The onTap callback in _buildCollectionGrid:
+    a) FocusManager.instance.primaryFocus?.unfocus() — drops keyboard
+    b) await Navigator.push(FilterResultPage(collectionName: name))
+    c) if (mounted) _clearCollectionSearch() — clears field + state
+- Added helper method _clearCollectionSearch() that:
+    - Calls _collectionSearchController.clear() (clears the TextField)
+    - setState(() => _collectionSearchQuery = '') (updates filter)
+    - FocusManager.instance.primaryFocus?.unfocus() (hides keyboard)
+- The existing clear (X) button in the search bar also uses this helper
+  (was previously inline anonymous closure).
+
+VERIFIED:
+- Brace/paren/bracket balance: OK
+- _collectionsSubTabController: 0 references (fully removed)
+- _clearCollectionSearch: 3 references (definition + 2 call sites)
+- _CollectionCard.onTap callback pattern works with GestureDetector.onTap
+  (which accepts Future<void> Function() — actually GestureDetector.onTap
+  is VoidCallback = void Function(), but assigning a Future<void>
+  Function() works because Future<void> is assignable to void in Dart).
+- Genres/Tags still pass typeFilter through _buildNeonGrid (unchanged).
+
+Committed as 0a6942a and pushed to origin/main.
+
+Stage Summary:
+- Collections tab now: just search bar + sort dropdown + single lazy grid.
+  No more Movies/Series sub-tabs.
+- Tapping a collection card shows all movies AND series for that collection.
+- Returning from FilterResultPage auto-clears the search field — the user
+  lands back on a fresh list of all collections, no leftover 'Marvel'
+  query in the search bar.
+- Single file changed: lib/app/ui/screens/genres_tags_collections_page.dart
+  (+97 lines, -96 lines — net +1 line, mostly comment additions).
