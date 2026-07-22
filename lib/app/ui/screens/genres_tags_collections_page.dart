@@ -28,15 +28,20 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
   List<TagAndGenres> _collections = [];
   bool _isLoading = true;
 
-  // Sub-tab controllers for Genres, Tags, and (Phase 4.25) Collections
+  // Sub-tab controllers for Genres and Tags only.
+  // (Phase 4.25.2 — Collections sub-tabs removed by Bro's request;
+  // a single grid now shows all collections. The FilterResultPage will
+  // display both movies and series for the tapped collection.)
   late TabController _genresSubTabController;
   late TabController _tagsSubTabController;
-  late TabController _collectionsSubTabController;
 
-  // Phase 4.25 — Collections tab UX: search + sort + Movies/Series sub-tabs.
+  // Phase 4.25 — Collections tab UX: search + sort.
   // Search lets users quickly find "Marvel" / "DC" / "Harry Potter" when
   // the collection list grows long. Sort lets them order by A→Z, Z→A, or
-  // Most Movies (moviesCount desc). Sub-tabs match Genres/Tags structure.
+  // Most Movies (moviesCount desc).
+  // Phase 4.25.2 — search is auto-cleared when returning from
+  // FilterResultPage so the user lands back on a fresh list (Bro's
+  // complaint: "Search ကို Auto နိုပ်ထားသလိုဖြစ်နေပါတယ်").
   final TextEditingController _collectionSearchController = TextEditingController();
   String _collectionSearchQuery = '';
   // 'az' | 'za' | 'most' — default 'az' for predictable alphabetical browsing.
@@ -48,7 +53,6 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
     _tabController = TabController(length: 3, vsync: this);
     _genresSubTabController = TabController(length: 2, vsync: this);
     _tagsSubTabController = TabController(length: 2, vsync: this);
-    _collectionsSubTabController = TabController(length: 2, vsync: this);
     _loadData();
   }
 
@@ -57,9 +61,18 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
     _tabController.dispose();
     _genresSubTabController.dispose();
     _tagsSubTabController.dispose();
-    _collectionsSubTabController.dispose();
     _collectionSearchController.dispose();
     super.dispose();
+  }
+
+  /// Phase 4.25.2 — Clears the Collections search field and unfocuses.
+  /// Called when the user returns from FilterResultPage so the list
+  /// shows all collections again (not the previous filtered subset).
+  void _clearCollectionSearch() {
+    _collectionSearchController.clear();
+    setState(() => _collectionSearchQuery = '');
+    // Drop keyboard focus so it doesn't pop back up on return.
+    FocusManager.instance.primaryFocus?.unfocus();
   }
 
   Future<void> _loadData() async {
@@ -287,23 +300,21 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
     );
   }
 
-  // ==================== COLLECTIONS TAB (Phase 4.25 redesign) ====================
+  // ==================== COLLECTIONS TAB (Phase 4.25.2 — no sub-tabs) ====================
   //
-  // BEFORE: a single flat SingleChildScrollView wrapping a shrinkWrap
-  // GridView of solid-red _NeonGlowButton rectangles. With many
-  // collections (Marvel, DC, Harry Potter, Scooby-Doo!, ...) the screen
-  // became a long wall of identical red boxes — hard to scan, hard to
-  // find anything, no Movies/Series split, no search, no sort.
+  // Phase 4.25 originally added Movies/Series sub-tabs to mirror Genres
+  // and Tags. Bro reported he doesn't want them on Collections — the
+  // collection list itself is the same regardless of type, and the
+  // sub-tabs just added an extra tap. They've been removed.
   //
-  // AFTER: mirrors the Genres/Tags structure (Movies/Series sub-tabs at
-  // top), plus a search bar + sort dropdown above the grid. The grid
-  // itself is now a LAZY GridView.builder (no shrinkWrap) so cards
-  // recycle as the user scrolls — handles 100+ collections without
-  // jank. Cards are larger 2-column tiles with a subtle gradient, a
-  // first-letter avatar (so "Marvel" / "DC" are visually distinct at a
-  // glance), and an optional count badge when moviesCount is available.
-  // Alphabetical section headers (M, D, S, H...) break up the list when
-  // sorted A→Z, making it easy to jump to the section the user wants.
+  // What remains: search bar + sort dropdown + a single lazy grid.
+  // Tapping a collection navigates to FilterResultPage with NO
+  // typeFilter (so both movies and series for that collection are shown).
+  //
+  // Phase 4.25.2 — search auto-clears on return from FilterResultPage
+  // (Bro's complaint about "Marvel" staying in the search field after
+  // coming back). The grid resets to showing all collections, and the
+  // keyboard hides via FocusManager.unfocus().
   Widget _buildCollectionsTab(AppConfig appConfig, ThemeData theme) {
     if (_collections.isEmpty) {
       return Center(child: Text(appConfig.translate('no_results')));
@@ -312,26 +323,10 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
 
     return Column(
       children: [
-        // ---- Movies / Series sub-tabs (mirrors Genres/Tags) ----
-        Container(
-          color: theme.colorScheme.surface,
-          child: TabBar(
-            controller: _collectionsSubTabController,
-            labelColor: const Color(0xFFE50914),
-            unselectedLabelColor: theme.colorScheme.onSurface.withOpacity(0.5),
-            indicatorColor: const Color(0xFFE50914),
-            indicatorSize: TabBarIndicatorSize.label,
-            dividerColor: Colors.transparent,
-            tabs: [
-              Tab(text: appConfig.translate('movies')),
-              Tab(text: appConfig.translate('series')),
-            ],
-          ),
-        ),
         // ---- Search + sort bar ----
         Container(
           color: theme.colorScheme.surface,
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
           child: Row(
             children: [
               // Search field
@@ -363,10 +358,7 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
                               size: 18,
                               color: theme.colorScheme.onSurface.withOpacity(0.5),
                             ),
-                            onPressed: () {
-                              _collectionSearchController.clear();
-                              setState(() => _collectionSearchQuery = '');
-                            },
+                            onPressed: _clearCollectionSearch,
                           )
                         : null,
                     isDense: true,
@@ -398,15 +390,9 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
             ],
           ),
         ),
-        // ---- Grid (lazy) ----
+        // ---- Grid (lazy, single — no sub-tabs) ----
         Expanded(
-          child: TabBarView(
-            controller: _collectionsSubTabController,
-            children: [
-              _buildCollectionGrid(appConfig, theme, typeFilter: 'movie'),
-              _buildCollectionGrid(appConfig, theme, typeFilter: 'series'),
-            ],
-          ),
+          child: _buildCollectionGrid(appConfig, theme),
         ),
       ],
     );
@@ -478,17 +464,13 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
     );
   }
 
-  /// Builds the lazy GridView for one Collections sub-tab (Movies or Series).
+  /// Builds the lazy GridView for the Collections tab.
   /// Filtering, sorting, and section headers all happen here.
   ///
-  /// NOTE: We do NOT pass typeFilter down to the server when the user
-  /// taps a collection — the FilterResultPage already supports
-  /// typeFilter and will further filter results. This is consistent with
-  /// the existing Genres/Tags behavior (the sub-tab just pre-selects
-  /// Movies/Series for the *result page*, not for the list of collections
-  /// shown here).
-  Widget _buildCollectionGrid(
-      AppConfig appConfig, ThemeData theme, {required String typeFilter}) {
+  /// Phase 4.25.2 — no longer takes a `typeFilter` param. Tapping a
+  /// card navigates to FilterResultPage with typeFilter=null, so both
+  /// movies and series are shown for the tapped collection.
+  Widget _buildCollectionGrid(AppConfig appConfig, ThemeData theme) {
     final isDark = theme.brightness == Brightness.dark;
 
     // 1. Apply search filter (case-insensitive substring match)
@@ -529,9 +511,7 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
             ),
             const SizedBox(height: 12),
             Text(
-              _collectionSearchQuery.isNotEmpty
-                  ? appConfig.translate('no_results')
-                  : appConfig.translate('no_results'),
+              appConfig.translate('no_results'),
               style: theme.textTheme.bodyLarge?.copyWith(
                 color: theme.colorScheme.onSurface.withOpacity(0.5),
               ),
@@ -550,7 +530,7 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
     if (useSectionHeaders) {
       String? lastSection;
       for (final c in sorted) {
-        final firstChar = _sectionKeyFor(c.name, _collectionSortBy);
+        final firstChar = _sectionKeyFor(c.name);
         if (firstChar != lastSection) {
           items.add(_CollectionListItem.header(firstChar));
           lastSection = firstChar;
@@ -567,7 +547,7 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
-        // Taller tiles (1.4 aspect ratio) give room for the avatar +
+        // Taller tiles (1.6 aspect ratio) give room for the avatar +
         // name + count badge without cramping.
         childAspectRatio: 1.6,
         crossAxisSpacing: 10,
@@ -577,9 +557,6 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
       itemBuilder: (context, index) {
         final item = items[index];
         if (item.isHeader) {
-          // Section headers render as a 2-column-spanning tile. We use
-          // a Container with no padding so the header visually anchors
-          // the row it's in.
           return Container(
             alignment: Alignment.centerLeft,
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
@@ -598,18 +575,36 @@ class _GenresTagsCollectionsPageState extends State<GenresTagsCollectionsPage>
         return _CollectionCard(
           name: collection.name,
           count: collection.moviesCount,
-          typeFilter: typeFilter,
           isDark: isDark,
+          // Phase 4.25.2 — navigate + auto-clear search on return.
+          onTap: () async {
+            // Drop keyboard focus before navigating so it doesn't pop
+            // back up awkwardly when FilterResultPage appears.
+            FocusManager.instance.primaryFocus?.unfocus();
+            await Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => FilterResultPage(
+                  title: collection.name,
+                  // No typeFilter — show both movies and series.
+                  collectionName: collection.name,
+                ),
+              ),
+            );
+            // After the user comes back, clear the search field so the
+            // list shows all collections (Bro's complaint: previously
+            // the search query "Marvel" stayed typed and only Marvel
+            // was visible, which felt confusing).
+            if (mounted) _clearCollectionSearch();
+          },
         );
       },
     );
   }
 
   /// Returns the section header key for a collection name.
-  /// For A→Z: returns the first uppercase letter (digits/symbols → '#').
-  /// For Z→A: same — the headers appear in reverse order naturally
-  /// because the list is already reverse-sorted.
-  static String _sectionKeyFor(String name, String sortMode) {
+  /// Returns the first uppercase letter (digits/symbols → '#').
+  static String _sectionKeyFor(String name) {
     if (name.isEmpty) return '#';
     final c = name[0].toUpperCase();
     if (RegExp(r'[A-Z]').hasMatch(c)) return c;
@@ -694,20 +689,22 @@ class _CollectionListItem {
 ///     dark mode, and a light-to-white gradient in light mode. Keeps
 ///     the Netflix-red brand identity without being a flat slab.
 ///
-/// On tap, navigates to `FilterResultPage` with the collection name and
-/// the active Movies/Series type filter (so the result page already
-/// knows whether to show movies or series).
+/// Phase 4.25.2 — card no longer owns its navigation logic. Instead,
+/// the parent passes an `onTap` callback, which lets the parent do
+/// post-navigation cleanup (clearing the search field on return).
+/// The card just handles its own pressed/animation state.
 class _CollectionCard extends StatefulWidget {
   final String name;
   final int? count;
-  final String? typeFilter; // 'movie' or 'series'
   final bool isDark;
+  /// Called when the user taps the card. The parent owns navigation.
+  final Future<void> Function()? onTap;
 
   const _CollectionCard({
     required this.name,
     required this.count,
-    required this.typeFilter,
     required this.isDark,
+    required this.onTap,
   });
 
   @override
@@ -750,18 +747,7 @@ class _CollectionCardState extends State<_CollectionCard> {
       onTapDown: (_) => setState(() => _isPressed = true),
       onTapUp: (_) => setState(() => _isPressed = false),
       onTapCancel: () => setState(() => _isPressed = false),
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => FilterResultPage(
-              title: widget.name,
-              collectionName: widget.name,
-              typeFilter: widget.typeFilter,
-            ),
-          ),
-        );
-      },
+      onTap: widget.onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         decoration: BoxDecoration(
@@ -852,6 +838,10 @@ class _CollectionCardState extends State<_CollectionCard> {
                         height: 1.2,
                       ),
                     ),
+                    // Phase 4.25.2 — count badge is now type-agnostic
+                    // (just shows the number with a movie icon) since
+                    // we no longer have a Movies/Series sub-tab to
+                    // tell us which type the count refers to.
                     if (hasCount) ...[
                       const SizedBox(height: 4),
                       Container(
@@ -861,13 +851,24 @@ class _CollectionCardState extends State<_CollectionCard> {
                           color: const Color(0xFFE50914).withOpacity(0.15),
                           borderRadius: BorderRadius.circular(4),
                         ),
-                        child: Text(
-                          '${widget.count} ${widget.typeFilter == 'series' ? 'series' : 'movies'}',
-                          style: const TextStyle(
-                            color: Color(0xFFE50914),
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.movie_outlined,
+                              size: 10,
+                              color: Color(0xFFE50914),
+                            ),
+                            const SizedBox(width: 3),
+                            Text(
+                              '${widget.count}',
+                              style: const TextStyle(
+                                color: Color(0xFFE50914),
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
