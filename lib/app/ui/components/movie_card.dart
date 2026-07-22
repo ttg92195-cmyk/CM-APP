@@ -276,16 +276,18 @@ class _MovieCardState extends State<MovieCard> {
                               // a bit jarring (too quick). 300ms feels more
                               // polished and matches Material's standard
                               // motion duration for content appearance.
+                              //
+                              // Note: cached_network_image v3.4.1 (current
+                              // pinned version) does NOT expose a separate
+                              // `fadeInDurationOnRebuild` parameter. However,
+                              // the default behavior in v3.4.1 is exactly
+                              // what we want: the fade-in animation only
+                              // fires on the FIRST load from network/disk —
+                              // when the parent widget rebuilds and the
+                              // image is still in the in-memory cache, the
+                              // image is shown instantly with no fade. So
+                              // we do not need to override anything here.
                               fadeInDuration: const Duration(milliseconds: 300),
-                              // Phase 4.28 — keep the fade-in stable when the
-                              // image is rebuilt (e.g. on parent setState for
-                              // watch-progress update). Without this, every
-                              // rebuild would restart the fade animation,
-                              // making the poster flicker. Setting this to
-                              // Duration.zero means: once the image is in the
-                              // in-memory cache, subsequent builds render it
-                              // instantly with no fade.
-                              fadeInDurationOnRebuild: Duration.zero,
                               // Phase 4.28 — shimmer placeholder. Replaces
                               // the old flat Container — gives the user a
                               // subtle visual indication that the image is
