@@ -6060,3 +6060,58 @@ Stage Summary:
   (+48 lines, -15 lines).
 - Risk: Low. No UI changes. Keyword-search path untouched. Existing
   type-only / genre-only / no-filter paths unchanged.
+
+---
+Task ID: 4.27
+Agent: Main Agent
+Task: Bro reported: when entering Downloads tab, the orange 'Storage Permission Required' banner pops up briefly even when permission is already granted.
+
+Work Log:
+- Pulled latest from cm-app origin/main (at 2eba0e4 — Phase 4.26 search filter fix).
+- Inspected DownloadPage (lib/app/ui/screens/download_page.dart).
+- Verified download_manager_service.dart checkStoragePermission():
+  - Android 11+ (sdkInt >= 30): returns true if no SAF folder selected OR
+    SAF permission is still valid. Always true on fresh installs without
+    SAF setup.
+  - Android 10 and below: returns Permission.storage.isGranted.
+- Confirmed the banner shown to Bro is _buildPermissionBanner (the orange
+  card with 'Storage Permission Required' + 'Allow' button), NOT the
+  modal dialog. It's rendered inline at the top of the page via:
+    if (!_hasStoragePermission && Platform.isAndroid)
+      _buildPermissionBanner(appConfig, theme)
+- Found root cause: _hasStoragePermission is initialized to false in the
+  State class. _checkPermission() is async (queries DeviceInfoPlugin +
+  SharedPreferences + MethodChannel for SAF validity, takes 50-100ms).
+  During this brief window the build() runs with _hasStoragePermission=false,
+  the banner renders. Then _checkPermission resolves with true on Android
+  11+ (scoped storage always works without explicit permission), setState
+  hides the banner. Net visual effect: a flash on/off that looks broken.
+
+CHANGES MADE (1 file: lib/app/ui/screens/download_page.dart):
+
+1. Added _permissionChecked guard flag (default false) to State.
+
+2. _checkPermission() now sets _permissionChecked = true in the same
+   setState call as _hasStoragePermission.
+
+3. Banner render condition changed from:
+     if (!_hasStoragePermission && Platform.isAndroid)
+   to:
+     if (_permissionChecked && !_hasStoragePermission && Platform.isAndroid)
+
+VERIFIED:
+- Brace/paren/bracket balance: OK (Python check)
+- _permissionChecked: 3 references (decl + set + check) — all wired correctly.
+- Banner still appears correctly when permission is genuinely missing
+  (Android 10- without Permission.storage granted, OR Android 11+ with
+  revoked SAF). Just one frame later than before — imperceptible to user.
+
+Committed as d4b184e and pushed to origin/main.
+
+Stage Summary:
+- Downloads tab no longer shows a phantom 'Storage Permission Required'
+  banner flash on entry when permission is already granted.
+- Banner still correctly appears when permission is genuinely missing.
+- Single file changed: lib/app/ui/screens/download_page.dart
+  (+18 lines, -3 lines).
+- Risk: Trivial. Pure UI guard, no permission logic changed.
