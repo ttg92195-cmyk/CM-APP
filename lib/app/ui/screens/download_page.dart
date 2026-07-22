@@ -18,6 +18,13 @@ class DownloadPage extends StatefulWidget {
 class _DownloadPageState extends State<DownloadPage> {
   final DownloadManagerService _downloadManager = DownloadManagerService.instance;
   bool _hasStoragePermission = false;
+  // Phase 4.27 — guard flag. Until the async check completes, we don't know
+  // whether permission is actually granted. Showing the banner during this
+  // brief window (50-100ms) makes it flash on/off when the user enters the
+  // tab — looks broken even though permission IS granted. The flag stays
+  // false until _checkPermission resolves, then banner only appears if
+  // genuinely not granted.
+  bool _permissionChecked = false;
 
   @override
   void initState() {
@@ -31,7 +38,10 @@ class _DownloadPageState extends State<DownloadPage> {
   Future<void> _checkPermission() async {
     final granted = await _downloadManager.checkStoragePermission();
     if (mounted) {
-      setState(() => _hasStoragePermission = granted);
+      setState(() {
+        _hasStoragePermission = granted;
+        _permissionChecked = true;
+      });
     }
   }
 
@@ -76,8 +86,13 @@ class _DownloadPageState extends State<DownloadPage> {
           // Download Progress Notification Banner (shows when downloads are active)
           DownloadNotificationBanner(downloadManager: _downloadManager),
 
-          // Storage Permission Banner (show if not granted)
-          if (!_hasStoragePermission && Platform.isAndroid)
+          // Storage Permission Banner — only show AFTER the async permission
+          // check has completed AND permission is genuinely not granted.
+          // Phase 4.27: previously this fired immediately on tab entry with
+          // _hasStoragePermission defaulting to false, causing the banner to
+          // flash on/off briefly even on devices with permission already
+          // granted (Android 11+ always returns true here).
+          if (_permissionChecked && !_hasStoragePermission && Platform.isAndroid)
             _buildPermissionBanner(appConfig, theme),
 
           // Download Toggle
