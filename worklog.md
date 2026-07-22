@@ -6115,3 +6115,77 @@ Stage Summary:
 - Single file changed: lib/app/ui/screens/download_page.dart
   (+18 lines, -3 lines).
 - Risk: Trivial. Pure UI guard, no permission logic changed.
+
+---
+Task ID: 4.28
+Agent: Main Agent
+Task: Bro requested: improve poster image loading experience and image quality in MovieCard — when fetching from URL, the loading state and final image display should look more polished.
+
+Work Log:
+- Pulled latest from cm-app origin/main (at d4b184e — Phase 4.27 download banner fix).
+- Inspected lib/app/ui/components/movie_card.dart.
+- Found the existing setup:
+  - memCacheWidth: 400 (decodes at 400px wide — slight softness on 3x DPR phones)
+  - filterQuality: not set (defaults to FilterQuality.low — nearest-neighbor, visible aliasing)
+  - placeholder: flat Container(color: surfaceContainerHighest) — looks dead
+  - fadeInDuration: 150ms — jarringly quick
+  - errorWidget: bare Icons.refresh on flat color (looks unfinished)
+- Inspected MovieCardSkeleton (in trending_movie_component.dart) for visual
+  consistency — uses shimmer-style fade with baseColor 0xFF2A2A2A (dark) /
+  0xFFE0E0E0 (light). Same tokens used in new _ShimmerPlaceholder.
+- Confirmed no third-party shimmer package needed — pure Flutter
+  AnimationController + ShaderMask works fine and avoids pubspec dep.
+
+CHANGES MADE (1 file: lib/app/ui/components/movie_card.dart):
+
+1. NEW _ShimmerPlaceholder widget (private, file-scoped)
+   - StatefulWidget with SingleTickerProviderStateMixin
+   - AnimationController: 1200ms, repeat() loop
+   - ShaderMask with LinearGradient that sweeps from off-screen left to
+     off-screen right. Three stops: [baseColor, highlightColor, baseColor]
+   - Color tokens: 0xFF2A2A2A/0xFF3D3D3D (dark), 0xFFE0E0E0/0xFFF5F5F5 (light)
+     — matches MovieCardSkeleton so loading visual matches grid skeleton
+   - Disposed properly when card scrolls off-screen
+
+2. memCacheWidth: 400 → 500
+   - 3x DPR phone showing 3-col grid at 140px logical = 420 device pixels
+   - Old 400 was just under threshold, slight softness on high-DPI
+   - New 500 gives headroom for 4x DPR + horizontal scrollers
+   - Decoded size ~300KB per poster (was ~200KB) — acceptable trade-off
+
+3. filterQuality: FilterQuality.high (NEW param)
+   - CachedNetworkImage defaults to FilterQuality.low (nearest-neighbor)
+   - High uses bicubic interpolation — sharper downscaling for text/faces
+   - Result is cached in poster cache so first-decode cost amortizes
+
+4. fadeInDuration: 150ms → 300ms
+   - Matches Material standard content-appearance motion duration
+   - Smoother, less jarring transition from shimmer → image
+
+5. fadeInDurationOnRebuild: Duration.zero (NEW param)
+   - Prevents fade animation from restarting on parent setState
+   - Important because MovieCard rebuilds when watch-progress loads
+   - Without this, posters would flicker on each rebuild
+
+6. IMPROVED errorWidget
+   - Old: Icons.refresh on flat color (looks unfinished)
+   - New: Column[Icons.broken_image_outlined (32px), SizedBox(4), Text('Tap to retry', 9px)]
+   - 'Tap to retry' caption makes the interactive nature obvious
+   - broken_image_outlined is a more recognizable affordance than refresh
+
+VERIFIED:
+- Brace/paren/bracket balance: OK (Python check, strings stripped)
+- fadeInDuration: 1 ref, fadeInDurationOnRebuild: 1 ref, filterQuality: 1 ref,
+  memCacheWidth: 1 ref (no duplicate params)
+- _ShimmerPlaceholder: 7 refs (class decl + state decl + build context refs)
+
+Committed as b880790 and pushed to origin/main.
+
+Stage Summary:
+- Poster loading state now shows animated shimmer sweep (matches grid skeleton)
+- Poster image quality sharper on high-DPI phones (500px decode + bicubic filter)
+- Smoother fade-in transition (300ms instead of 150ms)
+- No flicker on parent rebuild (fadeInDurationOnRebuild: Duration.zero)
+- Better error state with broken-image icon + 'Tap to retry' caption
+- Single file changed: lib/app/ui/components/movie_card.dart (+154 lines, -18 lines)
+- Risk: Low. Pure UI improvements. No data flow or state changes.
