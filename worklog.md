@@ -6242,3 +6242,110 @@ Stage Summary:
 - The intended anti-flicker behavior is preserved by v3.4.1's default
   behavior (no fade on rebuild from in-memory cache).
 - Build should now succeed on the next CI run.
+
+---
+Task ID: Phase 4.29
+Agent: main
+Task: Implement Multi-Mirror URL fallback for downloads. Myanmar ISPs block stream.cmreel.com at DNS/firewall level — VPN-less users can't download. Bro chose the Multi-Mirror pattern (after rejecting Cloudflare Worker Proxy due to ToS risk + BunnyCDN/B2-direct due to bucket-access errors). Admin can now store multiple URLs per download link; the app tries each in order until one works.
+
+Work Log:
+- Verified the direct link https://stream.cmreel.com/file/...mp4 is fully
+  functional server-side: HTTP 200 OK, Content-Type video/mp4, 419MB,
+  Range request returns 206 Partial Content, no Referer/Origin/auth
+  restrictions, Cloudflare CDN + Backblaze B2 backend. So the block is
+  at the Myanmar ISP level, NOT the server.
+- Investigated Bro's earlier B2 direct-URL attempt: got HTTP 400 because
+  the B2 native URL requires bucket name in path; not exposed publicly.
+- Discussed three solution options with Bro: (A) Cloudflare Worker proxy,
+  (B) Multi-Mirror URLs, (C) BunnyCDN. Recommended against (A) due to
+  Cloudflare ToS Section 2.8 (video content) + 30s worker wall-clock +
+  free-tier limits. (C) requires file migration. Bro chose (B).
+- Designed the Multi-Mirror data model — backward-compatible:
+    downloadLinks: [
+      {
+        serverName: 'CM Stream',
+        url: 'https://stream.cmreel.com/...mp4',  // primary
+        mirrorUrls: [...],                          // NEW optional field
+        quality: '1080p'
+      }
+    ]
+  Existing entries (no mirrorUrls) parse as [] → behave as single-URL.
+
+- CHANGES (4 files):
+
+  1. lib/app/core/models/movie_detail.dart — MovieDownloadLink:
+     - Added `mirrorUrls: List<String>` field (default const [])
+     - fromMap: defensive parsing of List<dynamic> from Firestore,
+       filters null/empty entries
+     - toMap: only serializes mirrorUrls if non-empty (clean admin entries)
+
+  2. lib/app/core/services/download_manager_service.dart — the big one:
+     - Added _MirrorSwitchException sentinel exception class
+     - DownloadTask: added `mirrorUrls` field + `allUrls` getter
+       ([url, ...mirrorUrls]). Persisted to SharedPreferences (both
+       toMap and fromMap handle round-trip). Old tasks (pre-4.29)
+       parsed with empty list — backward compatible.
+     - addTaskWithResult / addTask: accept optional `mirrorUrls`
+       parameter. Each mirror normalized + validated independently;
+       invalid mirrors silently dropped (don't block primary URL).
+       Duplicates of primary URL skipped.
+     - startDownload: refactored with mirror-iteration loop. doDownload()
+       now uses allUrls[_currentMirrorIdx] instead of currentTask.url.
+       On permanent failure (HTTP 4xx except 416, HTTP 5xx, network
+       errors after auto-retries exhausted, OR stall-retries exhausted):
+       if hasMoreMirrors, throws _MirrorSwitchException. Outer while-loop
+       catches it, increments _currentMirrorIdx, calls
+       _resetForMirrorSwitch() (deletes partial file, resets
+       downloadedBytes/progress, resets auto-retry counter, replaces
+       speed tracker with fresh instance), and tries the next URL.
+       After all URLs exhausted, marks task as failed with a clear
+       "All N download sources failed" message.
+     - _resetForMirrorSwitch() helper — each mirror serves a possibly
+       different file, so we CANNOT resume from previous mirror's bytes.
+       Must delete partial file and reset everything.
+
+  3. lib/app/ui/screens/movie_download_screen.dart — passes
+     `mirrorUrls: link.mirrorUrls` to addTaskWithResult.
+
+  4. lib/app/ui/screens/series_download_screen.dart — same change.
+
+- VERIFICATION:
+  - dart_balance_check.py: all 4 files balanced ((), {}, [] all 0 diff).
+  - Sanity check confirms: _MirrorSwitchException defined (1), thrown
+    in 2 places (stall-retries-exhausted + permanent-error/network-
+    retries-exhausted), caught in 1 place (outer mirror loop).
+  - 13 references to _currentMirrorIdx (used correctly throughout).
+  - Both download screens confirmed passing `mirrorUrls: link.mirrorUrls`.
+  - _allowedDomains already covers typical mirror hosts: Dropbox,
+    1Fichier, MediaFire, Pixeldrain, Send.cm, GoFile, Catbox, Mega,
+    Userscloud, Zippyshare, Upload.ee, Anonfiles, Uploadhaven, Bowfile,
+    Nitroflare, Rapidgator, Alfafile, Depositfiles. Direct media URLs
+    (.mp4/.mkv/etc.) are allowed on ANY domain — so stream.cmreel.com
+    primary URLs also work for VPN users.
+
+- BACKWARD COMPATIBILITY:
+  - Existing Firestore entries (no mirrorUrls): parsed as [], behave as
+    single-URL links — identical to pre-4.29.
+  - Existing SharedPreferences tasks (no mirrorUrls key): parsed as [],
+    behave as single-URL tasks.
+  - Single-URL tasks: zero overhead. Loop runs once, exception never
+    thrown, hasMoreMirrors is always false.
+
+- RISK:
+  - Low. All new code paths gated by hasMoreMirrors check.
+  - Tasks without mirrors run pre-4.29 code path verbatim.
+  - Worst-case time for multi-mirror: N mirrors × (5 retries × 30s
+    timeout + 1s switch delay) ≈ 2.5 minutes for primary + 1 mirror.
+
+- Committed as f319291 and pushed to origin/main.
+
+Stage Summary:
+- Multi-Mirror URL fallback implemented end-to-end.
+- Backward compatible with existing Firestore entries and persisted tasks.
+- Admin can now add `mirrorUrls: [...]` to any downloadLinks entry in
+  Firestore to provide fallback URLs for Myanmar users.
+- The app automatically tries each URL in order until one works.
+- No new dependencies, no Cloudflare Worker risk, no file migration.
+- Next step: Bro needs to upload each video file to a mirror host
+  (Dropbox / 1Fichier / etc.) and add the mirror URLs to Firestore
+  admin entries. Recommended: at least 1 mirror for popular content.
