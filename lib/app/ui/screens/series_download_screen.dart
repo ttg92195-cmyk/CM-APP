@@ -91,6 +91,11 @@ class _SeriesDownloadScreenState extends State<SeriesDownloadScreen> {
       size: link.size,
       serverName: link.serverName,
       customFileName: link.fileName,
+      // Phase 4.29 — pass mirror URLs so the download manager can
+      // fall back to them if the primary URL fails (e.g. Myanmar ISP
+      // blocking stream.cmreel.com). Empty list for links without
+      // mirrors — backward-compatible.
+      mirrorUrls: link.mirrorUrls,
     );
 
     if (mounted) {

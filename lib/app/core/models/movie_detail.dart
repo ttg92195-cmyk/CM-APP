@@ -212,6 +212,19 @@ class CastMember {
 }
 
 /// Download link - used for download quality/size/server entries
+///
+/// Phase 4.29 — Multi-Mirror support:
+/// `mirrorUrls` is an OPTIONAL list of fallback URLs. When the primary
+/// `url` fails permanently (404/403/5xx, or all auto-retries exhausted on
+/// network errors), the download manager will try each mirror in order.
+/// This is critical for Myanmar users where `stream.cmreel.com` (the
+/// primary CDN) is blocked at the ISP level — VPN-less users can fall
+/// back to Dropbox / 1Fichier / MediaFire mirrors that are reachable.
+///
+/// Backward compatibility: existing Firestore documents without
+/// `mirrorUrls` are parsed as an empty list, so the link behaves like
+/// a single-URL link (no behavior change for admin entries created
+/// before Phase 4.29).
 class MovieDownloadLink {
   final String serverName;
   final String url;
@@ -219,21 +232,38 @@ class MovieDownloadLink {
   final String? quality;
   final String? fileName;
 
+  /// Phase 4.29 — fallback URLs tried in order if [url] fails permanently.
+  /// Empty list = single-URL link (legacy behavior).
+  final List<String> mirrorUrls;
+
   MovieDownloadLink({
     required this.serverName,
     required this.url,
     this.size,
     this.quality,
     this.fileName,
+    this.mirrorUrls = const [],
   });
 
   factory MovieDownloadLink.fromMap(Map<String, dynamic> map) {
+    // Phase 4.29 — parse mirrorUrls defensively. Accept either
+    // List<String> or List<dynamic> (Firestore returns dynamic). Filter
+    // out nulls and empty strings just in case admin entry is malformed.
+    final rawMirrors = map['mirrorUrls'];
+    List<String> mirrors = const [];
+    if (rawMirrors is List) {
+      mirrors = rawMirrors
+          .map((e) => e?.toString() ?? '')
+          .where((s) => s.isNotEmpty)
+          .toList(growable: false);
+    }
     return MovieDownloadLink(
       serverName: map['serverName'] as String? ?? '',
       url: map['url'] as String? ?? '',
       size: map['size']?.toString(),
       quality: map['quality']?.toString(),
       fileName: map['fileName'] as String?,
+      mirrorUrls: mirrors,
     );
   }
 
@@ -245,6 +275,11 @@ class MovieDownloadLink {
       'quality': quality,
     };
     if (fileName != null) map['fileName'] = fileName;
+    // Phase 4.29 — only serialize mirrorUrls if non-empty, to avoid
+    // cluttering existing admin entries that don't use mirrors.
+    if (mirrorUrls.isNotEmpty) {
+      map['mirrorUrls'] = mirrorUrls;
+    }
     return map;
   }
 }

@@ -19,6 +19,17 @@ enum DownloadStatus {
   failed, // Error occurred
 }
 
+/// Phase 4.29 — Sentinel exception thrown by [DownloadManagerService.doDownload]
+/// when the current URL has failed permanently and the download loop should
+/// try the next mirror URL (if any). Caught by the outer mirror-iteration
+/// loop in [DownloadManagerService.startDownload].
+class _MirrorSwitchException implements Exception {
+  final String reason;
+  _MirrorSwitchException(this.reason);
+  @override
+  String toString() => '_MirrorSwitchException: $reason';
+}
+
 /// Model for a single download task
 class DownloadTask {
   final String id; // Unique ID (movieId_quality)
@@ -32,6 +43,13 @@ class DownloadTask {
   final String savePath;
   final DateTime addedAt;
   final DateTime? completedAt;
+
+  // Phase 4.29 — Multi-Mirror support. When the primary `url` fails
+  // permanently, the download manager will try each URL in `mirrorUrls`
+  // in order. Empty list = single-URL task (legacy behavior). Persisted
+  // to SharedPreferences so a task created with mirrors can resume
+  // from a mirror after an app restart.
+  final List<String> mirrorUrls;
 
   // Download state
   final DownloadStatus status;
@@ -56,6 +74,7 @@ class DownloadTask {
     required this.savePath,
     required this.addedAt,
     this.completedAt,
+    this.mirrorUrls = const [],
     this.status = DownloadStatus.idle,
     this.progress = 0.0,
     this.downloadedBytes = 0,
@@ -75,6 +94,7 @@ class DownloadTask {
     double? speedBytesPerSec,
     int? etaSeconds,
     String? savePath,
+    List<String>? mirrorUrls,
   }) {
     return DownloadTask(
       id: id,
@@ -88,6 +108,7 @@ class DownloadTask {
       savePath: savePath ?? this.savePath,
       addedAt: addedAt,
       completedAt: completedAt ?? this.completedAt,
+      mirrorUrls: mirrorUrls ?? this.mirrorUrls,
       status: status ?? this.status,
       progress: progress ?? this.progress,
       downloadedBytes: downloadedBytes ?? this.downloadedBytes,
@@ -97,6 +118,11 @@ class DownloadTask {
       etaSeconds: etaSeconds ?? this.etaSeconds,
     );
   }
+
+  /// Phase 4.29 — All URLs that can serve this file, in priority order:
+  /// primary `url` first, then each entry in `mirrorUrls`.
+  /// Used by the download loop to iterate mirrors when the primary fails.
+  List<String> get allUrls => [url, ...mirrorUrls];
 
   Map<String, dynamic> toMap() {
     return {
@@ -118,10 +144,26 @@ class DownloadTask {
       'errorMessage': errorMessage,
       'speedBytesPerSec': speedBytesPerSec,
       'etaSeconds': etaSeconds,
+      // Phase 4.29 — persist mirror URLs so they survive app restart.
+      // Empty list is also persisted (vs. omitted in MovieDownloadLink.toMap)
+      // because DownloadTask is SharedPreferences-backed, not Firestore-backed,
+      // and we need explicit round-trip consistency.
+      'mirrorUrls': mirrorUrls,
     };
   }
 
   factory DownloadTask.fromMap(Map<String, dynamic> map) {
+    // Phase 4.29 — parse mirrorUrls with the same defensive approach as
+    // MovieDownloadLink.fromMap. Old tasks (pre-4.29) won't have this
+    // field — they get an empty list and behave as single-URL tasks.
+    final rawMirrors = map['mirrorUrls'];
+    List<String> mirrors = const [];
+    if (rawMirrors is List) {
+      mirrors = rawMirrors
+          .map((e) => e?.toString() ?? '')
+          .where((s) => s.isNotEmpty)
+          .toList(growable: false);
+    }
     return DownloadTask(
       id: map['id'] as String? ?? '',
       movieId: map['movieId'] as String? ?? '',
@@ -136,6 +178,7 @@ class DownloadTask {
       completedAt: map['completedAt'] != null
           ? DateTime.tryParse(map['completedAt'] as String)
           : null,
+      mirrorUrls: mirrors,
       status: DownloadStatus.values[map['status'] as int? ?? 0],
       progress: (map['progress'] as num?)?.toDouble() ?? 0.0,
       downloadedBytes: map['downloadedBytes'] as int? ?? 0,
@@ -699,6 +742,11 @@ class DownloadManagerService extends ChangeNotifier {
     String? size,
     required String serverName,
     String? customFileName,
+    // Phase 4.29 — Multi-Mirror support. Optional fallback URLs that
+    // will be tried in order if the primary `url` fails permanently.
+    // See `startDownload` for the exact failure conditions that trigger
+    // a mirror switch.
+    List<String> mirrorUrls = const [],
   }) async {
     // Check for empty or invalid URL first (before domain check)
     if (url.trim().isEmpty) {
@@ -723,6 +771,31 @@ class DownloadManagerService extends ChangeNotifier {
     if (!_isValidDownloadUrl(normalizedUrl)) {
       debugPrint('Blocked download from untrusted domain: $normalizedUrl');
       return AddTaskResult.blockedDomain;
+    }
+
+    // Phase 4.29 — Normalize + validate each mirror URL independently.
+    // We do NOT fail the whole task if one mirror is invalid — we just
+    // drop that mirror from the list. Rationale: the primary URL is
+    // already validated and may succeed; a bad mirror should not block
+    // the download entirely. The user still gets the primary attempt.
+    final normalizedMirrors = <String>[];
+    for (final raw in mirrorUrls) {
+      final trimmed = raw.trim();
+      if (trimmed.isEmpty) continue;
+      final normalized = _normalizeDownloadUrl(trimmed);
+      if (!_isValidDownloadUrl(normalized)) {
+        debugPrint('Phase 4.29: Dropping mirror URL (blocked domain): $normalized');
+        continue;
+      }
+      // Skip duplicate of primary URL (would just waste a retry attempt)
+      if (normalized == normalizedUrl) continue;
+      // Skip duplicates within the mirror list
+      if (normalizedMirrors.contains(normalized)) continue;
+      normalizedMirrors.add(normalized);
+    }
+    if (normalizedMirrors.isNotEmpty) {
+      debugPrint('Phase 4.29: Task $movieId has ${normalizedMirrors.length} '
+          'valid mirror URL(s) after normalization');
     }
 
     final taskId = '${movieId}_${quality.replaceAll(' ', '_')}';
@@ -774,6 +847,7 @@ class DownloadManagerService extends ChangeNotifier {
       serverName: serverName,
       savePath: savePath,
       addedAt: DateTime.now(),
+      mirrorUrls: normalizedMirrors,
     );
 
     _tasks.insert(0, task);
@@ -794,6 +868,7 @@ class DownloadManagerService extends ChangeNotifier {
     required String quality,
     String? size,
     required String serverName,
+    List<String> mirrorUrls = const [],
   }) async {
     // Delegate to addTaskWithResult for consistent behavior
     await addTaskWithResult(
@@ -804,6 +879,7 @@ class DownloadManagerService extends ChangeNotifier {
       quality: quality,
       size: size,
       serverName: serverName,
+      mirrorUrls: mirrorUrls,
     );
   }
 
@@ -922,6 +998,59 @@ class DownloadManagerService extends ChangeNotifier {
     int _lastNotifyTime = 0;
     const _notifyIntervalMs = 250; // Update UI max 4 times per second
 
+    // Phase 4.29 — Multi-Mirror iteration state.
+    // `allUrls` is the prioritized list of URLs: primary first, then each
+    // mirror. We start with index 0 (primary). On permanent failure
+    // (HTTP 4xx/5xx, or auto-retries exhausted on network errors),
+    // doDownload() throws _MirrorSwitchException; the outer while-loop
+    // in startDownload() catches it, increments _currentMirrorIdx, resets
+    // partial-file state, and calls doDownload() again on the next URL.
+    //
+    // For tasks created before Phase 4.29 (no mirrorUrls), allUrls has
+    // exactly one entry and the mirror-switch path is never taken —
+    // behavior is identical to the pre-4.29 code.
+    final allUrls = task.allUrls;
+    int _currentMirrorIdx = 0;
+
+    /// Phase 4.29 — Reset state before switching to a new mirror URL.
+    /// Each mirror serves a (possibly different) file, so we CANNOT
+    /// resume from the partial bytes of the previous mirror. We must:
+    ///   1. Reset downloadedBytes and progress to 0 in the task model
+    ///   2. Delete the partial file on disk
+    ///   3. Reset auto-retry counter (the new URL gets a fresh budget)
+    ///   4. Reset stall detection state
+    ///   5. Replace the speed tracker with a fresh instance (old samples
+    ///      referenced byte offsets from the previous mirror and would
+    ///      produce wrong/negative speed readings)
+    Future<void> _resetForMirrorSwitch() async {
+      final idx = _tasks.indexWhere((t) => t.id == taskId);
+      if (idx != -1) {
+        _tasks[idx] = _tasks[idx].copyWith(
+          downloadedBytes: 0,
+          progress: 0.0,
+          totalBytes: null,
+          // Keep status as downloading — we're not pausing or failing,
+          // just internally switching source.
+        );
+        // Delete partial file from previous mirror
+        try {
+          final f = File(_tasks[idx].savePath);
+          if (await f.exists()) {
+            await f.delete();
+            debugPrint('Phase 4.29: Deleted partial file before mirror switch for $taskId');
+          }
+        } catch (e) {
+          debugPrint('Phase 4.29: Failed to delete partial file for $taskId (non-fatal): $e');
+        }
+      }
+      _autoRetryCount = 0;
+      _stallDetectedAt = null;
+      _lastStallCheckBytes = 0;
+      _lastNotifyTime = 0;
+      // Fresh speed tracker — old samples are invalid after byte reset
+      _speedTrackers[taskId] = _SpeedTracker();
+    }
+
     Future<void> doDownload() async {
       final cancelToken = CancelToken();
       _cancelTokens[taskId] = cancelToken;
@@ -962,8 +1091,15 @@ class DownloadManagerService extends ChangeNotifier {
         // Dio's download() overwrites the file from position 0 even with Range header,
         // which breaks resume. Instead, we use a streaming GET request and write
         // chunks to the file in APPEND mode when resuming.
+        //
+        // Phase 4.29: use the current mirror URL (allUrls[_currentMirrorIdx])
+        // instead of currentTask.url. allUrls[0] is the primary; subsequent
+        // entries are mirrors tried only after the previous URL fails
+        // permanently. For tasks without mirrors, allUrls has length 1 and
+        // this is identical to the pre-4.29 behavior.
+        final currentAttemptUrl = allUrls[_currentMirrorIdx];
         final response = await _dio.get<ResponseBody>(
-          currentTask.url,
+          currentAttemptUrl,
           cancelToken: cancelToken,
           options: Options(
             headers: headers,
@@ -1226,7 +1362,19 @@ class DownloadManagerService extends ChangeNotifier {
             await _saveTasks();
             return doDownload(); // Reconnect with fresh connection
           }
-          // Exhausted retries
+          // Phase 4.29 — Stall retries exhausted. If mirrors are available,
+          // throw _MirrorSwitchException to let the outer loop try the
+          // next URL (the primary URL may be ISP-throttled, but a mirror
+          // on a different host may not be). If no mirrors, fall through
+          // to the existing failure-marking behavior below.
+          final hasMoreMirrors = _currentMirrorIdx < allUrls.length - 1;
+          if (hasMoreMirrors) {
+            debugPrint('Phase 4.29: Throwing _MirrorSwitchException for $taskId '
+                '(reason: stall-retries-exhausted, current mirror index: '
+                '$_currentMirrorIdx, total URLs: ${allUrls.length})');
+            throw _MirrorSwitchException('Stalled repeatedly');
+          }
+          // No more mirrors — mark task as failed (existing pre-4.29 behavior).
           _tasks[idx] = _tasks[idx].copyWith(
             status: DownloadStatus.failed,
             errorMessage: 'Download stalled repeatedly. Tap retry to continue.',
@@ -1278,6 +1426,34 @@ class DownloadManagerService extends ChangeNotifier {
           return doDownload();
         }
 
+        // Phase 4.29 — Multi-Mirror fallback.
+        // If we've reached this point, EITHER:
+        //   (a) the server returned a permanent HTTP error (4xx other than
+        //       416, or 5xx) — e.g. 404 file not found, 403 forbidden,
+        //       500 server error. Retrying the same URL won't help.
+        //   (b) all auto-retries on a network error have been exhausted —
+        //       the URL is unreachable from this network (e.g. Myanmar
+        //       ISP blocking stream.cmreel.com).
+        // In both cases, if we have at least one more mirror URL to try,
+        // we throw _MirrorSwitchException to signal the outer loop in
+        // startDownload() to switch to the next mirror.
+        //
+        // If there are no more mirrors, we fall through to the existing
+        // failure-marking behavior (preserving pre-4.29 behavior for
+        // single-URL tasks).
+        final hasMoreMirrors = _currentMirrorIdx < allUrls.length - 1;
+        if (hasMoreMirrors) {
+          final statusCode = e.response?.statusCode;
+          final reason = statusCode != null
+              ? 'HTTP $statusCode'
+              : 'Network: ${e.type.name}';
+          debugPrint('Phase 4.29: Throwing _MirrorSwitchException for $taskId '
+              '(reason: $reason, current mirror index: $_currentMirrorIdx, '
+              'total URLs: ${allUrls.length})');
+          throw _MirrorSwitchException(reason);
+        }
+
+        // No more mirrors to try — mark task as failed (existing behavior).
         String errorMsg = _getDioErrorMessage(e);
         _tasks[idx] = _tasks[idx].copyWith(
           status: DownloadStatus.failed,
@@ -1289,6 +1465,9 @@ class DownloadManagerService extends ChangeNotifier {
         notifyListeners();
         DownloadNotificationService.instance.showDownloadFailed(_tasks[idx]);
       } catch (e) {
+        // Phase 4.29 — Re-throw mirror-switch signals so the outer loop
+        // can handle them. Don't catch them here as generic errors.
+        if (e is _MirrorSwitchException) rethrow;
         final idx = _tasks.indexWhere((t) => t.id == taskId);
         if (idx != -1) {
           _tasks[idx] = _tasks[idx].copyWith(
@@ -1304,8 +1483,63 @@ class DownloadManagerService extends ChangeNotifier {
       }
     }
 
+    // Phase 4.29 — Mirror iteration loop.
+    //
+    // We try doDownload() on the primary URL (index 0). If it throws
+    // _MirrorSwitchException, we increment the mirror index, reset
+    // partial-file state (each mirror is a separate file — cannot resume
+    // from previous mirror's bytes), and call doDownload() again on the
+    // next URL. We continue until either:
+    //   - doDownload() returns normally (download completed) → break
+    //   - All URLs are exhausted → mark task as failed with the last
+    //     mirror-switch reason as the error message
+    //
+    // For tasks without mirrorUrls (length 1), the loop runs exactly once
+    // and _MirrorSwitchException is never thrown (because hasMoreMirrors
+    // is false inside doDownload), so behavior is identical to pre-4.29.
     try {
-      await doDownload();
+      while (_currentMirrorIdx < allUrls.length) {
+        try {
+          await doDownload();
+          // Download completed (or user paused, or 416 — handled inside
+          // doDownload by setting status and returning normally).
+          break;
+        } on _MirrorSwitchException catch (e) {
+          _currentMirrorIdx++;
+          if (_currentMirrorIdx >= allUrls.length) {
+            // All URLs exhausted — final failure.
+            debugPrint('Phase 4.29: All ${allUrls.length} URL(s) exhausted '
+                'for $taskId (last reason: ${e.reason})');
+            final idx = _tasks.indexWhere((t) => t.id == taskId);
+            if (idx != -1) {
+              _tasks[idx] = _tasks[idx].copyWith(
+                status: DownloadStatus.failed,
+                errorMessage: allUrls.length > 1
+                    ? 'All ${allUrls.length} download sources failed. '
+                      'Last error: ${e.reason}. Tap retry to try again.'
+                    : e.reason,
+                progress: 0.0,
+                downloadedBytes: 0,
+                totalBytes: null,
+                speedBytesPerSec: 0.0,
+                etaSeconds: null,
+              );
+              await _saveTasks();
+              notifyListeners();
+              DownloadNotificationService.instance.showDownloadFailed(_tasks[idx]);
+            }
+            break;
+          }
+          debugPrint('Phase 4.29: Switching $taskId to mirror '
+              '#${_currentMirrorIdx + 1}/${allUrls.length} (reason: ${e.reason})');
+          await _resetForMirrorSwitch();
+          // Brief pause before trying the next mirror to avoid hammering
+          // servers in a tight loop (e.g. when the first mirror is down).
+          await Future.delayed(const Duration(seconds: 1));
+          // Loop continues — doDownload() will be called again on the
+          // new _currentMirrorIdx.
+        }
+      }
     } finally {
       _cancelTokens.remove(taskId);
       _speedTrackers.remove(taskId);
