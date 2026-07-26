@@ -58,9 +58,35 @@ class FcmNotificationService {
       OneSignal.initialize(_oneSignalAppId!);
       debugPrint('OneSignal: Initialized with App ID: $_oneSignalAppId');
 
-      // Request notification permission
-      final granted = await OneSignal.Notifications.requestPermission(true);
-      debugPrint('OneSignal: Permission granted: $granted');
+      // Request notification permission.
+      //
+      // CRITICAL FIX (Phase 4.30, 2026-07-26):
+      // On Oppo A16 / ColorOS 11 and several other Chinese OEM Android
+      // variants, `requestPermission(true)` can HANG INDEFINITELY when
+      // notifications are disabled at the system level. ColorOS's custom
+      // permission UI does not respond like stock Android 13+ — the
+      // underlying platform channel call may never return. Previously
+      // this blocked the entire app startup (white screen). The main.dart
+      // fix moves the FCM init off the critical path, and this timeout
+      // is the second safety net: even if the call hangs, we abort after
+      // 4 seconds and let the rest of init proceed. Push simply won't
+      // work until the user grants permission via system Settings.
+      //
+      // Note: requestPermission(false) would skip the system prompt
+      // entirely, but we keep `true` so users on stock Android still get
+      // the prompt. The timeout only fires on OEMs that misbehave.
+      try {
+        await OneSignal.Notifications.requestPermission(true)
+            .timeout(const Duration(seconds: 4), onTimeout: () {
+          debugPrint('OneSignal: requestPermission timed out after 4s — '
+              'likely ColorOS/OEM permission UI hang. Continuing without '
+              'push permission; user can grant via system Settings.');
+          return false;
+        });
+      } catch (e) {
+        debugPrint('OneSignal: requestPermission error (non-fatal): $e');
+      }
+      debugPrint('OneSignal: Permission request flow complete');
 
       // Setup foreground notification display handler
       // In onesignal_flutter 5.5.x, method renamed from addForegroundWillShowListener

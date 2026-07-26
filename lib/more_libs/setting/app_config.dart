@@ -1145,10 +1145,25 @@ class AppConfig extends ChangeNotifier {
     await prefs.setBool(_notificationKey, enabled);
     notifyListeners();
 
-    // Control OneSignal subscription
+    // Control OneSignal subscription.
+    //
+    // Phase 4.30 (2026-07-26): Add a 4s timeout to requestPermission — on
+    // Oppo A16 / ColorOS 11 and other Chinese OEM variants, this call can
+    // hang indefinitely when notifications are disabled at the system
+    // level. Without the timeout, tapping the Push Notifications toggle
+    // in Settings would freeze the UI thread (which is also where the
+    // toggle's visual state lives). With the timeout, we abort the
+    // request after 4s, log it, and let the toggle complete — the user
+    // can retry after enabling notifications via system Settings.
     try {
       if (enabled) {
-        await OneSignal.Notifications.requestPermission(true);
+        await OneSignal.Notifications.requestPermission(true)
+            .timeout(const Duration(seconds: 4), onTimeout: () {
+          debugPrint('OneSignal: setNotificationEnabled — requestPermission '
+              'timed out (OEM permission UI hang). Toggle completes; user '
+              'should grant via system Settings.');
+          return false;
+        });
         OneSignal.User.pushSubscription.optIn();
       } else {
         OneSignal.User.pushSubscription.optOut();

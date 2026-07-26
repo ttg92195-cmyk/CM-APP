@@ -127,12 +127,23 @@ void main() async {
           .setCustomKey('app_version', const String.fromEnvironment(
               'APP_VERSION', defaultValue: 'unknown'));
 
-      // Initialize OneSignal push notifications (free, no Cloud Functions needed)
-      try {
-        await FcmNotificationService().initialize();
-      } catch (e) {
-        debugPrint('OneSignal initialization error: $e');
-      }
+      // Initialize OneSignal push notifications (free, no Cloud Functions needed).
+      //
+      // CRITICAL FIX (Phase 4.30, 2026-07-26):
+      // Previously this used `await FcmNotificationService().initialize();`
+      // BEFORE runApp(). On Oppo A16 (ColorOS 11) and other Chinese OEM
+      // Android variants, OneSignal.Notifications.requestPermission(true)
+      // hangs indefinitely when notification permission is DENIED at the
+      // system level — ColorOS's custom permission UI does not respond the
+      // way stock Android 13+ does. Because this `await` sat before
+      // runApp(), the entire app startup was blocked → user saw a permanent
+      // WHITE SCREEN until they manually re-enabled notifications.
+      //
+      // Fix: Fire the OneSignal init as a non-blocking future. runApp()
+      // proceeds immediately and the splash screen renders normally even
+      // if OneSignal hangs. The FCM service itself also has an internal
+      // timeout on requestPermission() as a second safety net.
+      unawaited(_initNotificationsSafely());
     } catch (e) {
       debugPrint('Firebase initialization error: $e');
       // Firebase failed to init — record the error so Bro sees it in the
@@ -249,6 +260,35 @@ void main() async {
         .recordError(error, stackTrace, fatal: true);
     // Don't rethrow — keep the app alive
   });
+}
+
+/// Phase 4.30 — Initialize OneSignal/Firebase Messaging in the background
+/// AFTER runApp() has been called. This is intentionally fire-and-forget:
+/// the app's UI must never be blocked by notification permission flows.
+///
+/// Why this exists: On Oppo A16 / ColorOS 11 (and several other Chinese
+/// OEM Android variants), OneSignal's `requestPermission(true)` can hang
+/// indefinitely when notifications are disabled at the system level. If
+/// this were awaited inside main() before runApp(), the user would see a
+/// permanent white screen. By running it as a detached future, the splash
+/// screen renders immediately and OneSignal either completes in the
+/// background or times out (see FcmNotificationService for the timeout).
+Future<void> _initNotificationsSafely() async {
+  try {
+    await FcmNotificationService().initialize();
+  } catch (e) {
+    debugPrint('OneSignal initialization error: $e');
+    try {
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        StackTrace.current,
+        reason: 'OneSignal init failure (non-blocking)',
+        fatal: false,
+      );
+    } catch (_) {
+      // Crashlytics itself may not be ready — ignore.
+    }
+  }
 }
 
 class CMMoviesApp extends StatefulWidget {
