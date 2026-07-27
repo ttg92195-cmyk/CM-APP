@@ -19,7 +19,8 @@ class SearchScreen extends StatefulWidget {
   State<SearchScreen> createState() => _SearchScreenState();
 }
 
-class _SearchScreenState extends State<SearchScreen> {
+class _SearchScreenState extends State<SearchScreen>
+    with TickerProviderStateMixin {
   final FirestoreContentService _contentService = FirestoreContentService();
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
@@ -59,9 +60,43 @@ class _SearchScreenState extends State<SearchScreen> {
   List<String> _years = [];
   bool _isLoadingFilters = true;
 
+  // Phase 4.33 (2026-07-28): "Alive" breathing animation for the empty-state
+  // icons on the search screen. A subtle scale + opacity pulse that makes
+  // the search_off / movie_filter / tune icons feel like they're breathing
+  // instead of sitting dead on the page. Inspired by Airbnb's empty-search
+  // illustration and modern onboarding flows.
+  //
+  // Why a single shared controller (not one-per-icon):
+  //   - All three empty states are mutually exclusive (you only ever see
+  //     one at a time), so a single 1.5s loop covers every visible icon.
+  //   - Saves memory + reduces ticker overhead.
+  late final AnimationController _breatheController;
+  late final Animation<double> _breatheScale;
+  late final Animation<double> _breatheOpacity;
+
   @override
   void initState() {
     super.initState();
+
+    // Breathing animation: 1.6s loop, smooth ease-in-out.
+    //   Scale:    1.00 → 1.10 → 1.00  (subtle 10% grow)
+    //   Opacity:  0.85 → 1.00 → 0.85  (soft fade)
+    // The 0.85 floor keeps the icon visible — never disappears.
+    _breatheController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1600),
+    )..repeat(reverse: true);
+    _breatheScale = Tween<double>(begin: 1.0, end: 1.10)
+        .animate(CurvedAnimation(
+      parent: _breatheController,
+      curve: Curves.easeInOutSine,
+    ));
+    _breatheOpacity = Tween<double>(begin: 0.85, end: 1.0)
+        .animate(CurvedAnimation(
+      parent: _breatheController,
+      curve: Curves.easeInOutSine,
+    ));
+
     _scrollController.addListener(_onScroll);
     // Load local search history (no Firestore cost).
     _historyService.load().then((h) {
@@ -92,6 +127,7 @@ class _SearchScreenState extends State<SearchScreen> {
 
   @override
   void dispose() {
+    _breatheController.dispose(); // Phase 4.33: stop the breathing animation
     _debounceTimer?.cancel();
     _historySub?.cancel();
     _searchController.dispose();
@@ -1116,10 +1152,17 @@ class _SearchScreenState extends State<SearchScreen> {
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(
-                                Icons.search_off,
-                                size: 64,
-                                color: theme.colorScheme.onSurface.withOpacity(0.3),
+                              // Phase 4.33: breathing "alive" animation
+                              ScaleTransition(
+                                scale: _breatheScale,
+                                child: FadeTransition(
+                                  opacity: _breatheOpacity,
+                                  child: Icon(
+                                    Icons.search_off,
+                                    size: 64,
+                                    color: theme.colorScheme.onSurface.withOpacity(0.3),
+                                  ),
+                                ),
                               ),
                               const SizedBox(height: 16),
                               Text(
@@ -1138,10 +1181,17 @@ class _SearchScreenState extends State<SearchScreen> {
                                   child: Column(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
-                                      Icon(
-                                        Icons.movie_filter_outlined,
-                                        size: 64,
-                                        color: theme.colorScheme.onSurface.withOpacity(0.3),
+                                      // Phase 4.33: breathing "alive" animation
+                                      ScaleTransition(
+                                        scale: _breatheScale,
+                                        child: FadeTransition(
+                                          opacity: _breatheOpacity,
+                                          child: Icon(
+                                            Icons.movie_filter_outlined,
+                                            size: 64,
+                                            color: theme.colorScheme.onSurface.withOpacity(0.3),
+                                          ),
+                                        ),
                                       ),
                                       const SizedBox(height: 16),
                                       Text(
@@ -1158,10 +1208,20 @@ class _SearchScreenState extends State<SearchScreen> {
                                         ),
                                       ),
                                       const SizedBox(height: 4),
-                                      Icon(
-                                        Icons.tune,
-                                        size: 32,
-                                        color: theme.colorScheme.onSurface.withOpacity(0.2),
+                                      // Phase 4.33: tune icon also breathes — both
+                                      // icons share the same controller so they
+                                      // pulse in sync, which feels intentional
+                                      // rather than chaotic.
+                                      ScaleTransition(
+                                        scale: _breatheScale,
+                                        child: FadeTransition(
+                                          opacity: _breatheOpacity,
+                                          child: Icon(
+                                            Icons.tune,
+                                            size: 32,
+                                            color: theme.colorScheme.onSurface.withOpacity(0.2),
+                                          ),
+                                        ),
                                       ),
                                     ],
                                   ),
