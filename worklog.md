@@ -6412,3 +6412,112 @@ Stage Summary:
 - No data model changes
 - Backward compatible with stock Android (where requestPermission returns
   immediately — the 4s timeout never fires)
+
+---
+Task ID: Phase 4.31
+Agent: Main Agent
+Task: Hide real video link from player error messages
+
+Work Log:
+- User report: When a video link is dead, the player error screen shows
+  the full libmpv error message which often contains the underlying video
+  URL (e.g. 'Failed to open https://stream.cmreel.com/file/movies/xxx.mp4').
+  Bro asked for the real link to be hidden from end users.
+
+- Read video_player_screen.dart:
+  * Line 1696 (now ~1748): _buildErrorScreen() shows _errorMessage as Text.
+  * Line 1106 (now ~1147): _handlePlayerError() sets _errorMessage = error
+    from the libmpv error stream.
+  * Line 825 (now ~826): _initializePlayer() catch block sets _errorMessage
+    = e.toString() from any exception.
+
+Fix implemented (commit 07fc56e):
+- Added new helper _sanitizeErrorMessage(String raw) that:
+  * Strips any http(s)://host/path?query#fragment URL → '[link]'
+  * Strips backtick-quoted tokens (libmpv sometimes quotes URLs)
+  * Collapses multiple whitespaces into one
+  * Falls back to 'Failed to load video' if message becomes empty
+- Applied at all 3 places _errorMessage is set:
+  1. _handlePlayerError() — uses sanitized string for both classification
+     and display
+  2. _initializePlayer() catch block
+  3. 'Video URL is empty' literal (already safe, no change needed)
+
+Codec/render classification logic uses sanitized string consistently —
+keywords like 'HEVC', 'decoder', 'gpu' are preserved because they don't
+contain URLs, so retry/fallback logic is unaffected.
+
+Stage Summary:
+- 1 file modified (video_player_screen.dart), 46 insertions, 11 deletions
+- Commit: 07fc56e (pushed to origin/main)
+- No API changes, no behavior changes for non-URL errors
+
+---
+Task ID: Phase 4.32
+Agent: Main Agent
+Task: Fix app crash after exiting Video Player (especially when link is dead)
+
+Work Log:
+- User report: Open a video → link is dead → error screen shown → press
+  Back → app returns to previous screen → ~0.5-2 seconds later the ENTIRE
+  app crashes (process killed). The crash is delayed and happens after
+  the user has already returned to the previous screen.
+
+Root cause analysis:
+- media_kit's Player.stop(), Player.pause(), Player.dispose() all return
+  Future<void> — the actual native libmpv teardown (MediaCodec release,
+  GPU surface detach, demuxer close) happens asynchronously on a
+  background thread.
+- Previously the code called these fire-and-forget (no await):
+    _exitPlayer():       _player.stop(); _player.pause();
+    dispose():           _player.stop(); _player.pause(); _player.dispose();
+    _handlePlayerError(): _player.stop(); _player.pause(); _player.dispose();
+- This meant the route popped and the widget was being destroyed WHILE
+  libmpv's native cleanup was still in progress. On Oppo A16 / low-RAM
+  devices, the deferred native callback fired into a half-destroyed
+  Flutter engine → SIGSEGV → process killed.
+- This is a well-known media_kit footgun: the dispose Future MUST be
+  awaited, otherwise the native engine can outlive the Flutter widget
+  tree and crash on the next callback.
+
+Fix implemented (commit c8edcfd), 3 changes in video_player_screen.dart:
+
+1. _exitPlayer() — made async, awaits stop/pause BEFORE pop:
+   - await _player.stop() with 2s timeout
+   - await _player.pause()
+   - await SystemChrome.setPreferredOrientations()
+   - then Navigator.pop()
+   This ensures the native engine is quiescent by the time dispose() runs.
+
+2. dispose() — moved heavy native cleanup into a detached Future:
+   - Capture _player reference locally (so the background future doesn't
+     read the field after super.dispose())
+   - Define _backgroundCleanup() that awaits stop/pause/dispose with
+     timeouts (2s/2s/3s)
+   - unawaited(_backgroundCleanup()) — fire it off so dispose() returns
+     immediately (Flutter framework requires synchronous dispose)
+   - Increased _isPlayerDisposing lock release from 500ms → 1000ms for
+     low-end device headroom
+   - Kept _saveWatchProgressSync() inline as safety net
+
+3. _handlePlayerError() — when retrying with new codec/output mode, old
+   player is now disposed via detached awaited Future so the new Player
+   isn't created while the old one is still tearing down.
+
+Each async cleanup has explicit timeouts so even if libmpv hangs on a
+corrupt stream, the cleanup future resolves and the global
+_isPlayerDisposing lock is released.
+
+NOTE: _tryVideoOutputFallback() still uses fire-and-forget cleanup —
+this is left as-is because (a) it's followed by a 300ms delay before
+re-init, (b) it's a rare path (only triggered on black-screen detection),
+and (c) Bro's reported crash was specifically on user-initiated Back
+exit which is now fixed via the awaited _exitPlayer() path. Documented
+this with an inline comment for future maintainers.
+
+Stage Summary:
+- 1 file modified (video_player_screen.dart), 101 insertions, 18 deletions
+- Commit: c8edcfd (pushed to origin/main)
+- User can now press Back from a dead-link video without the app crashing
+  afterward. Native resources are properly released before the widget
+  tree is destroyed.
