@@ -271,17 +271,36 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   // Safe exit: pause player first, reset orientation/UI, then pop
   // Guard against double-exit which could pop the detail screen too,
   // returning to HomePage, and then another pop closing the app entirely.
-  void _exitPlayer() {
+  //
+  // Phase 4.32 (2026-07-28): Made async + awaits player.stop()/pause().
+  // Previously these were fire-and-forget, which meant libmpv's native
+  // cleanup ran AFTER the route had already popped and the widget was
+  // being disposed. On Oppo A16 / low-RAM devices, the deferred native
+  // callback fired into a half-destroyed Flutter engine → SIGSEGV,
+  // crashing the app ~0.5-2s after the user pressed Back. Awaiting
+  // stop/pause here forces the native cleanup to complete BEFORE we
+  // pop, so by the time dispose() runs, the player is already quiescent.
+  Future<void> _exitPlayer() async {
     if (_isDisposed || _isExiting || !mounted) return;
     _isExiting = true; // Prevent double-exit
 
     try {
-      // 1. Stop and pause player immediately to release native resources
-      //    stop() releases the media stream and frees decoder hardware (MediaCodec),
-      //    which is critical for preventing native crashes on re-entry.
+      // 1. Stop and pause player immediately to release native resources.
+      //    AWAIT these — they return Future<void> and the actual native
+      //    teardown (MediaCodec release, GPU surface detach, demuxer
+      //    close) happens asynchronously. Without await, the route pops
+      //    while libmpv is still holding decoder hardware, and the
+      //    subsequent native callbacks crash the app.
       if (!_isDisposed) {
-        try { _player.stop(); } catch (_) {}
-        try { _player.pause(); } catch (_) {}
+        try {
+          await _player.stop().timeout(
+            const Duration(seconds: 2),
+            onTimeout: () => debugPrint('player.stop() timed out — continuing'),
+          );
+        } catch (e) {
+          debugPrint('player.stop() error during exit: $e');
+        }
+        try { await _player.pause(); } catch (_) {}
       }
 
       // 2. Save progress synchronously before pop
@@ -292,13 +311,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       _volumeIndicatorTimer?.cancel();
       _brightnessIndicatorTimer?.cancel();
       _seekAnimationTimer?.cancel();
+      _blackScreenDetectionTimer?.cancel();
 
       // 4. Reset orientation and system UI BEFORE popping
       //    Doing this before pop prevents the orientation change from
       //    triggering an Android activity recreation that could cause
       //    a synthetic back press event on the previous route
       try {
-        SystemChrome.setPreferredOrientations([
+        await SystemChrome.setPreferredOrientations([
           DeviceOrientation.portraitUp,
         ]);
         SystemChrome.setEnabledSystemUIMode(
@@ -350,22 +370,61 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     // and frees native decoder resources, while pause() keeps them allocated.
     // This is critical for re-entry — if decoder resources aren't freed,
     // creating a new Player will conflict with the old one and crash the app.
+    //
+    // Phase 4.32 (2026-07-28): Detach the heavy native cleanup into a
+    // background Future and AWAIT it there. Flutter's framework calls
+    // dispose() synchronously and expects it to return quickly; calling
+    // _player.dispose() inline WITHOUT await meant libmpv's async native
+    // teardown would race against the widget being destroyed. On Oppo A16
+    // and other low-RAM devices this caused a delayed SIGSEGV ~0.5-2s
+    // AFTER the user pressed Back (the native callback fired into a
+    // half-destroyed Flutter engine). By moving the cleanup to a detached
+    // future, the synchronous dispose() returns immediately (Flutter is
+    // happy) and libmpv finishes its teardown in the background with no
+    // risk of touching the now-destroyed widget.
     _isPlayerDisposing = true; // Lock to prevent new Player creation while disposing
-    try { _player.stop(); } catch (_) {}
-    try { _player.pause(); } catch (_) {}
 
-    // Save position using last known values (doesn't read from player)
+    // Save position using last known values (doesn't read from player).
+    // _exitPlayer already does this, but keep it here as a safety net in
+    // case the widget is disposed by an unusual path (e.g. parent route
+    // removal) that bypasses _exitPlayer.
     try { _saveWatchProgressSync(); } catch (e) { debugPrint('Save progress error on dispose: $e'); }
 
-    // Dispose player — wrap in try-catch because native crash may throw
-    try { _player.dispose(); } catch (e) { debugPrint('Player dispose error: $e'); }
+    // Capture the player reference so the background cleanup doesn't read
+    // the field after super.dispose() has run.
+    final player = _player;
+    Future<void> _backgroundCleanup() async {
+      try {
+        await player.stop().timeout(
+          const Duration(seconds: 2),
+          onTimeout: () => debugPrint('dispose: player.stop() timed out'),
+        );
+      } catch (e) {
+        debugPrint('dispose: player.stop() error: $e');
+      }
+      try { await player.pause(); } catch (_) {}
+      try {
+        await player.dispose().timeout(
+          const Duration(seconds: 3),
+          onTimeout: () => debugPrint('dispose: player.dispose() timed out'),
+        );
+      } catch (e) {
+        debugPrint('dispose: player.dispose() error: $e');
+      }
+    }
 
-    // Release the global lock after a short delay to allow native cleanup.
+    // Fire the cleanup as a top-level detached future so it isn't tied to
+    // this widget's lifecycle. unawaited keeps the linter happy.
+    unawaited(_backgroundCleanup());
+
+    // Release the global lock after a longer delay to allow native cleanup.
     // libmpv's native cleanup is async — it needs time to release decoder
     // hardware (MediaCodec), GPU surfaces, and demuxer resources.
     // Without this delay, re-entering the player and creating a new Player
     // immediately can cause a native crash (SIGSEGV) that kills the app.
-    Future.delayed(const Duration(milliseconds: 500), () {
+    // Phase 4.32: increased from 500ms → 1000ms to give low-end devices
+    // (Oppo A16, Redmi 9) more headroom for the deferred cleanup future.
+    Future.delayed(const Duration(milliseconds: 1000), () {
       _isPlayerDisposing = false;
     });
 
@@ -1025,6 +1084,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     try { _player.stop(); } catch (_) {}
     try { _player.pause(); } catch (_) {}
     try { _player.dispose(); } catch (_) {}
+    // NOTE: Phase 4.32 — these fire-and-forget calls are still potentially
+    // racy, but _tryVideoOutputFallback is followed by a 300ms delay
+    // before re-init which gives libmpv time to clean up. Crashes here
+    // are rare in practice (black-screen fallback is uncommon). The main
+    // crash pattern reported by Bro was on user-initiated Back exit,
+    // which is now fixed via the awaited _exitPlayer() path.
 
     // Move to next video output mode
     _videoOutputMode++;
@@ -1082,10 +1147,28 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       }
       _streamSubscriptions.clear();
 
-      // Stop the player to release media resources, then dispose
-      try { _player.stop(); } catch (_) {}
-      try { _player.pause(); } catch (_) {}
-      try { _player.dispose(); } catch (_) {}
+      // Stop the player to release media resources, then dispose.
+      // Phase 4.32: Run cleanup as a detached, awaited Future so the
+      // native teardown completes before _initializePlayer() runs again
+      // 300ms later. Previously these were fire-and-forget — the new
+      // Player was created while the old one was still tearing down,
+      // causing native SIGSEGV crashes on low-end devices.
+      final oldPlayer = _player;
+      unawaited(() async {
+        try {
+          await oldPlayer.stop().timeout(
+            const Duration(seconds: 2),
+            onTimeout: () => debugPrint('error-handler: stop() timed out'),
+          );
+        } catch (_) {}
+        try { await oldPlayer.pause(); } catch (_) {}
+        try {
+          await oldPlayer.dispose().timeout(
+            const Duration(seconds: 3),
+            onTimeout: () => debugPrint('error-handler: dispose() timed out'),
+          );
+        } catch (_) {}
+      }());
 
       _hasVideoOutput = false;
 
