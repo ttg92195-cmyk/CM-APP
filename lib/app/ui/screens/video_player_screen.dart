@@ -822,7 +822,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       if (mounted) {
         setState(() {
           _isInitialized = true;
-          _errorMessage = e.toString();
+          // Phase 4.31: sanitize — exceptions can also embed the URL.
+          _errorMessage = _sanitizeErrorMessage(e.toString());
         });
       }
     }
@@ -1046,15 +1047,23 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   void _handlePlayerError(String error) {
-    final isCodecError = error.contains('codec') ||
-        error.contains('Could not open') ||
-        error.contains('decoder') ||
-        error.contains('HEVC') ||
-        error.contains('H.265') ||
-        error.contains('h265') ||
-        error.contains('hevc') ||
-        error.contains('not supported') ||
-        error.contains('failed to initialize');
+    // Phase 4.31 (2026-07-28): Sanitize the raw error before storing —
+    // libmpv error messages often contain the full video URL (e.g.
+    // "Failed to open https://stream.cmreel.com/file/...mp4"). Bro asked
+    // for the real link to be hidden from end users; we keep only the
+    // diagnostic keywords needed for the codec/render classification
+    // below and discard the URL portion entirely.
+    final sanitized = _sanitizeErrorMessage(error);
+
+    final isCodecError = sanitized.contains('codec') ||
+        sanitized.contains('Could not open') ||
+        sanitized.contains('decoder') ||
+        sanitized.contains('HEVC') ||
+        sanitized.contains('H.265') ||
+        sanitized.contains('h265') ||
+        sanitized.contains('hevc') ||
+        sanitized.contains('not supported') ||
+        sanitized.contains('failed to initialize');
 
     // MX Player-style: Also treat GPU/render errors as needing output fallback
     final isRenderError = error.contains('gpu') ||
@@ -1103,9 +1112,35 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     } else if (mounted) {
       setState(() {
         _isInitialized = true;
-        _errorMessage = error;
+        _errorMessage = sanitized; // Phase 4.31: sanitized (URL stripped)
       });
     }
+  }
+
+  /// Phase 4.31 (2026-07-28): Strip any http(s)://... URL from the raw
+  /// libmpv error string and return only the diagnostic portion that's
+  /// safe to show to end users. Bro explicitly requested that the real
+  /// video link never appear in the error UI — both for security and to
+  /// avoid confusing users with long opaque URLs.
+  ///
+  /// Examples:
+  ///   "Failed to open https://stream.cmreel.com/file/x.mp4" → "Failed to open [link]"
+  ///   "Could not open codec HEVC"                            → "Could not open codec HEVC"
+  ///   "Server returned 404"                                  → "Server returned 404"
+  String _sanitizeErrorMessage(String raw) {
+    if (raw.isEmpty) return raw;
+    // Match http(s)://host/path?query#fragment up to the first whitespace
+    // or end-of-string. libmpv typically embeds the URL as a single token.
+    final urlPattern = RegExp(r'https?://[^\s<>"]+');
+    var cleaned = raw.replaceAll(urlPattern, '[link]');
+    // Some libmpv variants quote the URL with single backticks or quotes.
+    cleaned = cleaned.replaceAll(RegExp(r'`[^`]*`'), '[link]');
+    // Trim trailing whitespace / punctuation artifacts left after removal.
+    cleaned = cleaned.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
+    if (cleaned.isEmpty || cleaned == '[link]') {
+      return 'Failed to load video';
+    }
+    return cleaned;
   }
 
   // ==============================================================
