@@ -6521,3 +6521,53 @@ Stage Summary:
 - User can now press Back from a dead-link video without the app crashing
   afterward. Native resources are properly released before the widget
   tree is destroyed.
+
+---
+Task ID: Phase 4.33
+Agent: Main Agent
+Task: Add 'alive' breathing animation to Search screen empty-state icons
+
+Work Log:
+- User request: When entering the Search screen, the empty-state icons
+  (search_off when no results, movie_filter_outlined + tune when idle)
+  currently sit static on the page. Bro asked if we could add an
+  'alive' animation that makes them feel like they're breathing.
+  First time implementing animation for these icons.
+
+Investigation:
+- Read search_screen.dart (1364 lines). Located 3 empty-state Icon
+  widgets:
+  1. Line ~1119: Icons.search_off (no-results state)
+  2. Line ~1141: Icons.movie_filter_outlined (idle state, no query yet)
+  3. Line ~1161: Icons.tune (small filter hint icon below #2)
+- The three states are mutually exclusive — you only ever see one
+  empty state at a time.
+
+Implementation (commit c0eef7d):
+- Added TickerProviderStateMixin to _SearchScreenState
+- Single shared AnimationController (1.6s loop, reverse: true) drives
+  all three icons — saves memory since they're never shown together
+- Two parallel Animations:
+    _breatheScale:   1.00 → 1.10 → 1.00  (10% grow, subtle)
+    _breatheOpacity: 0.85 → 1.00 → 0.85  (soft fade, never invisible)
+  Curve: Curves.easeInOutSine (smooth, organic)
+- Wrapped all three Icon widgets in ScaleTransition + FadeTransition
+- Controller properly disposed in dispose()
+
+Design decisions:
+- 1.6s cycle: 'calm breathing' rhythm. Human breath is ~4s but UI
+  breath should feel a bit quicker so users notice it.
+- 10% scale: subtle, never aggressive or distracting.
+- 0.85 opacity floor: icon never disappears, just softly fades like a
+  heartbeat.
+- Search box prefix icon (Icons.search) NOT animated — coexists with
+  text input, animating it would feel chaotic while typing.
+- All three icons share the same controller so when one disappears
+  and another appears (e.g. user types → search_off → movie_filter),
+  the new icon continues the same rhythm seamlessly.
+
+Stage Summary:
+- 1 file modified (search_screen.dart), 73 insertions, 13 deletions
+- Commit: c0eef7d (pushed to origin/main)
+- Pure visual polish — no behavior, logic, or data changes
+- No new dependencies (TickerProviderStateMixin is built-in)
