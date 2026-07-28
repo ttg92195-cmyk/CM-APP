@@ -22,6 +22,7 @@ import 'package:cm_movies/app/core/services/fcm_notification_service.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
 import 'package:cm_movies/app/ui/screens/login_page.dart';
 import 'package:cm_movies/app/ui/screens/splash_screen.dart';
+import 'package:cm_movies/app/ui/components/premium_snackbar.dart';
 import 'firebase_options.dart';
 // Phase 2.5: Crashlytics — crash + non-fatal error reporting.
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
@@ -605,12 +606,23 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
           // Session timed out while app was in background
           // Only show SnackBar if still mounted (prevents crash)
           if (mounted) {
+            // Phase 4.35: Premium styled SnackBar replaces the old plain
+            // orange bar. Uses warning amber accent (rather than brand
+            // red) to distinguish "session expired" from "user logged out".
+            final isMy = appConfig.languageCode == 'my';
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Session expired due to inactivity. Please login again.'),
-                backgroundColor: Colors.orange,
-                duration: Duration(seconds: 4),
-              ),
+              PremiumSnackBar(
+                context: context,
+                icon: Icons.timer_off_rounded,
+                title: isMy
+                    ? 'ဆက်ရှင် ကုန်သွားပါပြီ'
+                    : 'Session expired',
+                subtitle: isMy
+                    ? 'မအောင်မြင်ခဲ့ပါ။ ပြန်လည် login ၀င်ပါ။'
+                    : 'Please login again to continue.',
+                accentColor: const Color(0xFFFFB300), // amber warning
+                duration: const Duration(seconds: 4),
+              ).build(),
             );
           }
         } else {

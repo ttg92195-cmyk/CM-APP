@@ -19,6 +19,7 @@ import 'package:cm_movies/app/core/services/download_manager_service.dart';
 import 'package:cm_movies/app/ui/screens/tmdb_generator_page.dart';
 import 'package:cm_movies/app/ui/screens/vip_page.dart';
 import 'package:cm_movies/app/ui/components/download_notification_banner.dart';
+import 'package:cm_movies/app/ui/components/premium_snackbar.dart';
 
 // Bottom nav tab indices (4 tabs)
 const int kHomeTab = 0;
@@ -672,11 +673,24 @@ class _HomePageState extends State<HomePage> {
                         Navigator.pop(context);
                         await appConfig.logoutUser();
                         if (mounted) {
+                          // Phase 4.35: Premium styled SnackBar replaces
+                          // the old plain orange bar. Dark gradient card
+                          // with red accent icon, bilingual title +
+                          // subtitle, floating with rounded corners.
+                          final isMy = appConfig.languageCode == 'my';
                           ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(appConfig.translate('logout')),
-                              backgroundColor: Colors.orange,
-                            ),
+                            PremiumSnackBar(
+                              context: context,
+                              icon: Icons.logout_rounded,
+                              title: isMy
+                                  ? 'ထွက်ပြီးပါပြီ'
+                                  : 'Logged out',
+                              subtitle: isMy
+                                  ? 'သင် sign out လုပ်ပြီးပါပြီ။'
+                                  : 'You have been signed out.',
+                              accentColor: const Color(0xFFE50914),
+                              duration: const Duration(seconds: 3),
+                            ).build(),
                           );
                         }
                       },

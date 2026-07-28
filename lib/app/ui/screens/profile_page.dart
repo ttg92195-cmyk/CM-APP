@@ -4,6 +4,7 @@ import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/services/device_management_service.dart';
 import 'package:cm_movies/app/ui/screens/watchlist_screen.dart';
 import 'package:cm_movies/app/ui/screens/movie_bookmark_screen.dart';
+import 'package:cm_movies/app/ui/components/premium_snackbar.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -916,11 +917,21 @@ class _ProfilePageState extends State<ProfilePage> {
                   await appConfig.logoutUser();
                   if (mounted) {
                     Navigator.pop(context);
+                    // Phase 4.35: Premium styled SnackBar (replaces plain
+                    // orange bar). Bilingual title + subtitle, dark
+                    // gradient floating card with red accent.
+                    final isMy = appConfig.languageCode == 'my';
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(appConfig.translate('logout')),
-                        backgroundColor: Colors.orange,
-                      ),
+                      PremiumSnackBar(
+                        context: context,
+                        icon: Icons.logout_rounded,
+                        title: isMy ? 'ထွက်ပြီးပါပြီ' : 'Logged out',
+                        subtitle: isMy
+                            ? 'သင် sign out လုပ်ပြီးပါပြီ။'
+                            : 'You have been signed out.',
+                        accentColor: const Color(0xFFE50914),
+                        duration: const Duration(seconds: 3),
+                      ).build(),
                     );
                   }
                 },
