@@ -144,7 +144,12 @@ class _MovieCardState extends State<MovieCard> {
     final prefs = _prefsCache ??= await SharedPreferences.getInstance();
     final posMs = prefs.getInt('watch_pos_${widget.movie.id}');
     final durMs = prefs.getInt('watch_dur_${widget.movie.id}');
-    if (posMs != null && durMs != null && posMs > 5000 && durMs > 0) {
+    // Phase 4.36: Raised threshold from 5s → 30s so that accidental taps
+    // (which can briefly start playback and save a few seconds of watch
+    // position before the user closes the player) don't leave a "0%"
+    // artifact on the home grid. 30s of deliberate watching is a much
+    // stronger signal that the user actually wants to resume later.
+    if (posMs != null && durMs != null && posMs > 30000 && durMs > 0) {
       final progress = (posMs / durMs).clamp(0.0, 1.0);
       if (progress < 0.95 && mounted) {
         setState(() => _watchProgress = progress);
@@ -152,12 +157,12 @@ class _MovieCardState extends State<MovieCard> {
     }
   }
 
-  String _formatWatchPosition() {
-    if (_watchProgress == null) return '';
-    // We'll show percentage-based position
-    final percent = (_watchProgress! * 100).round();
-    return '$percent%';
-  }
+  // Phase 4.36: _formatWatchPosition() helper removed — the text
+  // percentage "0%" / "42%" that used to live in the metadata row below
+  // the title has been removed (Netflix-style visual progress bar at the
+  // bottom of the poster is the single source of truth now). If we ever
+  // want to bring the text back, restore this helper and re-add the
+  // `if (_watchProgress != null)` block in the metadata Row.
 
   // Task 40 — image URL with cache-busting retry suffix.
   // On retry, append `?retry=N` (or `&retry=N` if URL already has a
@@ -487,9 +492,19 @@ class _MovieCardState extends State<MovieCard> {
                 ),
               ),
             ),
-            // Year + Duration/Season + Watch progress indicator below title
+            // Year + Duration/Season below title.
+            //
+            // Phase 4.36: Removed the inline "0%" watch-progress text +
+            // play icon that used to sit at the end of this row.
+            // Reason: the row was getting cramped (Year + duration icon +
+            // duration text + play icon + percentage = 5 elements on a
+            // narrow card), and the percentage text was REDUNDANT with
+            // the YouTube-style progress bar already drawn at the bottom
+            // of the poster (see line ~438, `if (_watchProgress != null)`
+            // block above). Netflix / Disney+ / Prime Video all use the
+            // visual progress bar alone — no text percentage — and it
+            // reads as more premium + less cluttered.
             if (widget.movie.year != null && widget.movie.year!.isNotEmpty ||
-                _watchProgress != null ||
                 (widget.movie.type == 'series' && widget.movie.seasons != null && widget.movie.seasons!.isNotEmpty) ||
                 (widget.movie.type != 'series' && widget.movie.duration != null && widget.movie.duration!.isNotEmpty))
               Padding(
@@ -497,89 +512,58 @@ class _MovieCardState extends State<MovieCard> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Flexible(
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (widget.movie.year != null && widget.movie.year!.isNotEmpty)
-                            Flexible(
-                              child: Text(
-                                widget.movie.year!,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.labelSmall?.copyWith(
-                                  color: theme.colorScheme.onSurface.withOpacity(0.6),
-                                  fontSize: 10,
-                                ),
-                              ),
-                            ),
-                          // Show "Season X" for series, or duration for movies
-                          if (widget.movie.type == 'series' && widget.movie.seasons != null && widget.movie.seasons!.isNotEmpty) ...[
-                            if (widget.movie.year != null && widget.movie.year!.isNotEmpty)
-                              const SizedBox(width: 4),
-                            Icon(
-                              Icons.tv,
-                              size: 10,
-                              color: theme.colorScheme.onSurface.withOpacity(0.6),
-                            ),
-                            const SizedBox(width: 2),
-                            Flexible(
-                              child: Text(
-                                'Season ${widget.movie.seasons}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: theme.colorScheme.onSurface.withOpacity(0.6),
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ),
-                          ] else if (widget.movie.type != 'series' && widget.movie.duration != null && widget.movie.duration!.isNotEmpty) ...[
-                            if (widget.movie.year != null && widget.movie.year!.isNotEmpty)
-                              const SizedBox(width: 4),
-                            Icon(
-                              Icons.access_time,
-                              size: 10,
-                              color: theme.colorScheme.onSurface.withOpacity(0.6),
-                            ),
-                            const SizedBox(width: 2),
-                            Flexible(
-                              child: Text(
-                                '${widget.movie.duration} min',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: theme.colorScheme.onSurface.withOpacity(0.6),
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
+                    if (widget.movie.year != null && widget.movie.year!.isNotEmpty)
+                      Flexible(
+                        child: Text(
+                          widget.movie.year!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.onSurface.withOpacity(0.6),
+                            fontSize: 10,
+                          ),
+                        ),
                       ),
-                    ),
-                    if (_watchProgress != null) ...[
-                      if (widget.movie.year != null && widget.movie.year!.isNotEmpty ||
-                          (widget.movie.type == 'series' && widget.movie.seasons != null && widget.movie.seasons!.isNotEmpty) ||
-                          (widget.movie.type != 'series' && widget.movie.duration != null && widget.movie.duration!.isNotEmpty))
+                    // Show "Season X" for series, or duration for movies
+                    if (widget.movie.type == 'series' && widget.movie.seasons != null && widget.movie.seasons!.isNotEmpty) ...[
+                      if (widget.movie.year != null && widget.movie.year!.isNotEmpty)
                         const SizedBox(width: 4),
                       Icon(
-                        Icons.play_circle_filled,
+                        Icons.tv,
                         size: 10,
-                        color: const Color(0xFFE50914).withOpacity(0.8),
+                        color: theme.colorScheme.onSurface.withOpacity(0.6),
                       ),
                       const SizedBox(width: 2),
                       Flexible(
                         child: Text(
-                          _formatWatchPosition(),
+                          'Season ${widget.movie.seasons}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: const Color(0xFFE50914).withOpacity(0.8),
+                            color: theme.colorScheme.onSurface.withOpacity(0.6),
                             fontSize: 9,
-                            fontWeight: FontWeight.w600,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ] else if (widget.movie.type != 'series' && widget.movie.duration != null && widget.movie.duration!.isNotEmpty) ...[
+                      if (widget.movie.year != null && widget.movie.year!.isNotEmpty)
+                        const SizedBox(width: 4),
+                      Icon(
+                        Icons.access_time,
+                        size: 10,
+                        color: theme.colorScheme.onSurface.withOpacity(0.6),
+                      ),
+                      const SizedBox(width: 2),
+                      Flexible(
+                        child: Text(
+                          '${widget.movie.duration} min',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: theme.colorScheme.onSurface.withOpacity(0.6),
+                            fontSize: 9,
+                            fontWeight: FontWeight.w500,
                           ),
                         ),
                       ),
