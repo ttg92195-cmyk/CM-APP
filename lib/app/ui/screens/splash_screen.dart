@@ -4,6 +4,9 @@
 //   - "မထစ်အောင်" → no stutter on low-end devices (Oppo A16 class)
 //   - "အလန်းစားဖြစ်ဖြစ်" → cinematic premium look (Disney+ / Netflix tier)
 //   - 3 second total duration (matches _minSplashElapsed in main.dart)
+//   - Phase 4.34.1: precise centering — rings, halo, icon, and KMM text
+//     must all share the same horizontal axis, with the logo at exact
+//     screen center and the text just below the logo's bottom edge.
 //
 // Why custom Flutter animation instead of Lottie:
 //   - Lottie JSON parsing on first frame can cause an initial stutter on
@@ -12,16 +15,25 @@
 //   - Custom vector animation runs natively on the GPU via Flutter's
 //     rendering pipeline → instant first frame, smooth 60fps.
 //   - No asset to ship / decode → smaller APK, faster cold start.
-//   - The visual quality matches what a hand-crafted Lottie would give
-//     us, and the code is easier to tweak later.
 //
 // Animation layers:
 //   1. Spotlight gradient background (subtle radial red glow on deep black)
-//   2. Pulsing red glow halo behind the logo (breathing effect)
-//   3. Three concentric expanding rings (staggered, ripple effect)
+//   2. Three concentric expanding rings (staggered, ripple effect)
+//   3. Pulsing red glow halo behind the logo (breathing effect)
 //   4. Logo: play_circle_fill with elastic scale-in + subtle pulse loop
 //   5. "KMM" brand text with horizontal shimmer sweep
 //   6. Three sequential loading dots at the bottom
+//
+// Layout (Phase 4.34.1):
+//   - Logo composition (rings + halo + icon) is positioned at EXACT screen
+//     center using LayoutBuilder + Positioned. This guarantees the rings
+//     and halo share the same center, regardless of what's below them.
+//   - KMM text is positioned just below the logo's bottom edge (logo_size/2
+//     + gap), so it tracks the logo's position rather than being pushed
+//     down by Column centering math.
+//   - Previously, putting rings in a separate Center widget + halo/text in
+//     a Column caused the rings' center (screen center) to mismatch the
+//     halo's center (column center, which is offset by the text below).
 
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
@@ -49,6 +61,16 @@ class _SplashScreenState extends State<SplashScreen>
   // Brand colors.
   static const Color _brandRed = Color(0xFFE50914);
   static const Color _brandRedBright = Color(0xFFFF2A36);
+
+  // Logo composition dimensions. All visual layers (rings, halo, icon)
+  // are sized relative to these constants so the whole composition
+  // scales together if we tweak it later.
+  static const double _compositionSize = 200.0; // SizedBox footprint
+  static const double _haloSize = 100.0;
+  static const double _iconSize = 72.0;
+  static const double _ringMinSize = 60.0;
+  static const double _ringMaxSize = 200.0; // fits inside composition
+  static const double _textGap = 14.0; // gap between logo bottom and text
 
   @override
   void initState() {
@@ -95,26 +117,60 @@ class _SplashScreenState extends State<SplashScreen>
               fit: StackFit.expand,
               children: [
                 _buildSpotlightBackground(bgColor),
-                _buildPulseRings(),
-                // Logo + brand text stacked vertically at screen center.
-                // Loading dots are absolutely positioned at the bottom
-                // for a separate "loading" visual zone.
-                Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _buildCenterLogo(),
-                      const SizedBox(height: 30),
-                      _buildBrandText(),
-                    ],
-                  ),
-                ),
+                _buildCenteredComposition(),
                 _buildLoadingDots(),
               ],
             );
           },
         ),
       ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Composition: logo at exact screen center, text just below.
+  //
+  // We use LayoutBuilder + Positioned instead of a Column because:
+  //   - A Column centers its CHILDREN as a group, so the logo ends up
+  //     above screen center (because text pushes the column's center
+  //     down). This is what caused Bro to see the icon "above" the
+  //     pulse rings and the text "too low".
+  //   - LayoutBuilder gives us the screen height, so we can position
+  //     the logo at exact screen center (height/2 - logoSize/2) and
+  //     the text at exact (height/2 + logoSize/2 + gap). This works
+  //     on any screen size.
+  // ─────────────────────────────────────────────────────────────────────
+  Widget _buildCenteredComposition() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final screenHeight = constraints.maxHeight;
+        final screenCenter = screenHeight / 2;
+
+        return Stack(
+          children: [
+            // Logo composition (rings + halo + icon) centered on screen.
+            // Positioned with explicit top + height so the composition's
+            // CENTER aligns with screen center, regardless of what's
+            // above or below it.
+            Positioned(
+              left: 0,
+              right: 0,
+              top: screenCenter - _compositionSize / 2,
+              height: _compositionSize,
+              child: Center(child: _buildLogoComposition()),
+            ),
+            // KMM text positioned just below the logo's bottom edge.
+            // logo bottom = screenCenter + compositionSize/2.
+            // text top = logo bottom + _textGap.
+            Positioned(
+              left: 0,
+              right: 0,
+              top: screenCenter + _compositionSize / 2 + _textGap,
+              child: Center(child: _buildBrandText()),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -144,48 +200,66 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   // ─────────────────────────────────────────────────────────────────────
-  // 2. Pulse rings — three concentric expanding circles, staggered.
+  // 2-4. Logo composition — rings + halo + icon in one Stack.
+  //
+  // All three layers share the SAME center because they're inside one
+  // Stack with `alignment: Alignment.center`. The SizedBox gives the
+  // Stack a fixed footprint so the LayoutBuilder positioning above
+  // remains stable regardless of ring expansion.
   // ─────────────────────────────────────────────────────────────────────
-  Widget _buildPulseRings() {
-    // Three rings at 0.0, 0.33, 0.66 phase offset.
-    final List<double> phases = [0.0, 0.33, 0.66];
-
-    return Center(
+  Widget _buildLogoComposition() {
+    return SizedBox(
+      width: _compositionSize,
+      height: _compositionSize,
       child: Stack(
         alignment: Alignment.center,
-        children: phases.map((phase) {
-          // Each ring's progress goes 0→1 over the loop, wrapped & offset.
-          final t = (_loopController.value + phase) % 1.0;
-          // Ease-out so the ring expands fast then slows.
-          final eased = 1.0 - math.pow(1.0 - t, 2).toDouble();
-          final size = 80.0 + eased * 220.0; // 80 → 300
-          final opacity = (1.0 - t) * 0.45; // fade out as it expands
-
-          return Container(
-            width: size,
-            height: size,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: _brandRed.withOpacity(opacity),
-                width: 1.5,
-              ),
-            ),
-          );
-        }).toList(),
+        children: [
+          _buildPulseRings(),
+          _buildHaloWithIcon(),
+        ],
       ),
     );
   }
 
-  // ─────────────────────────────────────────────────────────────────────
-  // 3. Center logo — play_circle_fill with elastic scale-in + pulse.
-  // ─────────────────────────────────────────────────────────────────────
-  Widget _buildCenterLogo() {
+  // Pulse rings — three concentric expanding circles, staggered.
+  Widget _buildPulseRings() {
+    final List<double> phases = [0.0, 0.33, 0.66];
+
+    return Stack(
+      alignment: Alignment.center,
+      children: phases.map((phase) {
+        // Each ring's progress goes 0→1 over the loop, wrapped & offset.
+        final t = (_loopController.value + phase) % 1.0;
+        // Ease-out so the ring expands fast then slows.
+        final eased = 1.0 - math.pow(1.0 - t, 2).toDouble();
+        // Ring expands from _ringMinSize to _ringMaxSize.
+        final size = _ringMinSize + eased * (_ringMaxSize - _ringMinSize);
+        final opacity = (1.0 - t) * 0.45; // fade out as it expands
+
+        return Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: _brandRed.withOpacity(opacity),
+              width: 1.5,
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  // Halo + icon — uses Container with the icon as its child via Center,
+  // instead of a Stack with halo + icon as siblings. This guarantees
+  // the icon is perfectly centered within the halo (Stack centering can
+  // have subtle offsets due to font glyph metrics).
+  Widget _buildHaloWithIcon() {
     // Intro: scale from 0.0 → 1.0 with overshoot (elastic feel).
-    // We use a custom curve: easeOutBack gives a slight overshoot.
     final introT = _introController.value;
     const curve = Curves.easeOutBack;
-    final scale = 0.0 + (1.0 - 0.0) * curve.transform(introT);
+    final scale = curve.transform(introT);
     final introOpacity = introT.clamp(0.0, 1.0);
 
     // Loop: subtle breathing pulse on top of the intro scale.
@@ -200,39 +274,34 @@ class _SplashScreenState extends State<SplashScreen>
       opacity: introOpacity,
       child: Transform.scale(
         scale: scale * pulse,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            // Soft halo behind the icon
-            Container(
-              width: 110,
-              height: 110,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: _brandRed.withOpacity(haloOpacity * 0.4),
-                boxShadow: [
-                  BoxShadow(
-                    color: _brandRed.withOpacity(haloOpacity),
-                    blurRadius: 45,
-                    spreadRadius: 2,
-                  ),
-                ],
+        child: Container(
+          width: _haloSize,
+          height: _haloSize,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: _brandRed.withOpacity(haloOpacity * 0.4),
+            boxShadow: [
+              BoxShadow(
+                color: _brandRed.withOpacity(haloOpacity),
+                blurRadius: 40,
+                spreadRadius: 2,
               ),
-            ),
-            // The icon itself
-            const Icon(
+            ],
+          ),
+          child: Center(
+            child: Icon(
               Icons.play_circle_fill,
-              size: 80,
+              size: _iconSize,
               color: _brandRedBright,
             ),
-          ],
+          ),
         ),
       ),
     );
   }
 
   // ─────────────────────────────────────────────────────────────────────
-  // 4. Brand text — "KMM" with shimmer sweep.
+  // 5. Brand text — "KMM" with shimmer sweep.
   // ─────────────────────────────────────────────────────────────────────
   Widget _buildBrandText() {
     // Reveal text starting at 50% of the intro, full opacity by end of intro.
@@ -275,7 +344,7 @@ class _SplashScreenState extends State<SplashScreen>
           child: const Text(
             'KMM',
             style: TextStyle(
-              fontSize: 38,
+              fontSize: 36,
               fontWeight: FontWeight.w900,
               letterSpacing: 6.0,
               color: Color(0xFFFFFFFF), // ShaderMask will overlay this
@@ -288,7 +357,7 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   // ─────────────────────────────────────────────────────────────────────
-  // 5. Loading dots — three sequential pulsing dots at the bottom.
+  // 6. Loading dots — three sequential pulsing dots at the bottom.
   // ─────────────────────────────────────────────────────────────────────
   Widget _buildLoadingDots() {
     return Positioned(
