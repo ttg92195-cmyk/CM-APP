@@ -6637,3 +6637,45 @@ Stage Summary:
   performance. If Bro insists on real Lottie later, the structure
   makes it trivial to swap (replace SplashScreen body with Lottie
   widget + bundled asset).
+
+---
+Task ID: Phase 4.34.1
+Agent: Main Agent
+Task: Fix splash screen alignment issues reported by Bro after testing Phase 4.34 build:
+  - Video Player Icon appeared slightly too high (not centered in the rings)
+  - KMM text appeared slightly too low
+  - Overall composition felt misaligned
+
+Work Log:
+- Diagnosed root cause:
+  * Pulse rings were in a standalone `Center` widget → centered on screen
+  * Halo+icon+text were in a `Column` wrapped in `Center` → centered as a group
+  * Because the Column contained text below the logo, the Column's center
+    was offset DOWN from screen center → the logo ended UP above screen
+    center → rings (at screen center) and halo (above screen center) did
+    NOT share the same center. This is what Bro saw as "icon above rings".
+  * The text being far below was a direct consequence: Column centering
+    pushed text ~70px below screen center, with a 30px gap on top of that.
+- Restructured splash layout in lib/app/ui/screens/splash_screen.dart:
+  1. Combined pulse rings + halo + icon into ONE Stack widget
+     (`_buildLogoComposition`) so all three layers share the same center.
+  2. Replaced the halo+icon Stack with `Container(child: Center(child: Icon()))`
+     — eliminates any subtle font-glyph-metric offset between icon and halo.
+  3. Used `LayoutBuilder + Positioned` to place the logo composition at
+     EXACT screen center (screenHeight/2 - compositionSize/2), independent
+     of where the text is. Text is then placed at
+     (screenHeight/2 + compositionSize/2 + gap) — i.e. just below the
+     logo's bottom edge. Works on any screen size.
+  4. Reduced gap from 30px → 14px for tighter composition.
+  5. Introduced layout constants (_compositionSize=200, _haloSize=100,
+     _iconSize=72, _ringMinSize=60, _ringMaxSize=200, _textGap=14) so
+     the whole composition scales together if tweaked later.
+  6. Slightly smaller font (36 vs 38) and icon (72 vs 80) for tighter
+     visual balance.
+
+Stage Summary:
+- Commit: 6eb4078 on origin/main
+- Modified file: lib/app/ui/screens/splash_screen.dart (142 insertions, 73 deletions)
+- No new dependencies, no API changes
+- Layout now: rings + halo + icon share EXACT same center on screen;
+  KMM text sits 14px below the logo's bottom edge.
