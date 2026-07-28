@@ -6728,3 +6728,52 @@ Stage Summary:
 - 4 files changed, 259 insertions, 13 deletions
 - No new dependencies (pure Flutter Material)
 - Design inspiration: Spotify / Apple Music / Disney+ toast notifications
+
+---
+Task ID: Phase 4.36
+Agent: Main Agent
+Task: Bro's screenshot showed the "Arthur and the Invisibles" movie card on the Home grid. Under the poster, the metadata row was cluttered: Year + duration icon + duration text + play icon + "0%" text = 5 elements crammed into one narrow row. Bro said "နေရာကမလုံလောက်ဘဲနဲ့ နည်းနည်း ရှုပ်ထွေးသွားတာ" (not enough space, slightly cluttered) and asked Bro to fix it however I see fit.
+
+Work Log:
+- Used VLM to analyze Bro's screenshot — confirmed the "0%" was
+  appearing on the "Arthur and the Invisibles" card next to the
+  duration metadata, making the row feel cramped.
+- Searched codebase for "0%" / "%\$" / watchProgress — found the
+  culprit in lib/app/ui/components/movie_card.dart.
+- Discovered that the "0%" text was REDUNDANT with an existing
+  visual progress bar at the bottom of the poster (line ~438,
+  3px-tall red bar that fills with watch progress, YouTube-style).
+  Netflix / Disney+ / Prime Video all use the visual progress bar
+  alone — no text percentage — and it reads as more premium +
+  less cluttered.
+- Also discovered that the threshold for showing watch progress was
+  only 5 seconds — so any accidental tap that briefly started
+  playback (then closed) would leave a "0%" / "2%" artifact on the
+  home grid indefinitely.
+
+Fix (two parts):
+1. Removed the inline watch-progress text block entirely from the
+   metadata Row in movie_card.dart. Visual progress bar at the
+   bottom of the poster is now the single source of truth.
+2. Raised the watch-progress threshold from 5s → 30s. 30s of
+   deliberate watching is a much stronger signal that the user
+   actually wants to resume later. Accidental taps that briefly
+   start playback (and save 5-10s of watch position before the
+   user closes the player) no longer leave a "0%" artifact.
+
+Side cleanup:
+- Removed the now-unused _formatWatchPosition() helper method
+- Left a comment noting where to restore it if we ever want the
+  text percentage back
+
+Net effect on the metadata Row:
+  Before: [Year] [clock-icon] [duration] [play-icon] [0%]  (5 elements)
+  After:  [Year] [clock-icon] [duration]                   (3 elements)
+
+Visual progress on the poster itself is unchanged — still a 3px red
+bar at the bottom edge of the poster that fills with watch progress.
+
+Stage Summary:
+- Commit: 419d0b4 on origin/main
+- Modified file: lib/app/ui/components/movie_card.dart (64 insertions, 80 deletions)
+- No new files, no new dependencies
