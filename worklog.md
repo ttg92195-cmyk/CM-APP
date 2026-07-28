@@ -6679,3 +6679,52 @@ Stage Summary:
 - No new dependencies, no API changes
 - Layout now: rings + halo + icon share EXACT same center on screen;
   KMM text sits 14px below the logo's bottom edge.
+
+---
+Task ID: Phase 4.35
+Agent: Main Agent
+Task: Bro's screenshot showed the plain orange "Logout" SnackBar that appears after tapping Logout in the drawer. Bro said "ရိုရိုဖြစ်နေလို့ သိပ်မလန်းတာဖြစ်နေပါတယ်" (it's too plain, not premium looking) and asked for a premium redesign.
+
+Work Log:
+- Used VLM to analyze Bro's screenshot — confirmed it showed a Login
+  page (after logout completed) with a plain orange "Logout" SnackBar
+  bar at the bottom of the screen.
+- Searched codebase for `Colors.orange` SnackBar usage and found 3
+  places using the same plain pattern for logout/session-related events:
+  1. lib/app/ui/home/home_page.dart:675 — drawer Logout tap
+  2. lib/app/ui/screens/profile_page.dart:919 — profile Logout button
+  3. lib/main.dart:608 — session expired (lifecycle resume)
+- Created new reusable component lib/app/ui/components/premium_snackbar.dart
+  with the following design:
+  * Dark gradient background (#1F1F1F → #0A0A0A) — works in both light
+    & dark app themes, matches Netflix/Spotify/Apple Music toast style
+  * Left: circular icon container with accent color (18% opacity fill,
+    45% opacity border, accent-colored icon)
+  * Middle: bold title (14.5px w700 white) + optional subtitle (12.5px
+    w400 light grey #B3B3B3)
+  * Right: optional action button (accent-colored pill) — unused for
+    now but available for future Undo/Retry actions
+  * Rounded corners (14px), floating behavior with 12px margin
+  * Elevation shadow (16px blur, 35% black opacity) for depth
+  * 0.5px subtle border to distinguish card from background in light mode
+  * Horizontal swipe-to-dismiss
+- Applied the new component to all 3 logout/session-related SnackBars:
+  * Drawer Logout: brand red (#E50914) accent, "Logged out" / Burmese
+    "ထွက်ပြီးပါပြီ" + "You have been signed out." / Burmese subtitle
+  * Profile Logout: same as drawer Logout
+  * Session expired: amber (#FFB300) accent to distinguish from user-
+    initiated logout, "Session expired" / Burmese + "Please login
+    again to continue." / Burmese subtitle, 4 second duration
+- All 3 SnackBars are bilingual (Burmese for 'my' locale, English
+  otherwise) via appConfig.languageCode check
+
+Stage Summary:
+- Commit: 689b375 on origin/main
+- New file: lib/app/ui/components/premium_snackbar.dart (reusable)
+- Modified files:
+  * lib/app/ui/home/home_page.dart (drawer logout)
+  * lib/app/ui/screens/profile_page.dart (profile logout)
+  * lib/main.dart (session expired)
+- 4 files changed, 259 insertions, 13 deletions
+- No new dependencies (pure Flutter Material)
+- Design inspiration: Spotify / Apple Music / Disney+ toast notifications
