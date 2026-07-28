@@ -21,6 +21,7 @@ import 'package:cm_movies/app/core/services/download_manager_service.dart';
 import 'package:cm_movies/app/core/services/fcm_notification_service.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
 import 'package:cm_movies/app/ui/screens/login_page.dart';
+import 'package:cm_movies/app/ui/screens/splash_screen.dart';
 import 'firebase_options.dart';
 // Phase 2.5: Crashlytics — crash + non-fatal error reporting.
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
@@ -702,54 +703,11 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
   }
 
   Widget _buildSplashScreen() {
-    // Adaptive splash: follows the app's theme mode (dark/light)
-    final appConfig = Provider.of<AppConfig>(context);
-    final isDark = appConfig.themeMode == ThemeMode.dark;
-
-    final bgColor = isDark ? const Color(0xFF121212) : Colors.white;
-    final textColor = isDark ? Colors.white : const Color(0xFF212121);
-    final iconBgColor = const Color(0xFFE50914).withOpacity(isDark ? 0.2 : 0.15);
-
-    return Theme(
-      data: (isDark ? ThemeData.dark(useMaterial3: true) : ThemeData.light(useMaterial3: true)).copyWith(
-        scaffoldBackgroundColor: bgColor,
-      ),
-      child: Scaffold(
-        backgroundColor: bgColor,
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: iconBgColor,
-                ),
-                child: const Icon(
-                  Icons.play_circle_fill,
-                  size: 60,
-                  color: Color(0xFFE50914),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'KMM',
-                style: TextStyle(
-                  color: textColor,
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 16),
-              const CircularProgressIndicator(
-                color: Color(0xFFE50914),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+    // Phase 4.34: Premium animated splash screen.
+    // The splash is always rendered in cinematic dark mode (Netflix/Disney+
+    // style) regardless of the app's theme, so we don't need to pass the
+    // theme mode down — the SplashScreen widget handles its own theming.
+    return const SplashScreen();
   }
 
   ThemeData _buildDarkTheme() {
