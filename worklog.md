@@ -4279,3 +4279,27 @@ Stage Summary:
 - Modified file: lib/app/ui/components/movie_card.dart
 - Net effect: Watch progress bar no longer looks like a "cut" through the poster. Netflix-style red fill only, with subtle dark gradient for contrast. Corner radius bug fixed so the bar aligns with the poster's rounded corners.
 - No new files, no new dependencies.
+
+---
+Task ID: Phase 4.39
+Agent: Main Agent
+Task: Bro reported the dark/gray ripple effect (touch feedback / pressed state) on the Bookmarks card in Profile tab looked bad and wanted it COMPLETELY removed (လုံးဝ မပေါ်တော့အောင်). Same applies to the Watchlist card below it. Keep all other cards' ripple intact. Commit each fix separately to GitHub main.
+
+Work Log:
+- Read profile_page.dart to find the Bookmarks + Watchlist cards. Both are at lines ~560-604, structured as `Card(child: ListTile(... onTap: ...))`.
+- Identified the ripple source: ListTile has a built-in InkWell that always shows a Material ripple (expanding circle + background flash) when onTap is set. The Card wraps the ListTile in its own Material widget which also contributes to the ripple.
+- Chose the cleanest fix: wrap each Card+ListTile in a `Theme` widget that overrides `splashColor`, `highlightColor`, and `hoverColor` to Colors.transparent. The Theme propagates down to both the Card's Material and the ListTile's InkWell, killing the ripple at all levels without losing the onTap handler.
+- Considered alternatives and rejected them:
+  * `ListTile(splashColor: ...)` — ListTile doesn't expose a splashColor parameter directly.
+  * Replacing ListTile with a custom InkWell — too invasive, loses ListTile's built-in layout (leading/trailing icon spacing, title/subtitle typography).
+  * Removing onTap and wrapping in GestureDetector — loses Material's tap semantics (accessibility, focus traversal).
+  * Setting `Material(type: MaterialType.transparency)` — would lose the Card's elevation shadow.
+
+Applied fix to BOTH Bookmarks and Watchlist cards (Bro mentioned both). All other cards in the Profile page (Cloud Sync status, Connected Devices, Settings, Logout, etc.) keep their default Material ripple as Bro only asked for these two.
+
+Stage Summary:
+- Commit: f92779d on origin/main
+- Modified file: lib/app/ui/screens/profile_page.dart
+- 67 insertions, 34 deletions (mostly comment + Theme wrapper boilerplate)
+- No new files, no new dependencies
+- Visual effect: tapping Bookmarks or Watchlist now navigates immediately with zero ripple/flash. Other Profile cards still ripple normally.
