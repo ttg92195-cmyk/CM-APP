@@ -1034,7 +1034,32 @@ class _SearchScreenState extends State<SearchScreen>
                                 : theme.colorScheme.onSurface.withOpacity(0.6),
                             size: 24,
                           ),
-                          onPressed: _isLoadingFilters ? null : _showFilterBottomSheet,
+                          // Phase 4.41: never disable this button while
+                          // filter options are loading. Bro reported the
+                          // first tap on the filter icon did nothing — had
+                          // to wait a moment and tap again.
+                          //
+                          // Root cause: `onPressed: _isLoadingFilters
+                          // ? null : _showFilterBottomSheet` made the
+                          // IconButton disabled (greyed out + ignoring
+                          // taps) until _loadFilterOptions() finished its
+                          // Firestore getGenres() + getAvailableYears()
+                          // queries. On a fresh search screen open, that
+                          // took ~500-1500ms, during which the first tap
+                          // was silently swallowed.
+                          //
+                          // The bottom sheet already handles the loading
+                          // state gracefully — _buildGenreSelector and
+                          // _buildYearSelector both show a "Loading..."
+                          // text while their data is empty. So it's
+                          // perfectly fine (and better UX) to open the
+                          // sheet immediately and let the genre/year
+                          // sections populate as the data arrives.
+                          // Type/Rating/Certification/Status/Sort
+                          // sections are static (don't depend on
+                          // _isLoadingFilters) so they're fully usable
+                          // the instant the sheet opens.
+                          onPressed: _showFilterBottomSheet,
                           padding: const EdgeInsets.all(10),
                           constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
                         ),
