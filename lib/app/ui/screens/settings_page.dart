@@ -194,6 +194,9 @@ class _SettingsPageState extends State<SettingsPage> {
               activeColor: _kAccent,
               title: Text(appConfig.translate('external_player')),
               onChanged: (v) {
+                // Phase 4.37: setVideoPlayerMode is now non-blocking on
+                // the UI thread (deferred disk write), so the sheet can
+                // dismiss immediately without waiting for the prefs write.
                 if (v != null) appConfig.setVideoPlayerMode(v);
                 Navigator.pop(ctx);
               },

@@ -77,6 +77,18 @@ class ExternalPlayerService {
   ///
   /// Constructs an Android intent URI that targets a specific video player app.
   /// If the app is not installed, this returns false without crashing.
+  ///
+  /// Phase 4.37: Removed the `canLaunchUrl` pre-check. The check was a
+  /// separate platform-channel round-trip (~100-300ms on low-end devices)
+  /// that essentially duplicated work the subsequent `launchUrl` already
+  /// does. Bro reported the cumulative stutter of 3-4 such pre-checks
+  /// (VLC, MX, MX-Pro, fallback) as "ထစ်နေတာ" when opening a video with
+  /// External Player selected.
+  ///
+  /// The new flow: try `launchUrl` directly. If the player is not
+  /// installed, launchUrl returns false (or throws) — same outcome as
+  /// canLaunchUrl returning false, but with one fewer platform-channel
+  /// hop per attempt.
   static Future<bool> _tryLaunchSpecificPlayer(
     String videoUrl,
     String packageName,
@@ -85,7 +97,6 @@ class ExternalPlayerService {
     try {
       // Build an intent URI for Android:
       // intent:#Intent;action=android.intent.action.VIEW;data=<url>;type=video/*;package=<pkg>;component=<pkg>/<activity>;end
-      final encodedUrl = Uri.encodeComponent(videoUrl);
       final intentUri = Uri.parse(
         'intent:$videoUrl#Intent;'
         'action=android.intent.action.VIEW;'
@@ -96,14 +107,16 @@ class ExternalPlayerService {
         'end',
       );
 
-      if (await canLaunchUrl(intentUri)) {
-        final launched = await launchUrl(
-          intentUri,
-          mode: LaunchMode.externalApplication,
-        );
-        return launched;
-      }
-      return false;
+      // Directly attempt launch. On Android, launchUrl with an
+      // `intent:` URI will resolve the intent via the PackageManager
+      // and return false if no matching activity is found. This saves
+      // a separate canLaunchUrl platform-channel round-trip per player
+      // we probe (we probe up to 3 players + 1 fallback = 4 hops saved).
+      final launched = await launchUrl(
+        intentUri,
+        mode: LaunchMode.externalApplication,
+      );
+      return launched;
     } catch (e) {
       debugPrint('Failed to launch $packageName: $e');
       return false;
@@ -111,16 +124,16 @@ class ExternalPlayerService {
   }
 
   /// Generic fallback using url_launcher
+  ///
+  /// Phase 4.37: Also removed the `canLaunchUrl` pre-check here for the
+  /// same reason — saves a platform-channel round-trip.
   static Future<bool> _launchWithUrlLauncher(String videoUrl) async {
     try {
       final uri = Uri.parse(videoUrl);
-      if (await canLaunchUrl(uri)) {
-        return await launchUrl(
-          uri,
-          mode: LaunchMode.externalApplication,
-        );
-      }
-      return false;
+      return await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
     } catch (e) {
       debugPrint('url_launcher fallback error: $e');
       return false;

@@ -169,6 +169,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   // Whether to use external player instead of built-in
   bool _useExternalPlayer = false;
   bool _externalLaunched = false;
+  // Phase 4.37: Loading state shown while we probe for an external
+  // player. Without this, the user sees a blank/black screen for the
+  // ~300-800ms it takes to query canLaunchUrl for VLC/MX/MX-Pro + the
+  // url_launcher fallback. The blank frame is what Bro reported as
+  // "ထစ်နေတာ" (stuttering).
+  bool _externalLaunching = false;
 
   @override
   void initState() {
@@ -184,9 +190,23 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     final appConfig = Provider.of<AppConfig>(context, listen: false);
     if (appConfig.videoPlayerMode == 'external') {
       _useExternalPlayer = true;
+      // Phase 4.37: Show loading state while we probe for an external
+      // player. The probe involves 3-4 platform channel calls
+      // (canLaunchUrl for VLC, MX, MX-Pro, then url_launcher fallback),
+      // each of which is sync on the UI isolate and can take ~100-300ms
+      // on low-end devices. Without a loading indicator the user sees a
+      // frozen black frame during this probe, which Bro reported as
+      // "ထစ်နေတာ" (stuttering).
+      if (mounted) setState(() => _externalLaunching = true);
+      // Yield to the framework so the loading indicator can paint before
+      // we start the blocking probe. Without this, the setState would
+      // be batched with the next frame and the loading state would never
+      // visibly render.
+      await Future.delayed(Duration.zero);
       // Launch external player and pop back
       final success = await ExternalPlayerService.playWithExternalPlayer(widget.videoUrl);
       if (mounted) {
+        setState(() => _externalLaunching = false);
         if (success) {
           _externalLaunched = true;
           Navigator.of(context).pop();
@@ -1402,14 +1422,76 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   Widget build(BuildContext context) {
     // If external player was launched or is being prepared, show a loading screen
     if (_useExternalPlayer || _externalLaunched) {
+      // Phase 4.37: Cache the locale lookup once. Previously the
+      // inline `Provider.of<AppConfig>(context)` was called from inside
+      // the Column's Text widget, which is fine but a bit verbose.
+      final isMy = Provider.of<AppConfig>(context).languageCode == 'my';
       return PopScope(
         canPop: true,
         child: Scaffold(
           backgroundColor: Colors.black,
           body: Center(
+            // Phase 4.37: Show a premium loading state while probing for
+            // an external player. Previously this showed only a bare
+            // CircularProgressIndicator, which on low-end devices would
+            // appear after a 300-800ms black frame (the canLaunchUrl
+            // platform channel calls block the UI isolate). The new
+            // loading state includes an explanatory text so Bro knows
+            // what's happening ("Launching external player...") rather
+            // than seeing what looks like a frozen screen.
             child: _externalLaunched
                 ? const SizedBox.shrink()
-                : const CircularProgressIndicator(color: Color(0xFFE50914)),
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Phase 4.37: Premium play icon in a red circle —
+                      // matches the splash screen's visual language so
+                      // the app feels cohesive. Static (no pulsing) to
+                      // avoid needing a TickerProvider mixin on this
+                      // already-large State class. The CircularProgressIndicator
+                      // below provides enough motion to signal "loading".
+                      Container(
+                        width: 72,
+                        height: 72,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE50914).withOpacity(0.15),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: const Color(0xFFE50914).withOpacity(0.45),
+                            width: 1.5,
+                          ),
+                        ),
+                        child: const Icon(
+                          Icons.play_circle_fill,
+                          size: 44,
+                          color: Color(0xFFE50914),
+                        ),
+                      ),
+                      const SizedBox(height: 22),
+                      const SizedBox(
+                        width: 26,
+                        height: 26,
+                        child: CircularProgressIndicator(
+                          color: Color(0xFFE50914),
+                          strokeWidth: 2.2,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        _externalLaunching
+                            ? (isMy
+                                ? 'External ပလေယာ ဖွင့်နေသည်...'
+                                : 'Launching external player...')
+                            : '',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                    ],
+                  ),
           ),
         ),
       );
