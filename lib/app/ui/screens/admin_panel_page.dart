@@ -106,6 +106,32 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   bool _isSearchingLoading = false;
   final TextEditingController _searchController = TextEditingController();
 
+  // Phase 4.43 — Server-side filter state (decoupled from pagination).
+  //
+  // PROBLEM THIS FIXES:
+  // Before Phase 4.43, _applyFilters() filtered CLIENT-SIDE from _allPosts,
+  // which only contains the first 20 docs (page 1, sorted by updatedAt desc).
+  // So when the user picked a genre like "Animation", they only saw the
+  // Animation movies that happened to be in the 20 most-recent docs — which
+  // were almost always the ones they had just EDITED (editing bumps updatedAt,
+  // pushing the post into page 1). The user reported this as "Animation Post
+  // Edit လုပ်ထားဖူးတဲ့ Animation Post တွေ့ပေါ်လာတာ" (only edited Animation
+  // posts appear). Same bug for All Years.
+  //
+  // FIX:
+  // When a genre/year filter is set AND no search keyword is active, run a
+  // server-side Firestore query (searchMoviesWithFilters) to fetch ALL
+  // matching posts across the entire DB, not just page-1 cache. Mirror the
+  // _isSearching pattern: dedicated loading flag + dedicated results list,
+  // bypassing the paginated _allPosts cache entirely.
+  //
+  // When a search keyword IS active, the search path already returns full-DB
+  // results, so genre/year filter is applied client-side on top of those
+  // results (no separate server-side filter query needed).
+  bool _isFiltering = false;
+  bool _isFilterLoading = false;
+  List<Movie> _filterQueryResults = [];
+
   @override
   void initState() {
     super.initState();
@@ -201,6 +227,18 @@ class _AdminPanelPageState extends State<AdminPanelPage>
           _totalCountSeries = totalCounts['series'] ?? 0;
           _isLoading = false;
         });
+
+        // Phase 4.43 — if a filter was active when _loadInitialData was
+        // called (e.g., user deleted a post while filtering by genre),
+        // re-run the server-side filter query so the filtered list
+        // reflects the new DB state. Without this, the user would see
+        // stale filter results (with the deleted post still in the list)
+        // until they manually re-selected the filter.
+        if (_isFiltering ||
+            (_filterGenre != null && _filterGenre!.isNotEmpty) ||
+            (_filterYear != null && _filterYear!.isNotEmpty)) {
+          await _applyServerSideFilters();
+        }
       }
     } catch (e) {
       if (mounted) setState(() => _isLoading = false);
@@ -348,13 +386,19 @@ class _AdminPanelPageState extends State<AdminPanelPage>
     _searchDebounceTimer?.cancel();
 
     if (query.trim().isEmpty) {
-      // Not searching — reset to paginated view
+      // Not searching — reset to non-search mode.
+      // Phase 4.43 — if a genre/year filter is still active, we need to
+      // re-run the server-side filter query (because while search was
+      // active, _isFiltering was false and _filterQueryResults was empty).
+      // _applyServerSideFilters handles this case: it detects no search
+      // keyword, sees whether a filter is set, and either runs the
+      // server-side query or restores the paginated _allPosts view.
       setState(() {
         _isSearching = false;
         _globalSearchResults = [];
         _searchQuery = '';
-        _applyFilters();
       });
+      _applyServerSideFilters();
       return;
     }
 
@@ -366,10 +410,20 @@ class _AdminPanelPageState extends State<AdminPanelPage>
 
   /// Perform global search across entire Firestore database (decoupled from pagination)
   Future<void> _performGlobalSearch(String keyword) async {
+    // Phase 4.43 — cancel any in-flight server-side filter query state.
+    // If a filter query was loading when the user started typing, the
+    // filter's setState (when it eventually completes) would call
+    // _applyFilters(), which is correct (it picks _globalSearchResults
+    // when _isSearching is true). But _isFilterLoading might still be
+    // true, showing the loading spinner over ready search results.
+    // Reset filter state here to keep the UI consistent.
     setState(() {
       _isSearching = true;
       _isSearchingLoading = true;
       _searchQuery = keyword;
+      _isFiltering = false;
+      _isFilterLoading = false;
+      _filterQueryResults = [];
     });
 
     try {
@@ -393,9 +447,25 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   }
 
   void _applyFilters() {
-    // When searching globally, filter from global search results instead of page cache
-    final sourceList = _isSearching ? _globalSearchResults : _allPosts;
-    
+    // Phase 4.43 — Source list priority: search > filter > paginated cache.
+    //
+    // - When searching: use _globalSearchResults (already a full-DB query).
+    //   Genre/year are then applied client-side on top.
+    // - When filtering (no search keyword): use _filterQueryResults (already
+    //   a full-DB query for the genre/year). The client-side filter below is
+    //   a safety net — searchMoviesWithFilters already filters server-side,
+    //   but keeping the client-side check guarantees correctness if the
+    //   server-side query path ever drifts.
+    // - Otherwise: use _allPosts (page-1 cache, sorted by updatedAt desc).
+    final List<Movie> sourceList;
+    if (_isSearching) {
+      sourceList = _globalSearchResults;
+    } else if (_isFiltering) {
+      sourceList = _filterQueryResults;
+    } else {
+      sourceList = _allPosts;
+    }
+
     _filteredPosts = sourceList.where((post) {
       // Genre filter
       if (_filterGenre != null && _filterGenre!.isNotEmpty) {
@@ -412,6 +482,92 @@ class _AdminPanelPageState extends State<AdminPanelPage>
       }
       return true;
     }).toList();
+  }
+
+  /// Phase 4.43 — Run a server-side Firestore query for the current genre/year
+  /// filter state. Mirrors the _performGlobalSearch pattern.
+  ///
+  /// Called whenever the user picks a genre or year from the dropdowns, OR
+  /// when the user clears the search box while a filter is still active.
+  ///
+  /// Behavior:
+  /// - If a search keyword is active: do nothing. _applyFilters() will use
+  ///   _globalSearchResults as the source and apply genre/year client-side.
+  /// - If no filter is set: reset _isFiltering and re-run _applyFilters to
+  ///   restore the paginated _allPosts view.
+  /// - Otherwise: set _isFilterLoading=true, run searchMoviesWithFilters,
+  ///   populate _filterQueryResults, and call _applyFilters.
+  ///
+  /// The Firestore limit is 500 — generous enough for the entire catalog of
+  /// any single genre or year (admin catalog is ~1068 posts total). If a
+  /// single genre/year ever exceeds 500 docs, the user can refine with a
+  /// search keyword to narrow further.
+  Future<void> _applyServerSideFilters() async {
+    // If searching, defer to the search path — _applyFilters handles the
+    // client-side genre/year overlay on _globalSearchResults.
+    if (_searchQuery.isNotEmpty) {
+      _isFiltering = false;
+      _filterQueryResults = [];
+      _applyFilters();
+      return;
+    }
+
+    final hasFilter = (_filterGenre != null && _filterGenre!.isNotEmpty) ||
+        (_filterYear != null && _filterYear!.isNotEmpty);
+
+    if (!hasFilter) {
+      // No filter active — restore paginated _allPosts view.
+      if (mounted) {
+        setState(() {
+          _isFiltering = false;
+          _isFilterLoading = false;
+          _filterQueryResults = [];
+          _applyFilters();
+        });
+      } else {
+        _isFiltering = false;
+        _isFilterLoading = false;
+        _filterQueryResults = [];
+        _applyFilters();
+      }
+      return;
+    }
+
+    // Filter active — show loading state, then run the server-side query.
+    if (mounted) {
+      setState(() {
+        _isFiltering = true;
+        _isFilterLoading = true;
+      });
+    } else {
+      _isFiltering = true;
+      _isFilterLoading = true;
+    }
+
+    try {
+      final result = await _contentService.searchMoviesWithFilters(
+        genre: _filterGenre,
+        year: _filterYear,
+        limit: 500,
+      );
+      if (mounted) {
+        setState(() {
+          _filterQueryResults =
+              (result['movies'] as List).cast<Movie>();
+          _isFilterLoading = false;
+          _applyFilters();
+        });
+      }
+    } catch (e) {
+      debugPrint('Phase 4.43 server-side filter error: $e');
+      if (mounted) {
+        setState(() {
+          _filterQueryResults = [];
+          _isFilterLoading = false;
+          _applyFilters();
+        });
+      }
+    }
   }
 
   List<String> get _availableYears {
@@ -736,8 +892,10 @@ class _AdminPanelPageState extends State<AdminPanelPage>
         // Filter bar
         _buildFilterBar(isDark),
         // Posts list — Phase 4.3: RefreshIndicator + infinite-scroll ListView.
+        // Phase 4.43 — also show the loading spinner while the server-side
+        // filter query is running (mirrors _isSearchingLoading behavior).
         Expanded(
-          child: _isSearchingLoading
+          child: (_isSearchingLoading || _isFilterLoading)
               ? const Center(
                   child: SizedBox(
                     width: 24,
@@ -783,8 +941,14 @@ class _AdminPanelPageState extends State<AdminPanelPage>
     required bool hasMore,
     required Future<void> Function() loadMore,
   }) {
-    // Mode 1: searching — flat list, no footer.
-    if (_isSearching) {
+    // Mode 1: searching OR filtering — flat list, no footer.
+    //
+    // Phase 4.43 — _isFiltering now uses the same flat-list mode as
+    // _isSearching. The server-side filter query returns the full result
+    // set (up to 500 docs) in one shot, so there's no pagination footer
+    // to show. If the user wants to narrow further, they refine the
+    // filter or add a search keyword.
+    if (_isSearching || _isFiltering) {
       if (posts.isEmpty) {
         return ListView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -824,7 +988,9 @@ class _AdminPanelPageState extends State<AdminPanelPage>
     // _loadMore itself prevent double-fires.
     return NotificationListener<ScrollNotification>(
       onNotification: (notification) {
-        if (_isSearching) return false;
+        // Phase 4.43 — don't trigger paginated _loadMore while searching
+        // or filtering. Both modes have their own complete result sets.
+        if (_isSearching || _isFiltering) return false;
         // Trigger on both ScrollUpdateNotification (mid-scroll) and
         // ScrollEndNotification (fling settled). This makes the next chunk
         // load proactively as the user approaches the bottom, instead of
@@ -963,8 +1129,11 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                 onChanged: (value) {
                   setState(() {
                     _filterGenre = (value == null || value.isEmpty) ? null : value;
-                    _applyFilters();
                   });
+                  // Phase 4.43 — run server-side query instead of client-side
+                  // filter. _applyServerSideFilters handles the loading state
+                  // and the source-list swap inside _applyFilters.
+                  _applyServerSideFilters();
                 },
               ),
             ),
@@ -1000,8 +1169,9 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                 onChanged: (value) {
                   setState(() {
                     _filterYear = (value == null || value.isEmpty) ? null : value;
-                    _applyFilters();
                   });
+                  // Phase 4.43 — see genre dropdown comment above.
+                  _applyServerSideFilters();
                 },
               ),
             ),
@@ -1015,8 +1185,10 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                 setState(() {
                   _filterGenre = null;
                   _filterYear = null;
-                  _applyFilters();
                 });
+                // Phase 4.43 — _applyServerSideFilters detects no filter is
+                // set and restores the paginated _allPosts view.
+                _applyServerSideFilters();
               },
               tooltip: 'Clear filters',
             ),
