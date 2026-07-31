@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:cm_movies/app/core/services/batch_import_service.dart';
+import 'package:cm_movies/app/core/services/saf_storage_service.dart';
 import 'package:cm_movies/app/ui/screens/batch_import_history_page.dart';
 
 /// Full-screen page that walks the admin through a Batch Import flow:
@@ -31,10 +33,59 @@ class _BatchImportPageState extends State<BatchImportPage> {
   // State machine
   _Phase _phase = _Phase.idle;
 
-  // File pick
-  String? _filePath;
-  String? _fileName;
-  int? _fileSizeBytes;
+  // File pick — Phase 4.45: support multiple files.
+  // Bro reported "Choose JSON File နိုပ်ရင် JSON File တခုဘဲတင်ရတာကြောင့်
+  // တပြိုင်နက်ရွေးချယ်ရအောင်လုပ်ပေးနိုင်မလာ" (currently only one file at a
+  // time, please allow selecting multiple files at once).
+  //
+  // We keep the single-valued `_filePath` / `_fileName` / `_fileSizeBytes`
+  // fields for backward-compat with code paths that haven't been migrated
+  // yet (they always reflect the FIRST file in `_pickedFiles`), but the
+  // source of truth is now `_pickedFiles`.
+  final List<_PickedFile> _pickedFiles = [];
+
+  /// Convenience: the first picked file, or null if none. Used by code paths
+  /// that haven't been migrated to multi-file yet.
+  String? get _filePath =>
+      _pickedFiles.isEmpty ? null : _pickedFiles.first.path;
+  String? get _fileName =>
+      _pickedFiles.isEmpty ? null : _pickedFiles.first.name;
+
+  /// Total size across all picked files (sum). null if no files picked OR
+  /// if any file has size 0 (file_picker sometimes returns 0 on web flows).
+  int? get _fileSizeBytes {
+    if (_pickedFiles.isEmpty) return null;
+    var total = 0;
+    var anyZero = false;
+    for (final f in _pickedFiles) {
+      if (f.sizeBytes == 0) {
+        anyZero = true;
+      }
+      total += f.sizeBytes;
+    }
+    return anyZero ? null : total;
+  }
+
+  /// True when ANY picked file is above the service's soft warning threshold
+  /// (5 MB). Drives the orange "large file" chip styling and forces a
+  /// confirmation dialog before parsing.
+  bool get _isLargeFile =>
+      _pickedFiles.any((f) =>
+          f.sizeBytes > BatchImportService.largeFileWarningBytes);
+
+  /// Phase 4.45 — human-readable label for the picked file(s), used in the
+  /// importing phase header and the audit log.
+  /// Returns null if no files are picked.
+  /// Examples:
+  ///   "backup.json"
+  ///   "backup.json +2 more"
+  String? get _sourceFileLabel {
+    if (_pickedFiles.isEmpty) return null;
+    if (_pickedFiles.length == 1) return _pickedFiles.first.name;
+    final firstName = _pickedFiles.first.name;
+    final extra = _pickedFiles.length - 1;
+    return '$firstName +$extra more';
+  }
 
   // Parse
   BatchParseResult? _parseResult;
@@ -61,13 +112,10 @@ class _BatchImportPageState extends State<BatchImportPage> {
   bool _exportHasMore = true;
   BatchExportResult? _lastExport;
   String? _exportError;
-
-  /// True when the picked file is above the service's soft warning threshold
-  /// (5 MB). Drives the orange "large file" chip styling and forces a
-  /// confirmation dialog before parsing.
-  bool get _isLargeFile =>
-      _fileSizeBytes != null &&
-      _fileSizeBytes! > BatchImportService.largeFileWarningBytes;
+  // Phase 4.45 — when set, the export was also copied to the user's SAF
+  // folder (Downloads, etc.) so they can access it from outside the app.
+  // This is the human-readable path shown in the success card.
+  String? _exportSafPath;
 
   @override
   void dispose() {
@@ -181,10 +229,11 @@ class _BatchImportPageState extends State<BatchImportPage> {
           ),
           const SizedBox(height: 24),
 
-          // Selected file chip (if any)
-          if (_fileName != null) ...[
+          // Selected file(s) chip — Phase 4.45: show a column of chips
+          // (one per picked file) when multiple files are selected.
+          if (_pickedFiles.isNotEmpty) ...[
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
                 borderRadius: BorderRadius.circular(10),
@@ -194,52 +243,114 @@ class _BatchImportPageState extends State<BatchImportPage> {
                       : const Color(0xFFE50914).withOpacity(0.4),
                 ),
               ),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(
-                    _isLargeFile ? Icons.warning_amber_rounded : Icons.insert_drive_file,
-                    color: _isLargeFile ? Colors.orange : const Color(0xFFE50914),
-                    size: 20,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _fileName!,
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        if (_fileSizeBytes != null) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            _isLargeFile
-                                ? '${BatchImportService.formatFileSize(_fileSizeBytes!)} • large file — confirm before parsing'
-                                : BatchImportService.formatFileSize(_fileSizeBytes!),
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: _isLargeFile
-                                  ? Colors.orange.shade300
-                                  : (isDark ? Colors.white54 : Colors.black54),
-                              fontWeight: _isLargeFile ? FontWeight.w600 : FontWeight.w400,
+                  // Header row: "N file(s) selected" + total size + clear-all
+                  Row(
+                    children: [
+                      Icon(
+                        _isLargeFile ? Icons.warning_amber_rounded : Icons.insert_drive_file,
+                        color: _isLargeFile ? Colors.orange : const Color(0xFFE50914),
+                        size: 20,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _pickedFiles.length == 1
+                                  ? _pickedFiles.first.name
+                                  : '${_pickedFiles.length} files selected',
+                              style: const TextStyle(fontWeight: FontWeight.w600),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                      ],
-                    ),
+                            if (_fileSizeBytes != null) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                _isLargeFile
+                                    ? '${BatchImportService.formatFileSize(_fileSizeBytes!)} total • large file — confirm before parsing'
+                                    : BatchImportService.formatFileSize(_fileSizeBytes!),
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: _isLargeFile
+                                      ? Colors.orange.shade300
+                                      : (isDark ? Colors.white54 : Colors.black54),
+                                  fontWeight: _isLargeFile ? FontWeight.w600 : FontWeight.w400,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 18),
+                        tooltip: 'Clear all',
+                        onPressed: () => setState(() {
+                          _pickedFiles.clear();
+                          _parseResult = null;
+                          _parseError = null;
+                        }),
+                      ),
+                    ],
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.close, size: 18),
-                    onPressed: () => setState(() {
-                      _filePath = null;
-                      _fileName = null;
-                      _fileSizeBytes = null;
+                  // Per-file list (only when more than one file is picked).
+                  if (_pickedFiles.length > 1) ...[
+                    const SizedBox(height: 8),
+                    const Divider(height: 1),
+                    const SizedBox(height: 8),
+                    ..._pickedFiles.asMap().entries.map((entry) {
+                      final index = entry.key;
+                      final f = entry.value;
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Row(
+                          children: [
+                            Icon(
+                              f.sizeBytes > BatchImportService.largeFileWarningBytes
+                                  ? Icons.warning_amber_rounded
+                                  : Icons.description,
+                              size: 16,
+                              color: f.sizeBytes > BatchImportService.largeFileWarningBytes
+                                  ? Colors.orange
+                                  : (isDark ? Colors.white54 : Colors.black54),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                f.name,
+                                style: const TextStyle(fontSize: 12),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (f.sizeBytes > 0)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 8),
+                                child: Text(
+                                  BatchImportService.formatFileSize(f.sizeBytes),
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    color: isDark ? Colors.white38 : Colors.black38,
+                                  ),
+                                ),
+                              ),
+                            IconButton(
+                              icon: const Icon(Icons.close, size: 14),
+                              tooltip: 'Remove this file',
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                              onPressed: () => _removePickedFile(index),
+                            ),
+                          ],
+                        ),
+                      );
                     }),
-                  ),
+                  ],
                 ],
               ),
             ),
@@ -250,7 +361,10 @@ class _BatchImportPageState extends State<BatchImportPage> {
           OutlinedButton.icon(
             onPressed: _pickFile,
             icon: const Icon(Icons.folder_open),
-            label: Text(_filePath == null ? 'Choose JSON File' : 'Choose Different File'),
+            // Phase 4.45 — button label now reflects multi-file support.
+            label: Text(_pickedFiles.isEmpty
+                ? 'Choose JSON File(s)'
+                : 'Choose Different Files'),
             style: OutlinedButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: 14),
               foregroundColor: const Color(0xFFE50914),
@@ -262,11 +376,13 @@ class _BatchImportPageState extends State<BatchImportPage> {
           ),
           const SizedBox(height: 12),
 
-          // Parse button (enabled once a file is chosen)
+          // Parse button (enabled once at least one file is chosen)
           FilledButton.icon(
-            onPressed: _filePath == null ? null : _parseFile,
+            onPressed: _pickedFiles.isEmpty ? null : _parseFile,
             icon: const Icon(Icons.play_arrow),
-            label: const Text('Parse & Validate'),
+            label: Text(_pickedFiles.length > 1
+                ? 'Parse & Validate ${_pickedFiles.length} Files'
+                : 'Parse & Validate'),
             style: FilledButton.styleFrom(
               backgroundColor: const Color(0xFFE50914),
               foregroundColor: Colors.white,
@@ -392,13 +508,21 @@ class _BatchImportPageState extends State<BatchImportPage> {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          _lastExport!.filePath,
+                          // Phase 4.45 — if the file was also copied to the
+                          // SAF folder, show the user-accessible path
+                          // (much more useful than the private internal path).
+                          // Otherwise show the private internal path.
+                          _exportSafPath != null
+                              ? 'Saved to: $_exportSafPath'
+                              : _lastExport!.filePath,
                           style: TextStyle(
                             fontSize: 10.5,
-                            color: isDark ? Colors.white54 : Colors.black54,
+                            color: _exportSafPath != null
+                                ? Colors.green.shade300
+                                : (isDark ? Colors.white54 : Colors.black54),
                             fontFamily: 'monospace',
                           ),
-                          maxLines: 1,
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ],
@@ -513,9 +637,12 @@ class _BatchImportPageState extends State<BatchImportPage> {
       _exportHasMore = true;
       _lastExport = null;
       _exportError = null;
+      _exportSafPath = null;
     });
 
     try {
+      // Step 1: Run the export — saves to the app's private documents dir
+      // (always writable, no permission needed).
       final result = await _service.exportAllMovies(
         onProgress: (p) {
           if (mounted) {
@@ -528,15 +655,67 @@ class _BatchImportPageState extends State<BatchImportPage> {
       );
 
       if (!mounted) return;
+
+      // Step 2 — Phase 4.45: ALSO copy the file to the user's SAF folder
+      // (Downloads, etc.) so they can access it from outside the app.
+      //
+      // Before this fix, the export saved to /data/data/<package>/app_flutter/
+      // batch_import_backups/... which is the app's PRIVATE internal storage.
+      // Bro couldn't find the file in any file manager — from their
+      // perspective the export "didn't work". Now we copy it to the
+      // user-selected SAF folder (which they picked during onboarding or
+      // via Settings → Download Location). If no SAF folder is set, we
+      // prompt them to pick one.
+      String? safPath;
+      try {
+        final saf = SafStorageService.instance;
+        var hasFolder = await saf.hasStoredFolder();
+
+        // If no SAF folder is set OR the stored permission is no longer
+        // valid (user revoked it), prompt the user to pick one. We don't
+        // force this — if they cancel, the export still saved to the
+        // private dir and they get the private path in the success card.
+        if (!hasFolder || !(await saf.isSafPermissionValid())) {
+          if (!mounted) return;
+          final confirmed = await _showPickSafFolderDialog();
+          if (confirmed) {
+            final folderResult = await saf.openFolderPicker();
+            hasFolder = folderResult != null;
+          }
+          // If user declined, hasFolder stays false — we skip the SAF
+          // copy and just show the private path. The export itself still
+          // succeeded.
+        }
+
+        if (hasFolder) {
+          final fileName = _basename(result.filePath);
+          final copied = await saf.saveFileToSafFolder(
+            sourceFilePath: result.filePath,
+            fileName: fileName,
+          );
+          if (copied) {
+            safPath = await saf.getStoredTreePath();
+          }
+        }
+      } catch (e) {
+        // Don't fail the whole export if the SAF copy fails — the file
+        // is still saved in the app's private dir.
+        debugPrint('Phase 4.45 SAF copy failed (non-fatal): $e');
+      }
+
+      if (!mounted) return;
       setState(() {
         _lastExport = result;
+        _exportSafPath = safPath;
         _isExporting = false;
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Backup complete: ${result.count} movies (${result.sizeFormatted})',
+            safPath != null
+                ? 'Backup complete: ${result.count} movies saved to your folder'
+                : 'Backup complete: ${result.count} movies (${result.sizeFormatted})',
           ),
           backgroundColor: Colors.green,
           duration: const Duration(seconds: 3),
@@ -556,6 +735,46 @@ class _BatchImportPageState extends State<BatchImportPage> {
         ),
       );
     }
+  }
+
+  /// Phase 4.45 — prompt the user to pick a SAF folder for the export.
+  /// Returns true if they tapped "Pick Folder", false if they cancelled.
+  Future<bool> _showPickSafFolderDialog() async {
+    if (!mounted) return false;
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Save Backup Where?'),
+        content: const Text(
+          'To access the backup file from outside the app (e.g. from your '
+          'file manager or Downloads folder), pick a folder on your device.\n\n'
+          'The backup will also be saved inside the app\'s private storage '
+          'regardless of your choice.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Skip'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFE50914),
+            ),
+            child: const Text('Pick Folder'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
+  /// Phase 4.45 — extract the file name from a full path.
+  /// Used to pass the backup file name to SafStorageService.saveFileToSafFolder.
+  String _basename(String path) {
+    final normalized = path.replaceAll('\\', '/');
+    final lastSlash = normalized.lastIndexOf('/');
+    return lastSlash >= 0 ? normalized.substring(lastSlash + 1) : normalized;
   }
 
   Widget _buildSchemaHelpCard(bool isDark) {
@@ -648,21 +867,30 @@ class _BatchImportPageState extends State<BatchImportPage> {
 
   Future<void> _pickFile() async {
     try {
+      // Phase 4.45 — allowMultiple: true. Bro requested "တပြိုင်နက်ရွေးချယ်ရ
+      // အောင်လုပ်ပေးနိုင်မလာ" (be able to select multiple files at once).
+      // FilePicker returns a list of PlatformFile when allowMultiple is true.
+      // We replace _pickedFiles with the new selection (additive selection
+      // across multiple picker invocations would be confusing UX).
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['json'],
         withData: false,
+        allowMultiple: true,
       );
-      if (result == null) return;
-      final picked = result.files.single;
-      final path = picked.path;
-      if (path == null) return;
+      if (result == null || result.files.isEmpty) return;
+
       setState(() {
-        _filePath = path;
-        _fileName = picked.name;
-        // file_picker returns size in bytes for most platforms; may be null
-        // on web-only flows, in which case we just record null.
-        _fileSizeBytes = picked.size > 0 ? picked.size : null;
+        _pickedFiles
+          ..clear()
+          ..addAll(result.files.map((picked) {
+            final path = picked.path;
+            return _PickedFile(
+              path: path ?? '',
+              name: picked.name,
+              sizeBytes: picked.size,
+            );
+          }).where((f) => f.path.isNotEmpty));
         _parseResult = null;
         _parseError = null;
       });
@@ -675,14 +903,27 @@ class _BatchImportPageState extends State<BatchImportPage> {
     }
   }
 
+  /// Phase 4.45 — remove a single file from the picked list by index.
+  void _removePickedFile(int index) {
+    setState(() {
+      _pickedFiles.removeAt(index);
+      _parseResult = null;
+      _parseError = null;
+    });
+  }
+
   // ===========================================================================
   // PHASE 2 — PARSE
   // ===========================================================================
 
   Future<void> _parseFile() async {
-    if (_filePath == null) return;
+    // Phase 4.45 — parse ALL picked files and merge items into one batch.
+    // Each file is parsed individually (so per-file errors are clear), then
+    // items are concatenated and parse errors are merged.
+    if (_pickedFiles.isEmpty) return;
 
-    // Large-file confirmation gate. The service has a hard 50 MB cap that
+    // Large-file confirmation gate. Triggered if ANY file is above the soft
+    // warning threshold. The service has a hard 50 MB cap per file that
     // throws after picking — but for files between 5 MB and 50 MB we want
     // to give the admin a chance to back out BEFORE we kick off the parse,
     // since parsing a 30 MB JSON file can take 5+ seconds on a low-end
@@ -698,19 +939,54 @@ class _BatchImportPageState extends State<BatchImportPage> {
     });
 
     try {
-      final result = await _service.parseFile(_filePath!);
+      final mergedItems = <BatchImportItem>[];
+      final mergedParseErrors = <String>[];
+      var anyEmpty = false;
+
+      for (var i = 0; i < _pickedFiles.length; i++) {
+        final picked = _pickedFiles[i];
+        final result = await _service.parseFile(picked.path);
+
+        // Track if EVERY file was empty (so we can show the empty message).
+        if (result.isEmpty) {
+          anyEmpty = true;
+        }
+
+        // Prefix per-file errors with the file name so the admin can see
+        // WHICH file had the problem.
+        if (result.parseErrors.isNotEmpty) {
+          for (final err in result.parseErrors) {
+            mergedParseErrors.add('[${picked.name}] $err');
+          }
+        }
+
+        // Append items. We DO NOT de-duplicate across files here — the
+        // classify phase (next) detects duplicates against the EXISTING
+        // Firestore database, not against other items in this batch.
+        // If two JSON files contain the same movie (same tmdbId/slug),
+        // addMovie() handles it idempotently (creates once, updates after).
+        mergedItems.addAll(result.items);
+      }
+
       if (!mounted) return;
 
-      if (result.isEmpty) {
+      if (mergedItems.isEmpty) {
         setState(() {
-          _parseError = 'The file is empty or contains no items.';
+          _parseError = anyEmpty
+              ? 'All ${_pickedFiles.length} file(s) are empty or contain no items.'
+              : 'No valid items found in ${_pickedFiles.length} file(s). '
+                  'Check the parse errors below.';
           _phase = _Phase.parseError;
         });
         return;
       }
 
       setState(() {
-        _parseResult = result;
+        _parseResult = BatchParseResult(
+          items: mergedItems,
+          parseErrors: mergedParseErrors,
+          isEmpty: false,
+        );
         _phase = _Phase.preview;
       });
 
@@ -740,9 +1016,15 @@ class _BatchImportPageState extends State<BatchImportPage> {
   /// above [BatchImportService.maxFileSizeBytes].
   Future<bool> _showLargeFileConfirmDialog() async {
     if (!mounted) return false;
+    // Phase 4.45 — support multi-file: total size is the sum across all
+    // picked files. The dialog now also mentions the file count when more
+    // than one file is selected.
     final sizeStr = _fileSizeBytes != null
         ? BatchImportService.formatFileSize(_fileSizeBytes!)
         : 'unknown';
+    final fileCountStr = _pickedFiles.length == 1
+        ? 'the selected file'
+        : 'all ${_pickedFiles.length} selected files (combined)';
     final result = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -751,14 +1033,14 @@ class _BatchImportPageState extends State<BatchImportPage> {
           icon: const Icon(Icons.warning_amber_rounded, color: Colors.orange),
           title: const Text('Large File Warning'),
           content: Text(
-            'The selected file is $sizeStr.\n\n'
+            'Total size of $fileCountStr is $sizeStr.\n\n'
             'Parsing a large JSON file can take several seconds and uses '
             'a lot of memory on low-end devices. If the app feels sluggish '
             'or crashes, consider splitting the file into smaller batches '
             'of ~1000 movies each.\n\n'
             'Files larger than ${BatchImportService.formatFileSize(
               BatchImportService.maxFileSizeBytes,
-            )} will be refused outright.\n\n'
+            )} (each) will be refused outright.\n\n'
             'Do you want to continue?',
           ),
           actions: [
@@ -839,7 +1121,9 @@ class _BatchImportPageState extends State<BatchImportPage> {
               ),
               const SizedBox(height: 4),
               Text(
-                _fileName ?? '',
+                // Phase 4.45 — show "file1.json +2 more" when multiple
+                // files were merged into this import.
+                _sourceFileLabel ?? '',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: isDark ? Colors.white60 : Colors.black54,
                 ),
@@ -1116,7 +1400,7 @@ class _BatchImportPageState extends State<BatchImportPage> {
     }
 
     final auditContext = BatchImportService.currentAdminContext(
-      sourceFileName: _fileName,
+      sourceFileName: _sourceFileLabel,
       sourceFileSizeBytes: _fileSizeBytes,
       appVersion: appVersion,
     );
@@ -1198,7 +1482,7 @@ class _BatchImportPageState extends State<BatchImportPage> {
     }
 
     final auditContext = BatchImportService.currentAdminContext(
-      sourceFileName: _fileName != null ? '(retry) $_fileName' : '(retry)',
+      sourceFileName: _sourceFileLabel != null ? '(retry) $_sourceFileLabel' : '(retry)',
       sourceFileSizeBytes: _fileSizeBytes,
       appVersion: appVersion,
     )?.copyWith(isRetry: true);
@@ -1740,9 +2024,7 @@ class _BatchImportPageState extends State<BatchImportPage> {
   void _reset() {
     setState(() {
       _phase = _Phase.idle;
-      _filePath = null;
-      _fileName = null;
-      _fileSizeBytes = null;
+      _pickedFiles.clear();
       _parseResult = null;
       _parseError = null;
       _isClassifying = false;
@@ -1762,6 +2044,19 @@ class _BatchImportPageState extends State<BatchImportPage> {
       _exportError = null;
     });
   }
+}
+
+/// Phase 4.45 — simple holder for one picked JSON file.
+class _PickedFile {
+  final String path;
+  final String name;
+  final int sizeBytes;
+
+  const _PickedFile({
+    required this.path,
+    required this.name,
+    required this.sizeBytes,
+  });
 }
 
 /// Internal phase enum — kept private so callers can't accidentally drive
