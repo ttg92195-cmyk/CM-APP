@@ -4565,3 +4565,74 @@ Stage Summary:
   * Tapping a Season card to expand it no longer shows a colored border line around the tile — clean Card elevation only.
   * Add Episode (Download) and Add Episode (Watch) buttons now appear on separate lines, each full-width, exactly as Bro requested.
 - Both Add Series page and Edit Movie page updated for consistency — Bro can add/edit series from either entry point and see the same UI.
+
+---
+Task ID: Phase 4.45
+Agent: Main Agent
+Task: Bro reported two issues on Admin Panel → Batch Import tab:
+  1. "Export Database ကိုအလုပ်လုပ်အောင်လုပ်ပါမယ်" — Export Database doesn't work
+  2. "Choose JSON File နိုပ်ရင် JSON File တခုဘဲတင်ရတာကြောင့် တပြိုင်နက်ရွေးချယ်ရအောင်လုပ်ပေးနိုင်မလာ" — only one file at a time, please allow selecting multiple files at once
+Commit to GitHub main.
+
+Work Log:
+- Read batch_import_page.dart (1776 lines). Found:
+  * _pickFile() at line 649 — uses FilePicker.platform.pickFiles with no allowMultiple flag (defaults to false)
+  * _runExport() at line 509 — calls _service.exportAllMovies() which saves to app's private documents dir
+  * _buildBackupCard() at line 301 — shows the file path in the success card
+- Read batch_import_service.dart. Confirmed exportAllMovies() saves to:
+  /data/data/<package>/app_flutter/batch_import_backups/cm_movies_backup_YYYY-MM-DD_HH-MM-ss.json
+  This is the app's PRIVATE internal storage — not accessible from any file manager.
+- Read saf_storage_service.dart. Confirmed it already has:
+  * saveFileToSafFolder(sourceFilePath, fileName) — copies a file to the user-selected SAF folder
+  * openFolderPicker() — ACTION_OPEN_DOCUMENT_TREE picker
+  * hasStoredFolder() / isSafPermissionValid() — check if a folder is set and permission is valid
+  * getStoredTreePath() — returns the human-readable path (e.g. "/storage/emulated/0/Download")
+
+Issue 1 fix — Make Export Database work:
+- Updated _runExport() to do TWO steps after the export completes:
+  Step 1 (existing): _service.exportAllMovies() saves to app's private dir
+  Step 2 (NEW): copy the file to the user's SAF folder via SafStorageService.saveFileToSafFolder
+- If no SAF folder is set OR the stored permission is no longer valid (user revoked it), prompt the user with _showPickSafFolderDialog() — they can pick a folder or skip.
+- If user picks a folder, the file is copied there and the success card shows the user-accessible path in green ("Saved to: /storage/emulated/0/Download").
+- If user skips, the file is still saved in the app's private dir and the success card shows the private path (as before).
+- The SAF copy is wrapped in try/catch — if it fails, the export itself still succeeds (the file is in private storage). This is a non-fatal error.
+- Added _showPickSafFolderDialog() — AlertDialog with "Save Backup Where?" title explaining the situation and "Skip" / "Pick Folder" buttons.
+- Added _basename() helper to extract the file name from a full path (needed for saveFileToSafFolder's fileName parameter).
+- Added _exportSafPath state field to track whether the SAF copy succeeded and what path to show.
+- Updated the success card to show "Saved to: <safPath>" in green when SAF copy succeeded, or the private internal path otherwise.
+
+Issue 2 fix — Allow multiple file selection:
+- Added `allowMultiple: true` to FilePicker.platform.pickFiles() in _pickFile().
+- Replaced the single-valued _filePath / _fileName / _fileSizeBytes FIELDS with a List<_PickedFile> _pickedFiles list.
+- Added backward-compat GETTERS for _filePath / _fileName / _fileSizeBytes that return the first file's values — this keeps existing code paths (audit log, importing phase header) working without changes.
+- Added _sourceFileLabel getter that returns "file1.json" for single file or "file1.json +2 more" for multiple files — used in the importing phase header and audit log for clearer attribution.
+- Added _PickedFile class (path, name, sizeBytes) — simple holder.
+- Added _removePickedFile(index) to remove individual files from the list.
+- Updated _parseFile() to loop through all picked files:
+  * Calls _service.parseFile(path) for each file
+  * Merges all BatchImportItem lists into one
+  * Merges all parse errors (prefixed with [filename] so the admin can see WHICH file had the problem)
+  * Tracks if EVERY file was empty (shows "All N file(s) are empty" message)
+  * Creates a single BatchParseResult with the merged items
+  * The existing classify + import flow handles the merged batch without changes (addMovie is idempotent on tmdbId/slug, so duplicates across files are safe)
+- Updated the file chip UI to show:
+  * Header row: "N files selected" (or single file name if only one) + total size + clear-all button
+  * Per-file list (only when >1 file): each file with icon, name, size, and individual remove button
+- Updated button labels: "Choose JSON File(s)" and "Parse & Validate N Files" (the latter only when >1 file)
+- Updated _showLargeFileConfirmDialog() to mention file count and combined size when multiple files are picked.
+- Updated _reset() to clear _pickedFiles list.
+
+Verification:
+- Ran scripts/phase4_43_balance_check.py on batch_import_page.dart: OK — balanced.
+  openers={'(': 855, '{': 140, '[': 70} closers match.
+- Grepped for any remaining `_filePath =` / `_fileName =` / `_fileSizeBytes =` assignments (which would fail to compile since they're now getters): none found.
+- Grepped for `result.files.single` / `result.files.first` (which would break with multi-file): none found.
+
+Stage Summary:
+- Commit: abb443b on origin/main
+- Modified file: lib/app/ui/screens/batch_import_page.dart (+381, -86)
+- No new files, no new dependencies (uses existing SafStorageService)
+- Visual effect:
+  * Tapping "Export Database" now saves the JSON file to the user's chosen folder (Downloads, etc.) so they can find it in any file manager. If no folder is set, they're prompted to pick one.
+  * Tapping "Choose JSON File(s)" now opens a multi-select file picker. The user can pick multiple JSON files at once. The picked files are listed individually with sizes and remove buttons. Parsing merges all items into one batch for classification and import.
+- Backward compat: the single-file fields (_filePath, _fileName, _fileSizeBytes) still work as getters returning the first file's values, so existing code paths (audit log, importing phase header) continue to work.
