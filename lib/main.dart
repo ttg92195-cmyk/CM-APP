@@ -706,7 +706,7 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
         home: !_hasInternet
             ? _buildNoInternetPage()
             : (_showSplash || appConfig.isLoadingAuth)
-                ? _buildSplashScreen()
+                ? _buildSplashScreen(isDark: appConfig.isDarkMode)
                 : appConfig.isLoggedIn
                     ? const HomePage()
                     : const LoginPage(),
@@ -714,7 +714,7 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildSplashScreen() {
+  Widget _buildSplashScreen({required bool isDark}) {
     // Phase 4.34: Premium animated splash screen.
     // Phase 4.40: Theme-aware — splash variant matches the app's current
     // theme mode. Dark Mode gets the cinematic dark splash (Netflix/Disney+
@@ -724,11 +724,13 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
     // ပြီးသားဖြစ်တယ် ... Light Mode သုံးထားရင် ... အဖြူသီသန့် splash screen က
     // ဖန်တီးရနိုင်မလာမသိပါဘူ".
     //
-    // We pass `isDark: appConfig.isDarkMode` so the SplashScreen can pick
-    // the right variant. Reading appConfig.isDarkMode here (rather than
-    // inside the SplashScreen widget) keeps the SplashScreen widget pure
-    // and testable, and matches how the rest of the app reads theme state.
-    return SplashScreen(isDark: appConfig.isDarkMode);
+    // We pass `isDark: appConfig.isDarkMode` from the parent build() (which
+    // already has appConfig via Provider.of) so the SplashScreen can pick
+    // the right variant. Reading appConfig.isDarkMode in the parent rather
+    // than inside the SplashScreen widget keeps the SplashScreen widget
+    // pure and testable, and matches how the rest of the app reads theme
+    // state.
+    return SplashScreen(isDark: isDark);
   }
 
   ThemeData _buildDarkTheme() {
