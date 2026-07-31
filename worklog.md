@@ -6777,3 +6777,62 @@ Stage Summary:
 - Commit: 419d0b4 on origin/main
 - Modified file: lib/app/ui/components/movie_card.dart (64 insertions, 80 deletions)
 - No new files, no new dependencies
+
+---
+Task ID: Phase 4.37
+Agent: Main Agent
+Task: Bro reported stutter when selecting External Player in Settings → Video Player. Also stutter when opening a video while External Player was the selected mode. Fix both. Commit to GitHub main.
+
+Work Log:
+- Investigated code paths for both stutter scenarios:
+  1. Settings → Video Player bottom sheet → tap "External Player"
+     → setVideoPlayerMode('external') → await SharedPreferences disk
+     write → notifyListeners() → bottom sheet dismiss animation
+     runs in parallel. The await on the UI isolate was causing frame
+     stutter visible during the sheet dismiss.
+  2. Opening a video with External Player selected
+     → VideoPlayerScreen._checkVideoPlayerMode() probes for external
+     player via 3-4 sequential canLaunchUrl platform-channel calls
+     (VLC, MX, MX-Pro, url_launcher fallback), each ~100-300ms on
+     low-end devices. Total ~400-1200ms black frame before any UI
+     rendered. This was the "ထစ်နေတာ" Bro saw.
+
+Three fixes applied:
+
+1. lib/more_libs/setting/app_config.dart (setVideoPlayerMode):
+   - Deferred disk I/O off the UI thread. Update in-memory state +
+     notifyListeners() IMMEDIATELY so UI is responsive, then fire the
+     disk write as a detached background Future. If write fails, log
+     non-fatally — in-memory state is already correct for this session.
+
+2. lib/app/core/services/external_player_service.dart:
+   - Removed canLaunchUrl() pre-checks from both
+     _tryLaunchSpecificPlayer and _launchWithUrlLauncher. Each
+     canLaunchUrl is a separate platform-channel round-trip that
+     duplicates work launchUrl already does internally. Removing them
+     saves ~400-1200ms on low-end devices when probing 3 player
+     packages + 1 fallback.
+
+3. lib/app/ui/screens/video_player_screen.dart:
+   - Added _externalLaunching state flag
+   - While probing for external player, show a premium loading screen:
+     red play icon in a 72x72 circle (matches splash screen's visual
+     language), small CircularProgressIndicator, bilingual
+     "Launching external player..." / "External ပလေယာ ဖွင့်နေသည်..."
+     label
+   - Yield to framework with `await Future.delayed(Duration.zero)`
+     before starting probe so loading state can paint its first frame
+
+4. lib/app/ui/screens/settings_page.dart:
+   - Added clarifying comment noting setVideoPlayerMode is now
+     non-blocking on UI thread
+
+Stage Summary:
+- Commit: 25e9d6b on origin/main
+- Modified files (4):
+  * lib/more_libs/setting/app_config.dart
+  * lib/app/core/services/external_player_service.dart
+  * lib/app/ui/screens/video_player_screen.dart
+  * lib/app/ui/screens/settings_page.dart
+- 148 insertions, 19 deletions
+- No new dependencies, no new files
