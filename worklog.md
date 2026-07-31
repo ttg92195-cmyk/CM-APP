@@ -4636,3 +4636,22 @@ Stage Summary:
   * Tapping "Export Database" now saves the JSON file to the user's chosen folder (Downloads, etc.) so they can find it in any file manager. If no folder is set, they're prompted to pick one.
   * Tapping "Choose JSON File(s)" now opens a multi-select file picker. The user can pick multiple JSON files at once. The picked files are listed individually with sizes and remove buttons. Parsing merges all items into one batch for classification and import.
 - Backward compat: the single-file fields (_filePath, _fileName, _fileSizeBytes) still work as getters returning the first file's values, so existing code paths (audit log, importing phase header) continue to work.
+
+---
+Task ID: 4.45-hotfix
+Agent: Main Agent
+Task: Fix release-build failure caused by List<String> → List<Map<String, dynamic>> type mismatch in batch_import_page.dart multi-file parse-error merge.
+
+Work Log:
+- Read build error: lib/app/ui/screens/batch_import_page.dart:987:24 — assigning List<String> to a List<Map<String, dynamic>> parameter.
+- Located BatchParseResult.parseErrors declaration in lib/app/core/services/batch_import_service.dart:175 — confirmed it's List<Map<String, dynamic>> with each entry shaped {'index': int, 'error': String}.
+- Confirmed UI consumer at batch_import_page.dart:1978-1989 reads e['index'] and e['error'] — so the merge MUST preserve that map shape, not flatten to strings.
+- Fixed the merge loop: changed `final mergedParseErrors = <String>[]` → `<Map<String, dynamic>>[]`, and for each per-file error now pushes `{'index': originalIndex, 'error': '[file.json] originalError', 'file': picked.name}`.
+- Verified multi-file picker (FilePicker.platform.pickFiles with allowMultiple: true at line 879) and Export Database flow (_runExport at line 633 with SAF copy via SafStorageService) were already correctly implemented from the earlier Phase 4.45 commit — they did not need changes.
+- Ran bracket balance checker (scripts/phase4_43_balance_check.py) — balanced: () 856/856, {} 142/142, [] 72/72.
+- Committed and pushed to origin/main (commit b278680).
+
+Stage Summary:
+- Root cause: when bro asked for multi-file JSON selection in Phase 4.45, the merge loop flattened each per-file parse error (a Map) into a plain prefixed String. That compiled in dev (Dart is permissive at the .add() call site when the list is typed <String>[]) but blew up at the BatchParseResult() constructor where the field type is List<Map<String, dynamic>>.
+- Fix preserves the map shape so the preview UI's `#${e['index']}: ${e['error']}` rendering still works, and the file name is now both prefixed on the error string AND stashed under a new 'file' key for richer display later.
+- Both Phase 4.45 features (multi-file picker + Export Database with SAF copy to user-visible folder) are now unblocked. Bro can rebuild.
