@@ -558,48 +558,81 @@ class _ProfilePageState extends State<ProfilePage> {
             const SizedBox(height: 8),
 
             // Bookmarks
-            Card(
-              child: ListTile(
-                leading: const Icon(
-                  Icons.bookmark_outline,
-                  color: Color(0xFFE50914),
+            //
+            // Phase 4.39 — Bro reported the dark/gray ripple effect (touch
+            // feedback / pressed state) on this Bookmarks card looked bad
+            // and wanted it COMPLETELY removed (လုံးဝ မပေါ်တော့အောင်).
+            //
+            // ListTile has a built-in InkWell that always shows a ripple
+            // when onTap is set. The cleanest way to disable it without
+            // losing the tap handler is to wrap the ListTile in a Theme
+            // widget that sets both splashColor and highlightColor to
+            // Colors.transparent. This kills:
+            //   - The expanding ripple circle (splashColor)
+            //   - The background flash while pressed (highlightColor)
+            // The Card's own Material ripple is also covered because the
+            // Theme propagates down to both the Card and the ListTile.
+            //
+            // This is applied to Bookmarks + Watchlist ONLY. All other
+            // cards in the Profile page keep their default Material
+            // ripple (Bro asked for these two specifically).
+            Theme(
+              data: Theme.of(context).copyWith(
+                splashColor: Colors.transparent,
+                highlightColor: Colors.transparent,
+                hoverColor: Colors.transparent,
+              ),
+              child: Card(
+                child: ListTile(
+                  leading: const Icon(
+                    Icons.bookmark_outline,
+                    color: Color(0xFFE50914),
+                  ),
+                  title: const Text(
+                    'Bookmarks',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: const Text('View your bookmarked movies'),
+                  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const MovieBookmarkScreen()),
+                    );
+                  },
                 ),
-                title: const Text(
-                  'Bookmarks',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
-                subtitle: const Text('View your bookmarked movies'),
-                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const MovieBookmarkScreen()),
-                  );
-                },
               ),
             ),
 
             const SizedBox(height: 8),
 
             // Watchlist
-            Card(
-              child: ListTile(
-                leading: const Icon(
-                  Icons.watch_later_outlined,
-                  color: Color(0xFFE50914),
+            // Phase 4.39 — same ripple-removal wrapping as Bookmarks above.
+            Theme(
+              data: Theme.of(context).copyWith(
+                splashColor: Colors.transparent,
+                highlightColor: Colors.transparent,
+                hoverColor: Colors.transparent,
+              ),
+              child: Card(
+                child: ListTile(
+                  leading: const Icon(
+                    Icons.watch_later_outlined,
+                    color: Color(0xFFE50914),
+                  ),
+                  title: const Text(
+                    'Watchlist',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: const Text('View your saved watchlist'),
+                  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const WatchlistScreen()),
+                    );
+                  },
                 ),
-                title: const Text(
-                  'Watchlist',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
-                subtitle: const Text('View your saved watchlist'),
-                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const WatchlistScreen()),
-                  );
-                },
               ),
             ),
 
