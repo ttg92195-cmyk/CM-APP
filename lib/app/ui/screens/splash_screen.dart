@@ -1,12 +1,18 @@
-// Phase 4.34: Premium animated splash screen.
+// Phase 4.34: Premium animated splash screen (cinematic dark variant).
+// Phase 4.40: Added light-mode variant — clean / airy / minimalist.
 //
 // Design goals (per Bro's brief):
 //   - "မထစ်အောင်" → no stutter on low-end devices (Oppo A16 class)
-//   - "အလန်းစားဖြစ်ဖြစ်" → cinematic premium look (Disney+ / Netflix tier)
+//   - Dark mode: "အလန်းစားဖြစ်ဖြစ်" → cinematic premium look (Disney+ / Netflix tier)
+//   - Light mode: "ရိုရှင်းတယ်ပုံစံ ရတယ်ပုံစံ ဆန်းသစ်တယ်ပုံစံ" — clean, premium, innovative
 //   - 3 second total duration (matches _minSplashElapsed in main.dart)
 //   - Phase 4.34.1: precise centering — rings, halo, icon, and KMM text
 //     must all share the same horizontal axis, with the logo at exact
 //     screen center and the text just below the logo's bottom edge.
+//   - Phase 4.40: theme-aware — dark variant for Dark Mode, light variant
+//     for Light Mode. Bro's exact brief: "Dark Mode သုံးထားရင် ... ဖန်တီး
+//     ထားပြီးသားဖြစ်တယ်ဟာကိုပြပါမယ်။ ... Light Mode သုံးထားရင် ... အဖြူ
+//     သီသန့် splash screen က ဖန်တီးရနိုင်မလာမသိပါဘူ".
 //
 // Why custom Flutter animation instead of Lottie:
 //   - Lottie JSON parsing on first frame can cause an initial stutter on
@@ -16,6 +22,9 @@
 //     rendering pipeline → instant first frame, smooth 60fps.
 //   - No asset to ship / decode → smaller APK, faster cold start.
 //
+// ─────────────────────────────────────────────────────────────────────────
+// DARK VARIANT (preserved from Phase 4.34, unchanged in behavior)
+// ─────────────────────────────────────────────────────────────────────────
 // Animation layers:
 //   1. Spotlight gradient background (subtle radial red glow on deep black)
 //   2. Three concentric expanding rings (staggered, ripple effect)
@@ -24,26 +33,51 @@
 //   5. "KMM" brand text with horizontal shimmer sweep
 //   6. Three sequential loading dots at the bottom
 //
-// Layout (Phase 4.34.1):
-//   - Logo composition (rings + halo + icon) is positioned at EXACT screen
-//     center using LayoutBuilder + Positioned. This guarantees the rings
-//     and halo share the same center, regardless of what's below them.
-//   - KMM text is positioned just below the logo's bottom edge (logo_size/2
-//     + gap), so it tracks the logo's position rather than being pushed
-//     down by Column centering math.
-//   - Previously, putting rings in a separate Center widget + halo/text in
-//     a Column caused the rings' center (screen center) to mismatch the
-//     halo's center (column center, which is offset by the text below).
+// ─────────────────────────────────────────────────────────────────────────
+// LIGHT VARIANT (new in Phase 4.40)
+// ─────────────────────────────────────────────────────────────────────────
+// Design language: "premium stationery" — think Apple Notes light mode,
+// Linear, Notion, Stripe Dashboard on a bright morning. NOT a flat white
+// rectangle (Bro would call that "ရိုရိုဖြစ်နေလို သိပ်မလန်းတာ").
+//
+// Animation layers:
+//   1. Soft warm-white radial gradient (paper-like, not pure #FFFFFF)
+//      — center is #FFFCFB, edges fade to #F5F1EE. Adds depth without
+//      being a flat sheet.
+//   2. Three concentric expanding rings in brand red, but with a much
+//      lower opacity (0.10–0.18) so they read as soft ink-prints on
+//      paper, not glowing pulses. Rings are also slightly thicker
+//      (2.0px vs 1.5px) so they're visible against the bright bg.
+//   3. NO glowing halo (would look out of place on a light bg). Instead,
+//      the logo sits in a soft drop shadow circle — a "raised paper
+//      sticker" effect. The shadow is offset +2y with a 12px blur and
+//      8% opacity, giving the icon a subtle physical lift.
+//   4. Logo: same play_circle_fill icon, but in brand red (#E50914)
+//      without the brightened variant (#FF2A36 looks neon on white).
+//      Elastic scale-in preserved.
+//   5. "KMM" brand text — same shimmer sweep, but the underlying color is
+//      deep ink (#1A1A1A) instead of white, and the shimmer colors are
+//      warm pearl tones (white → cream → blush → white) that read as
+//      "light catching ink" rather than "neon glow".
+//   6. Three sequential loading dots in brand red, smaller (7px vs 9px)
+//      and lower opacity — they're a subtle progress hint, not a focal
+//      point.
+//
+// Layout (both variants): identical centering math via LayoutBuilder +
+// Positioned. Logo at exact screen center, text just below the logo's
+// bottom edge.
 
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 class SplashScreen extends StatefulWidget {
-  // Theme is intentionally ignored — splash is always cinematic dark, like
-  // Netflix / Disney+ / Prime Video. This avoids light-mode readability
-  // issues with the brand shimmer text and keeps the visual identity
-  // consistent on every launch.
-  const SplashScreen({super.key});
+  // Phase 4.40: theme-aware splash. isDark selects between the cinematic
+  // dark variant (preserved from Phase 4.34) and the new clean light
+  // variant. Default isDark=true preserves the original behavior for
+  // any caller that doesn't pass the flag.
+  final bool isDark;
+
+  const SplashScreen({super.key, this.isDark = true});
 
   @override
   State<SplashScreen> createState() => _SplashScreenState();
@@ -71,6 +105,10 @@ class _SplashScreenState extends State<SplashScreen>
   static const double _ringMinSize = 60.0;
   static const double _ringMaxSize = 200.0; // fits inside composition
   static const double _textGap = 14.0; // gap between logo bottom and text
+
+  // Convenience flag — read once in build() so we don't re-evaluate
+  // widget.isDark across every animation frame.
+  bool get _isDark => widget.isDark;
 
   @override
   void initState() {
@@ -101,7 +139,8 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
-    const bgColor = Color(0xFF050505);
+    // Background color is theme-dependent.
+    final bgColor = _isDark ? const Color(0xFF050505) : const Color(0xFFFAF8F5);
 
     return Scaffold(
       backgroundColor: bgColor,
@@ -175,25 +214,50 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   // ─────────────────────────────────────────────────────────────────────
-  // 1. Spotlight background — radial red glow on deep black.
+  // 1. Spotlight background.
+  //
+  // DARK: radial red glow on deep black — cinematic, intense.
+  // LIGHT: soft warm-white radial gradient — center is #FFFCFB, edges
+  //   fade to #F5F1EE. Adds depth without being a flat sheet. A very
+  //   subtle warm red glow (3% opacity) at center ties it to the brand
+  //   without making it look like a "tinted" screen.
   // ─────────────────────────────────────────────────────────────────────
   Widget _buildSpotlightBackground(Color baseColor) {
     // The glow intensity gently breathes with the loop controller so the
     // background never feels completely static.
     final breath = 0.6 + 0.25 * _loopController.value;
 
+    if (_isDark) {
+      return Container(
+        decoration: BoxDecoration(
+          gradient: RadialGradient(
+            center: Alignment.center,
+            radius: 0.75,
+            colors: [
+              _brandRed.withOpacity(0.18 * breath),
+              _brandRed.withOpacity(0.06 * breath),
+              baseColor,
+              const Color(0xFF000000),
+            ],
+            stops: const [0.0, 0.35, 0.75, 1.0],
+          ),
+        ),
+      );
+    }
+
+    // Light variant — soft paper-like radial gradient.
     return Container(
       decoration: BoxDecoration(
         gradient: RadialGradient(
           center: Alignment.center,
-          radius: 0.75,
+          radius: 0.85,
           colors: [
-            _brandRed.withOpacity(0.18 * breath),
-            _brandRed.withOpacity(0.06 * breath),
-            baseColor,
-            const Color(0xFF000000),
+            const Color(0xFFFFFCFB), // warm white center
+            _brandRed.withOpacity(0.03 * breath), // whisper of brand red
+            const Color(0xFFF5F1EE), // warm beige edge
+            const Color(0xFFEDE7E2), // deeper beige corner
           ],
-          stops: const [0.0, 0.35, 0.75, 1.0],
+          stops: const [0.0, 0.30, 0.75, 1.0],
         ),
       ),
     );
@@ -222,8 +286,15 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   // Pulse rings — three concentric expanding circles, staggered.
+  //
+  // DARK: 1.5px thick, brand red at 45% peak opacity. Cinematic ripple.
+  // LIGHT: 2.0px thick, brand red at 16% peak opacity. Reads as a soft
+  //   ink-print on paper. Thicker line compensates for the lower opacity
+  //   so the rings are still visible against the bright background.
   Widget _buildPulseRings() {
     final List<double> phases = [0.0, 0.33, 0.66];
+    final ringWidth = _isDark ? 1.5 : 2.0;
+    final peakOpacity = _isDark ? 0.45 : 0.16;
 
     return Stack(
       alignment: Alignment.center,
@@ -234,7 +305,7 @@ class _SplashScreenState extends State<SplashScreen>
         final eased = 1.0 - math.pow(1.0 - t, 2).toDouble();
         // Ring expands from _ringMinSize to _ringMaxSize.
         final size = _ringMinSize + eased * (_ringMaxSize - _ringMinSize);
-        final opacity = (1.0 - t) * 0.45; // fade out as it expands
+        final opacity = (1.0 - t) * peakOpacity; // fade out as it expands
 
         return Container(
           width: size,
@@ -243,7 +314,7 @@ class _SplashScreenState extends State<SplashScreen>
             shape: BoxShape.circle,
             border: Border.all(
               color: _brandRed.withOpacity(opacity),
-              width: 1.5,
+              width: ringWidth,
             ),
           ),
         );
@@ -251,10 +322,24 @@ class _SplashScreenState extends State<SplashScreen>
     );
   }
 
-  // Halo + icon — uses Container with the icon as its child via Center,
-  // instead of a Stack with halo + icon as siblings. This guarantees
-  // the icon is perfectly centered within the halo (Stack centering can
-  // have subtle offsets due to font glyph metrics).
+  // Halo + icon.
+  //
+  // DARK: pulsing red glow halo behind the logo (breathing effect). Uses
+  //   BoxShadow with 40px blur + brand red color to create the glow.
+  //   Logo icon is the brightened red (#FF2A36) so it pops against the
+  //   dark background.
+  //
+  // LIGHT: NO glow halo (would look out of place on a bright bg). Instead
+  //   the logo sits in a soft drop shadow circle — a "raised paper
+  //   sticker" effect. The shadow is offset +2y with a 12px blur and 8%
+  //   black opacity. The icon is the standard brand red (#E50914) — the
+  //   brightened #FF2A36 looks neon on white. The breathing pulse is
+  //   preserved (very subtle, ±3%) to keep the logo feeling alive.
+  //
+  // Uses Container with the icon as its child via Center, instead of a
+  // Stack with halo + icon as siblings. This guarantees the icon is
+  // perfectly centered within the halo (Stack centering can have subtle
+  // offsets due to font glyph metrics).
   Widget _buildHaloWithIcon() {
     // Intro: scale from 0.0 → 1.0 with overshoot (elastic feel).
     final introT = _introController.value;
@@ -263,13 +348,50 @@ class _SplashScreenState extends State<SplashScreen>
     final introOpacity = introT.clamp(0.0, 1.0);
 
     // Loop: subtle breathing pulse on top of the intro scale.
-    final pulse = 1.0 + 0.05 * math.sin(_loopController.value * 2 * math.pi);
+    // Light variant has a smaller pulse (3% vs 5%) — feels more restrained.
+    final pulseMagnitude = _isDark ? 0.05 : 0.03;
+    final pulse = 1.0 + pulseMagnitude * math.sin(_loopController.value * 2 * math.pi);
 
     // Halo opacity also pulses with the loop, slightly offset from the
     // logo's scale pulse so they feel layered rather than synced.
     final haloOpacity = 0.35 + 0.20 * math.sin(
         _loopController.value * 2 * math.pi + math.pi / 3);
 
+    final iconColor = _isDark ? _brandRedBright : _brandRed;
+
+    if (_isDark) {
+      // Dark variant — glowing red halo.
+      return Opacity(
+        opacity: introOpacity,
+        child: Transform.scale(
+          scale: scale * pulse,
+          child: Container(
+            width: _haloSize,
+            height: _haloSize,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: _brandRed.withOpacity(haloOpacity * 0.4),
+              boxShadow: [
+                BoxShadow(
+                  color: _brandRed.withOpacity(haloOpacity),
+                  blurRadius: 40,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
+            child: Center(
+              child: Icon(
+                Icons.play_circle_fill,
+                size: _iconSize,
+                color: iconColor,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Light variant — soft drop shadow "paper sticker" effect.
     return Opacity(
       opacity: introOpacity,
       child: Transform.scale(
@@ -279,12 +401,24 @@ class _SplashScreenState extends State<SplashScreen>
           height: _haloSize,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: _brandRed.withOpacity(haloOpacity * 0.4),
+            color: Colors.white,
+            // Soft drop shadow — gives the icon a subtle physical lift
+            // off the paper-like background. Two layered shadows: a tight
+            // 6px blur at 6% opacity for definition + a wider 18px blur
+            // at 4% opacity for ambient softness. Together they read as
+            // a single soft shadow rather than a harsh outline.
             boxShadow: [
               BoxShadow(
-                color: _brandRed.withOpacity(haloOpacity),
-                blurRadius: 40,
-                spreadRadius: 2,
+                color: Colors.black.withOpacity(0.06),
+                blurRadius: 6,
+                spreadRadius: 0,
+                offset: const Offset(0, 2),
+              ),
+              BoxShadow(
+                color: _brandRed.withOpacity(0.04),
+                blurRadius: 18,
+                spreadRadius: 0,
+                offset: const Offset(0, 4),
               ),
             ],
           ),
@@ -292,7 +426,7 @@ class _SplashScreenState extends State<SplashScreen>
             child: Icon(
               Icons.play_circle_fill,
               size: _iconSize,
-              color: _brandRedBright,
+              color: iconColor,
             ),
           ),
         ),
@@ -302,6 +436,13 @@ class _SplashScreenState extends State<SplashScreen>
 
   // ─────────────────────────────────────────────────────────────────────
   // 5. Brand text — "KMM" with shimmer sweep.
+  //
+  // DARK: shimmer is white → cream → blush → white (reads as light
+  //   catching the brand). Underlying text color is white.
+  //
+  // LIGHT: same shimmer, but the underlying text color is deep ink
+  //   (#1A1A1A). The shimmer colors are warm pearl tones that read as
+  //   "light catching ink" rather than "neon glow".
   // ─────────────────────────────────────────────────────────────────────
   Widget _buildBrandText() {
     // Reveal text starting at 50% of the intro, full opacity by end of intro.
@@ -314,15 +455,24 @@ class _SplashScreenState extends State<SplashScreen>
     // over each loop cycle.
     final sweep = (_loopController.value * 3.0) - 1.0; // -1 → 2
 
+    // Underlying text color — white on dark, deep ink on light.
+    final baseTextColor =
+        _isDark ? const Color(0xFFFFFFFF) : const Color(0xFF1A1A1A);
+
     return Opacity(
       opacity: textOpacity,
       child: Transform.translate(
         offset: Offset(0, slideY),
         child: ShaderMask(
           shaderCallback: (Rect bounds) {
-            // Sweep gradient: dark → bright white → brand red → dark.
+            // Sweep gradient: dark → bright → brand tint → dark.
             // The horizontal position of the bright band moves with
             // `sweep`, producing a left-to-right shimmer sweep.
+            //
+            // Same palette for both variants — it reads as warm light
+            // on both dark and light backgrounds. On dark, the white
+            // band is the brightest moment; on light, the cream/blush
+            // band adds warmth against the ink-colored base text.
             return LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.topRight,
@@ -341,13 +491,13 @@ class _SplashScreenState extends State<SplashScreen>
             ).createShader(bounds);
           },
           blendMode: BlendMode.srcATop,
-          child: const Text(
+          child: Text(
             'KMM',
             style: TextStyle(
               fontSize: 36,
               fontWeight: FontWeight.w900,
               letterSpacing: 6.0,
-              color: Color(0xFFFFFFFF), // ShaderMask will overlay this
+              color: baseTextColor, // ShaderMask will overlay this
               decoration: TextDecoration.none,
             ),
           ),
@@ -358,8 +508,16 @@ class _SplashScreenState extends State<SplashScreen>
 
   // ─────────────────────────────────────────────────────────────────────
   // 6. Loading dots — three sequential pulsing dots at the bottom.
+  //
+  // DARK: 9px dots, brand red at 40-100% opacity. Focal accent.
+  // LIGHT: 7px dots, brand red at 30-80% opacity. Subtle progress hint
+  //   — they're not the focal point on the light variant, the logo is.
   // ─────────────────────────────────────────────────────────────────────
   Widget _buildLoadingDots() {
+    final dotSize = _isDark ? 9.0 : 7.0;
+    final baseOpacity = _isDark ? 0.4 : 0.3;
+    final peakOpacity = _isDark ? 0.6 : 0.5;
+
     return Positioned(
       left: 0,
       right: 0,
@@ -375,15 +533,15 @@ class _SplashScreenState extends State<SplashScreen>
             // Smooth pulse using a sine wave (0 → 1 → 0 over the cycle).
             final pulse = (math.sin(t * 2 * math.pi) + 1.0) / 2.0;
             final scale = 0.6 + 0.4 * pulse;
-            final opacity = 0.4 + 0.6 * pulse;
+            final opacity = baseOpacity + peakOpacity * pulse;
 
             return Padding(
               padding: const EdgeInsets.symmetric(horizontal: 5),
               child: Transform.scale(
                 scale: scale,
                 child: Container(
-                  width: 9,
-                  height: 9,
+                  width: dotSize,
+                  height: dotSize,
                   decoration: BoxDecoration(
                     color: _brandRed.withOpacity(opacity),
                     shape: BoxShape.circle,

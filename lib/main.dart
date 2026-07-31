@@ -716,10 +716,19 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
 
   Widget _buildSplashScreen() {
     // Phase 4.34: Premium animated splash screen.
-    // The splash is always rendered in cinematic dark mode (Netflix/Disney+
-    // style) regardless of the app's theme, so we don't need to pass the
-    // theme mode down — the SplashScreen widget handles its own theming.
-    return const SplashScreen();
+    // Phase 4.40: Theme-aware — splash variant matches the app's current
+    // theme mode. Dark Mode gets the cinematic dark splash (Netflix/Disney+
+    // tier, preserved from Phase 4.34). Light Mode gets a new clean/
+    // airy variant (premium stationery feel — Apple Notes / Linear / Notion
+    // light mode). Bro's exact brief: "Dark Mode သုံးထားရင် ... ဖန်တီးထား
+    // ပြီးသားဖြစ်တယ် ... Light Mode သုံးထားရင် ... အဖြူသီသန့် splash screen က
+    // ဖန်တီးရနိုင်မလာမသိပါဘူ".
+    //
+    // We pass `isDark: appConfig.isDarkMode` so the SplashScreen can pick
+    // the right variant. Reading appConfig.isDarkMode here (rather than
+    // inside the SplashScreen widget) keeps the SplashScreen widget pure
+    // and testable, and matches how the rest of the app reads theme state.
+    return SplashScreen(isDark: appConfig.isDarkMode);
   }
 
   ThemeData _buildDarkTheme() {
