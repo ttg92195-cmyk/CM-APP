@@ -62,19 +62,17 @@ class _MovieCardState extends State<MovieCard> {
     final prefs = _prefsCache ??= await SharedPreferences.getInstance();
     final posMs = prefs.getInt('watch_pos_${widget.movie.id}');
     final durMs = prefs.getInt('watch_dur_${widget.movie.id}');
-    if (posMs != null && durMs != null && posMs > 5000 && durMs > 0) {
+    // Phase 4.38 — raised threshold from 5s → 30s. 5s was too low:
+    // any accidental tap that briefly started playback (then closed)
+    // would leave a progress bar artifact on the home grid forever.
+    // 30s of deliberate watching is a much stronger signal that the
+    // user actually wants to resume later.
+    if (posMs != null && durMs != null && posMs > 30000 && durMs > 0) {
       final progress = (posMs / durMs).clamp(0.0, 1.0);
       if (progress < 0.95 && mounted) {
         setState(() => _watchProgress = progress);
       }
     }
-  }
-
-  String _formatWatchPosition() {
-    if (_watchProgress == null) return '';
-    // We'll show percentage-based position
-    final percent = (_watchProgress! * 100).round();
-    return '$percent%';
   }
 
   // Task 40 — image URL with cache-busting retry suffix.
@@ -249,6 +247,39 @@ class _MovieCardState extends State<MovieCard> {
                     ),
                   ),
 
+                // Watch Progress — subtle dark gradient at poster bottom.
+                // Phase 4.38 — placed BEFORE the IMDb rating badge in the
+                // Stack so the rating badge draws on top of the gradient
+                // (the badge has its own black75 background and doesn't
+                // need extra darkening from the gradient). The gradient
+                // provides contrast for the red progress fill in the
+                // bottom-left/center area where the fill lives.
+                if (_watchProgress != null)
+                  Positioned(
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    child: IgnorePointer(
+                      child: Container(
+                        height: 16,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Colors.black.withOpacity(0.0),
+                              Colors.black.withOpacity(0.45),
+                            ],
+                          ),
+                          borderRadius: const BorderRadius.only(
+                            bottomLeft: Radius.circular(8),
+                            bottomRight: Radius.circular(8),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
                 // IMDb Rating Badge - bottom right corner
                 // Always shown. When the rating is null/empty/0.0, we display
                 // "N/A" via _formatRating() instead of hiding the badge — Bro
@@ -296,40 +327,69 @@ class _MovieCardState extends State<MovieCard> {
                     ),
                   ),
 
-                // Feature 5: Watch Progress Bar — bottom of poster (YouTube-style)
+                // Feature 5: Watch Progress Bar — red fill at bottom of poster.
+                //
+                // Phase 4.38 redesign — Bro reported the previous version
+                // looked like the poster was being "cut" by a horizontal
+                // line ("ဖြတ်နေသလိုဖြစ်နေတယ်"). Root cause was the
+                // `Colors.white24` track that spanned the full poster width
+                // — it read as a stark white slice through the poster art,
+                // especially on posters with light/saturated bottoms.
+                //
+                // New design (matches Netflix / Disney+ / Prime Video
+                // mobile convention):
+                //   1. NO white track. Only the red fill is shown.
+                //   2. A subtle dark gradient overlay (transparent →
+                //      black45) sits at the bottom 16px of the poster
+                //      (declared above, before the rating badge, so the
+                //      rating badge draws on top of it). The gradient
+                //      gives the red fill consistent contrast regardless
+                //      of the poster's bottom-edge color.
+                //   3. The red fill is 3px tall, with its container
+                //      ClipRRect being 8px tall (taller than the visible
+                //      bar) so the 8px bottom-corner radius does NOT get
+                //      clamped. Flutter clamps borderRadius to half the
+                //      smaller dimension — an 8px radius on a 3px-tall
+                //      rect gets clamped to 1.5px and doesn't match the
+                //      poster's true 8px corners. By making the ClipRRect
+                //      8px tall and placing the 3px red bar at its bottom,
+                //      the bottom corners curve correctly and align with
+                //      the poster's rounded bottom corners.
+                //   4. LayoutBuilder is used to read the poster's actual
+                //      rendered width so the red fill's width is exactly
+                //      (progress × posterWidth).
                 if (_watchProgress != null)
                   Positioned(
                     bottom: 0,
                     left: 0,
                     right: 0,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // Thin progress bar at bottom of poster
-                        ClipRRect(
-                          borderRadius: const BorderRadius.only(
-                            bottomLeft: Radius.circular(8),
-                            bottomRight: Radius.circular(8),
-                          ),
-                          child: Stack(
-                            children: [
-                              // Background
-                              Container(
-                                height: 3,
-                                color: Colors.white24,
-                              ),
-                              // Progress fill
-                              FractionallySizedBox(
-                                widthFactor: _watchProgress!,
-                                child: Container(
-                                  height: 3,
-                                  color: const Color(0xFFE50914),
+                    child: ClipRRect(
+                      borderRadius: const BorderRadius.only(
+                        bottomLeft: Radius.circular(8),
+                        bottomRight: Radius.circular(8),
+                      ),
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final barWidth =
+                              constraints.maxWidth * _watchProgress!.clamp(0.02, 1.0);
+                          return SizedBox(
+                            height: 8,
+                            child: Stack(
+                              children: [
+                                Positioned(
+                                  bottom: 0,
+                                  left: 0,
+                                  child: Container(
+                                    width: barWidth,
+                                    height: 3,
+                                    color: const Color(0xFFE50914),
+                                  ),
                                 ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+                              ],
+                            ),
+                          );
+                        },
+                      ),
                     ),
                   ),
               ],
@@ -349,9 +409,16 @@ class _MovieCardState extends State<MovieCard> {
                 ),
               ),
             ),
-            // Year + Duration/Season + Watch progress indicator below title
+            // Year + Duration/Season metadata below title.
+            // Phase 4.38 — removed the inline watch-progress text block
+            // (play icon + "X%") that used to live at the end of this Row.
+            // The visual progress bar at the bottom of the poster is now
+            // the single source of truth for watch progress — same
+            // convention as Netflix / Disney+ / Prime Video mobile.
+            // Removing the text also de-clutters the row (was 5 elements,
+            // now 3) and avoids the "0%" artifact on freshly-started
+            // titles.
             if (widget.movie.year != null && widget.movie.year!.isNotEmpty ||
-                _watchProgress != null ||
                 (widget.movie.type == 'series' && widget.movie.seasons != null && widget.movie.seasons!.isNotEmpty) ||
                 (widget.movie.type != 'series' && widget.movie.duration != null && widget.movie.duration!.isNotEmpty))
               Padding(
@@ -422,30 +489,6 @@ class _MovieCardState extends State<MovieCard> {
                         ],
                       ),
                     ),
-                    if (_watchProgress != null) ...[
-                      if (widget.movie.year != null && widget.movie.year!.isNotEmpty ||
-                          (widget.movie.type == 'series' && widget.movie.seasons != null && widget.movie.seasons!.isNotEmpty) ||
-                          (widget.movie.type != 'series' && widget.movie.duration != null && widget.movie.duration!.isNotEmpty))
-                        const SizedBox(width: 4),
-                      Icon(
-                        Icons.play_circle_filled,
-                        size: 10,
-                        color: const Color(0xFFE50914).withOpacity(0.8),
-                      ),
-                      const SizedBox(width: 2),
-                      Flexible(
-                        child: Text(
-                          _formatWatchPosition(),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: const Color(0xFFE50914).withOpacity(0.8),
-                            fontSize: 9,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
                   ],
                 ),
               ),
