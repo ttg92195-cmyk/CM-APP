@@ -940,7 +940,7 @@ class _BatchImportPageState extends State<BatchImportPage> {
 
     try {
       final mergedItems = <BatchImportItem>[];
-      final mergedParseErrors = <String>[];
+      final mergedParseErrors = <Map<String, dynamic>>[];
       var anyEmpty = false;
 
       for (var i = 0; i < _pickedFiles.length; i++) {
@@ -953,10 +953,19 @@ class _BatchImportPageState extends State<BatchImportPage> {
         }
 
         // Prefix per-file errors with the file name so the admin can see
-        // WHICH file had the problem.
+        // WHICH file had the problem. Each error entry is
+        // {'index': int, 'error': String} — we keep that shape but prepend
+        // the file name to the error message, and also stash the file name
+        // itself under 'file' for richer UI display if needed.
         if (result.parseErrors.isNotEmpty) {
           for (final err in result.parseErrors) {
-            mergedParseErrors.add('[${picked.name}] $err');
+            final originalError = err['error']?.toString() ?? '';
+            final originalIndex = err['index'];
+            mergedParseErrors.add({
+              'index': originalIndex,
+              'error': '[${picked.name}] $originalError',
+              'file': picked.name,
+            });
           }
         }
 
