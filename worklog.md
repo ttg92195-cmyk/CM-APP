@@ -4303,3 +4303,53 @@ Stage Summary:
 - 67 insertions, 34 deletions (mostly comment + Theme wrapper boilerplate)
 - No new files, no new dependencies
 - Visual effect: tapping Bookmarks or Watchlist now navigates immediately with zero ripple/flash. Other Profile cards still ripple normally.
+
+---
+Task ID: Phase 4.40
+Agent: Main Agent
+Task: Bro reported the dark-mode splash screen (Phase 4.34) works fine, but there's no light-mode splash — when the app is in Light Mode, restarting the app shows no clean white splash. Bro wants a new clean/premium/innovative light-mode splash. Commit to GitHub main.
+
+Work Log:
+- Read splash_screen.dart (Phase 4.34 / 4.34.1 implementation). The widget was hardcoded to always render the cinematic dark variant — the comment at line 42-46 explicitly said "Theme is intentionally ignored — splash is always cinematic dark, like Netflix / Disney+ / Prime Video."
+- Read main.dart's _buildSplashScreen() (line 717-723). It returned `const SplashScreen()` with no theme flag.
+- Confirmed app_config.dart exposes `isDarkMode` getter (line 136: `bool get isDarkMode => _themeMode == ThemeMode.dark;`). This is the canonical source of truth for the current theme mode.
+- Designed the light variant with a "premium stationery" aesthetic — Apple Notes / Linear / Notion light-mode inspired. Bro's exact brief called for "ရိုရှင်းတယ်ပုံစံ ရတယ်ပုံစံ ဆန်းသစ်တယ်ပုံစံ" (clean, premium, innovative). A flat white rectangle would have read as "ရိုရိုဖြစ်နေလို သိပ်မလန်းတာ" (too plain, not premium).
+
+Implementation:
+
+1. SplashScreen widget — added `final bool isDark` parameter (default true to preserve original behavior). All animation layers now branch on _isDark:
+
+   - Background:
+     * Dark: radial red glow on deep black (#050505) — preserved.
+     * Light: soft warm-white radial gradient. Center is #FFFCFB (warm white), with a whisper of brand red (3% opacity breath), fading to #F5F1EE and #EDE7E2 at the edges. Paper-like depth, not a flat sheet.
+
+   - Pulse rings (3 concentric expanding circles):
+     * Dark: 1.5px thick, 45% peak opacity. Cinematic ripple.
+     * Light: 2.0px thick (thicker to compensate), 16% peak opacity. Reads as soft ink-prints on paper. Still visible against the bright background but doesn't dominate.
+
+   - Halo + icon:
+     * Dark: glowing red BoxShadow (40px blur, haloOpacity) behind a brand-red-tinted circle. Icon is brightened red #FF2A36. Preserved.
+     * Light: NO glow halo. Instead, white circle with two-layer drop shadow: tight 6px @ 6% black opacity (for definition) + ambient 18px @ 4% brand-red opacity (for warmth). "Raised paper sticker" effect. Icon is standard brand red #E50914 (the brightened #FF2A36 would look neon on white). Breathing pulse preserved but smaller (3% vs 5%) — feels more restrained.
+
+   - Brand text "KMM":
+     * Dark: white text with warm pearl shimmer (white → cream → blush → white). Preserved.
+     * Light: same shimmer, but underlying text color is deep ink #1A1A1A. The shimmer reads as "light catching ink" rather than "neon glow".
+
+   - Loading dots (3 sequential pulsing dots at bottom):
+     * Dark: 9px dots, brand red at 40-100% opacity. Focal accent.
+     * Light: 7px dots, brand red at 30-80% opacity. Subtle progress hint — not the focal point on the light variant, the logo is.
+
+2. main.dart's _buildSplashScreen() — now passes `isDark: appConfig.isDarkMode` to the SplashScreen widget. Reading appConfig.isDarkMode here (rather than inside the SplashScreen widget) keeps the SplashScreen widget pure and testable, and matches how the rest of the app reads theme state.
+
+Behavior notes:
+- The SplashScreen reads the theme ONCE at construction. Subsequent theme changes during the splash window are intentionally ignored — matches how Netflix/Disney+ handle their splash (splash shows the theme that was active at app launch, not mid-launch toggles).
+- The dark variant is 100% unchanged in behavior. Any user who keeps Dark Mode will see the exact same splash as before.
+- Both variants share identical centering math (LayoutBuilder + Positioned) so the visual alignment Bro approved in Phase 4.34.1 is preserved on both.
+
+Stage Summary:
+- Commit: 087ad8b on origin/main
+- Modified files (2):
+  * lib/app/ui/screens/splash_screen.dart (+214, -47)
+  * lib/main.dart (+10, -3)
+- No new files, no new dependencies
+- Visual effect: Light Mode users now see a clean, premium light splash on app launch — warm paper-like background, soft ink-print pulse rings, raised sticker-style logo, deep ink brand text with warm shimmer, subtle red loading dots. Dark Mode users see the unchanged cinematic dark splash.
