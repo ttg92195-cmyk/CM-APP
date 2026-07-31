@@ -4441,3 +4441,82 @@ Stage Summary:
 - No new files, no new dependencies
 - Visual effect: tapping "More" on Home (Movies or Series section) now shows the skeleton IMMEDIATELY — no flash of stale data, no 1-frame delay. The skeleton appears in the same frame the tab becomes visible.
 - Side-effect-free: bottom nav tap path was already synchronous (unchanged). Home tab path doesn't call onTabSelected (unchanged). Series "More" path gets the same fix.
+
+---
+Task ID: Phase 4.43
+Agent: Main Agent
+Task: Bro reported that in Admin Panel → All Genres dropdown → picking "Animation" only shows Animation posts that have been EDITED before, not all Animation posts. Same issue with All Years. "All Genres နိုပ်ပြီး Animation ရွေးပြီးရင် Animation Post Edit လုပ်ထားဖူးတဲ့ Animation Post တွေ့ပေါ်လာတာဖြစ်ပါတယ် All Years ရောအလားတူဖြစ်ပါတယ် စစ်ကြည့်ပါ" — investigate and fix. Commit to GitHub main.
+
+Work Log:
+- Read admin_panel_page.dart. Found the filter dropdowns at lines 947-1022 (genre + year DropdownButton + clear button).
+- All three onChanged handlers called setState() with _applyFilters() inside. _applyFilters() filtered CLIENT-SIDE from _allPosts (line 397: `final sourceList = _isSearching ? _globalSearchResults : _allPosts;`).
+- _allPosts only contains the first 20 docs (page 1, sorted by updatedAt desc) — confirmed by reading _loadInitialData() at lines 154-204.
+- Root cause confirmed: when user picks "Animation" genre, _applyFilters() iterates over the 20-doc page-1 cache and returns only the Animation posts that happen to be in those 20. Because page 1 is sorted by updatedAt desc, the visible Animation posts are almost always the ones the user recently EDITED (editing bumps updatedAt → post bubbles to top of page 1).
+- The user-facing Category page doesn't have this bug because it calls _contentService.getMoviesByGenre() / searchMoviesWithFilters() — server-side Firestore queries that scan the entire DB.
+
+Fix design — mirror the existing _isSearching pattern:
+- The admin panel already has a clean pattern for "decoupled full-DB query" mode: _isSearching + _globalSearchResults + _isSearchingLoading. Search uses searchAllPosts() which scans the whole DB, returns full results, and shows them in a flat list (no pagination footer).
+- I added the same pattern for filters: _isFiltering + _filterQueryResults + _isFilterLoading. When a genre/year filter is set, _applyServerSideFilters() runs searchMoviesWithFilters() (which already exists in firestore_content_service.dart and handles genre+year with proper server-side where() clauses).
+
+Changes in lib/app/ui/screens/admin_panel_page.dart:
+
+1. Added 3 new state fields (lines 131-133):
+   - bool _isFiltering = false
+   - bool _isFilterLoading = false
+   - List<Movie> _filterQueryResults = []
+
+2. Added _applyServerSideFilters() async method (lines 477-543):
+   - If search keyword is active: skip (search path takes priority, _applyFilters handles genre/year client-side on _globalSearchResults).
+   - If no filter set: reset _isFiltering and call _applyFilters to restore paginated _allPosts view.
+   - Otherwise: set _isFilterLoading=true, call _contentService.searchMoviesWithFilters(genre, year, limit: 500), populate _filterQueryResults, call _applyFilters.
+   - Limit is 500 — generous enough for the entire catalog of any single genre or year (admin catalog is ~1068 posts total).
+
+3. Updated _applyFilters() (lines 421-457):
+   - Source list priority: _isSearching > _isFiltering > _allPosts.
+   - The client-side genre/year filter is kept as a safety net even in _isFiltering mode (searchMoviesWithFilters already filters server-side, but the client-side check guarantees correctness if the server-side path ever drifts).
+
+4. Updated all 3 dropdown onChanged handlers (lines 1091-1153):
+   - Genre dropdown: setState updates _filterGenre, then calls _applyServerSideFilters() (NOT _applyFilters()).
+   - Year dropdown: same pattern.
+   - Clear button: setState clears both _filterGenre and _filterYear, then calls _applyServerSideFilters() (which detects no filter is set and restores paginated view).
+
+5. Updated _filterPosts (search clear path, lines 373-396):
+   - When user clears the search box, if a genre/year filter is still active, _applyServerSideFilters re-runs the server-side filter query (because while search was active, _isFiltering was false and _filterQueryResults was empty).
+
+6. Updated _performGlobalSearch (lines 400-435):
+   - Resets _isFiltering, _isFilterLoading, _filterQueryResults at the start. Prevents race condition where a filter query completes after the user starts searching, leaving _isFilterLoading=true and showing a stale loading spinner over ready search results.
+
+7. Updated _buildPostsList (lines 913-969):
+   - Mode 1 (flat list, no footer) now triggers for _isSearching OR _isFiltering.
+   - NotificationListener's early return now checks both _isSearching and _isFiltering (don't trigger paginated _loadMore while filtering).
+
+8. Updated build() loading state (line 876):
+   - Shows loading spinner if (_isSearchingLoading || _isFilterLoading).
+
+9. Updated _loadInitialData (lines 231-241):
+   - After loading fresh data, if a filter was active, re-runs _applyServerSideFilters(). This prevents stale filter results after add/edit/delete operations (e.g., user deletes a post while filtering by genre → filter results refresh to remove the deleted post).
+
+No changes to firestore_content_service.dart — the existing searchMoviesWithFilters() method (lines 1109-1287) already handles:
+- Genre-only: where('categories', arrayContains: genre) + orderBy('createdAt') — uses (categories, createdAt) composite index.
+- Year-only: where('year', isEqualTo: year) — no orderBy (would need (year, createdAt) index we don't have), sorts client-side.
+- Genre + year: server-side genre filter + client-side year filter (avoids 3-field composite index).
+- All paths fall back to no-orderBy query if composite indexes are missing.
+
+Verification:
+- Wrote scripts/phase4_43_balance_check.py — a proper Dart bracket balance checker that strips line comments, block comments, single/double-quoted strings (with escape handling), and raw strings. Reports unmatched/mismatched brackets with line numbers.
+- Ran it on admin_panel_page.dart: OK — balanced. openers={'(': 928, '{': 168, '[': 105} closers match.
+
+Considered alternatives and rejected:
+- Caching filter results in SharedPreferences: adds complexity, cache invalidation logic. The current approach (re-fetch on each filter change) is simpler and the Firestore query is fast (~500-1500ms).
+- Adding infinite-scroll pagination to the filter results: would require cursor-based pagination on searchMoviesWithFilters, which adds complexity. The 500-doc limit is more than enough for Bro's catalog.
+- Bumping getAvailableYears() limit from 100 to higher: would also affect the user-facing search screen (which calls getAvailableYears). Decided to leave as-is — Bro didn't report the year dropdown OPTIONS being limited, only the year filter RESULTS being incomplete. My server-side filter fix addresses the reported bug.
+
+Stage Summary:
+- Commit: 844fb39 on origin/main
+- Modified files (2):
+  * lib/app/ui/screens/admin_panel_page.dart (+301, -12)
+  * scripts/phase4_43_balance_check.py (new file, 95 lines)
+- No firestore_content_service.dart changes (existing searchMoviesWithFilters suffices)
+- No new dependencies
+- Visual effect: picking "Animation" from All Genres dropdown now shows ALL Animation posts in the database (not just the 5 that happened to be in page 1). Same for All Years. A loading spinner shows briefly while the server-side query runs (~500-1500ms). Clearing the filter restores the paginated _allPosts view.
+- Side-effect-free: search path unchanged (still uses _isSearching + _globalSearchResults). Pagination path unchanged (still uses _allPosts + _loadMore). The two new state fields default to false/empty so the app starts in the same state as before.
