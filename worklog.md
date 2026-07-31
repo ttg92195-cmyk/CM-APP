@@ -4399,3 +4399,45 @@ Stage Summary:
 - Modified file: lib/app/ui/screens/search_screen.dart (26 insertions, 1 deletion)
 - No new files, no new dependencies
 - Visual effect: tapping the Filters icon on a freshly-opened Search screen now opens the bottom sheet immediately. Type/Rating/Certification/Status/Sort sections are fully usable right away. Genre and Year sections show "Loading..." briefly (~500-1500ms) then populate. Bro no longer needs to "wait and tap again".
+
+---
+Task ID: Phase 4.42
+Agent: Main Agent
+Task: Bro reported that on Home, tapping the "More" button (the one before the "Movies" section title) makes the Skeleton Loading appear too slowly — "Skeleton Loading ပေါ်လာတာ မြန်ဆန်တာတောင်မဟုတ်" (skeleton doesn't appear fast enough). Investigate and fix. Commit to GitHub main.
+
+Work Log:
+- Re-read worklog to confirm Phase 4.41 (Filters icon) was already completed and pushed (commit c99a004). Phase 4.41 is NOT in scope for this task.
+- Found the Home → Movies/Series "More" navigation path:
+  * home_screen.dart line 690-705: TrendingMovieComponent's onMore callback calls widget.onNavigateToTab?.call(kMoviesTab) or kSeriesTab.
+  * home_page.dart lines 67-114: The onNavigateToTab callback in _HomePageState. It runs:
+    1. _pauseHomeBannerAutoScroll() (synchronous via GlobalKey)
+    2. setState(() => _currentIndex = index)
+    3. WidgetsBinding.instance.addPostFrameCallback((_) { ... onTabSelected() })
+- movies_page.dart onTabSelected() → _refreshData() → setState(_movies=[]) + setState(_isLoading=true) → triggers skeleton.
+- series_page.dart has the same pattern.
+
+Root cause identified:
+- The addPostFrameCallback wrapper introduced a 1-frame delay (≈16ms on 60Hz, ≈8ms on 120Hz) between the tab switch and the skeleton appearing.
+- During that 1 frame, Flutter rendered the Movies tab with the EXISTING (stale) movies data, because MoviesPage was already mounted in IndexedStack and its _isLoading was false (data was loaded during initial mount).
+- Only after that 1 frame did the post-frame callback fire, call onTabSelected(), and trigger the setState that switches the build to _buildSkeletonLoading.
+- Bro perceived this as "skeleton doesn't appear fast enough" — because there was a visible flash of stale data before the skeleton appeared.
+- Cross-checked with the OTHER tab-switch path: onDestinationSelected (bottom nav tap, lines 399-451) already calls onTabSelected() SYNCHRONOUSLY (no addPostFrameCallback). So tapping the bottom-nav Movies tab does NOT have this delay. The "More" button was the only path with the bug.
+
+Fix applied:
+- Removed the WidgetsBinding.instance.addPostFrameCallback wrapper from the onNavigateToTab callback (lines 102-113 of home_page.dart, now lines 100-126).
+- Now calls _moviesKey.currentState?.onTabSelected() / _seriesKey.currentState?.onTabSelected() synchronously, exactly like onDestinationSelected does.
+- Added a detailed comment explaining: (a) why the post-frame callback was wrong, (b) why synchronous is safe (IndexedStack keeps the pages mounted so the state is always available), (c) how this batches the two setStates into a single frame.
+- Verified Dart bracket balance: () 387/387, {} 71/71, [] 17/17 — all balanced.
+- Verified WidgetsBinding import is still needed (used by _resumeHomeBannerAutoScroll at line 213).
+
+Considered alternatives and rejected:
+- Pre-emptively clearing _movies inside the parent setState (instead of going through onTabSelected): would require MoviesPageState to expose a clearMovies() method, more invasive than just removing the wrapper. The current fix is a 1-line semantic change.
+- Adding a forceSkeleton flag to MoviesPage: same complexity issue, and the onTabSelected() API already does exactly what we want.
+- Caching the previous tab's scroll position before clearing: not relevant — IndexedStack preserves each tab's scroll state independently because the ScrollController is part of MoviesPageState (which is kept alive).
+
+Stage Summary:
+- Commit: d856a58 on origin/main
+- Modified file: lib/app/ui/home/home_page.dart (+24, -11)
+- No new files, no new dependencies
+- Visual effect: tapping "More" on Home (Movies or Series section) now shows the skeleton IMMEDIATELY — no flash of stale data, no 1-frame delay. The skeleton appears in the same frame the tab becomes visible.
+- Side-effect-free: bottom nav tap path was already synchronous (unchanged). Home tab path doesn't call onTabSelected (unchanged). Series "More" path gets the same fix.
