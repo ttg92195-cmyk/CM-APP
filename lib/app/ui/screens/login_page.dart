@@ -441,6 +441,54 @@ class _LoginPageState extends State<LoginPage>
       if (mounted) {
         setState(() => _isRegistering = false);
         if (success) {
+          // Phase 4.2 — Register the current device ATOMICALLY on signup.
+          //
+          // HISTORY: Previously only the LOGIN flow called registerDevice().
+          // A user who just registered would land on the Profile tab and
+          // see "No devices registered" because their device was never
+          // added to the logged_in_devices array. The user had to logout
+          // and login again to trigger device registration.
+          //
+          // Now we call registerDevice() right after a successful signup,
+          // mirroring the login flow (see _handleLogin around line 144).
+          // The returned DeviceLimitResult tells us whether the device
+          // was registered (allowed=true) or the limit was reached
+          // (allowed=false — rare for a brand-new account since the
+          // logged_in_devices array starts empty).
+          final user = FirebaseAuth.instance.currentUser;
+          if (user != null) {
+            try {
+              final deviceService = DeviceManagementService();
+              final deviceResult = await deviceService.registerDevice(user.uid);
+              if (!deviceResult.allowed) {
+                // Extremely unlikely for a new account (limit was 2/4
+                // and the array started empty). But if it happens,
+                // sign out and show the device-limit dialog so the
+                // user can resolve it via the dialog's "remove device"
+                // flow — same UX as the login path.
+                await appConfig.logoutUser();
+                if (mounted) {
+                  showDialog(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (ctx) => DeviceLimitDialog(
+                      limitResult: deviceResult,
+                      uid: user.uid,
+                      onDeviceRemoved: () {},
+                    ),
+                  );
+                }
+                return;
+              }
+            } catch (e) {
+              // Fail open — device-limit is a soft enforcement. The
+              // account is created and the user is logged in; we just
+              // couldn't track this device. The login flow will retry
+              // the registration on the next login.
+              debugPrint('Phase 4.2: registerDevice on signup failed (non-fatal): $e');
+            }
+          }
+
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(appConfig.translate('register_success')),

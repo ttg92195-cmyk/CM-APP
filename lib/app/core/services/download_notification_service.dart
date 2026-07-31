@@ -1,7 +1,14 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cm_movies/app/core/services/download_manager_service.dart';
+// Phase 4.17: Reuse the global navigatorKey defined in fcm_notification_service
+// so notification taps can push the Downloads screen without needing a
+// BuildContext. main.dart already wires this key into MaterialApp.
+import 'package:cm_movies/app/core/services/fcm_notification_service.dart'
+    show navigatorKey;
+import 'package:cm_movies/app/ui/screens/download_page.dart';
 
 /// Service that manages system-level notifications for download progress.
 ///
@@ -154,6 +161,7 @@ class DownloadNotificationService {
       'Downloading ${task.movieTitle}',
       '0% · ${task.quality}',
       details,
+      payload: 'downloads', // Phase 4.17: tap → Downloads screen
     );
 
     debugPrint('Notification shown: download started for ${task.movieTitle} (${task.quality})');
@@ -212,6 +220,7 @@ class DownloadNotificationService {
       'Downloading ${task.movieTitle}',
       body,
       details,
+      payload: 'downloads', // Phase 4.17: tap → Downloads screen
     );
   }
 
@@ -251,16 +260,14 @@ class DownloadNotificationService {
       'Download complete',
       '${task.movieTitle} (${task.quality})',
       details,
+      payload: 'downloads', // Phase 4.17: tap → Downloads screen
     );
 
-    // Auto-cancel the completion notification after a few seconds
-    Future.delayed(const Duration(seconds: 5), () async {
-      try {
-        await _plugin.cancel(notificationId);
-      } catch (_) {
-        // Notification may already be dismissed by user
-      }
-    });
+    // Phase 4.17: removed the auto-cancel Future.delayed — it was dismissing
+    // the completion notification after 5s, which left users almost no time
+    // to tap it. The notification now stays until the user swipes it away
+    // (autoCancel: true above handles tap-to-dismiss). Failed notifications
+    // below likewise stay until dismissed.
 
     debugPrint('Notification: download completed for ${task.movieTitle}');
   }
@@ -302,14 +309,12 @@ class DownloadNotificationService {
       'Download failed',
       '${task.movieTitle} (${task.quality}): $errorMsg',
       details,
+      payload: 'downloads', // Phase 4.17: tap → Downloads screen
     );
 
-    // Auto-cancel the failure notification after a longer delay
-    Future.delayed(const Duration(seconds: 10), () async {
-      try {
-        await _plugin.cancel(notificationId);
-      } catch (_) {}
-    });
+    // Phase 4.17: removed the auto-cancel Future.delayed — failed downloads
+    // are user-actionable (tap to retry from the Downloads screen), so the
+    // notification should stay until the user dismisses it.
 
     debugPrint('Notification: download failed for ${task.movieTitle}');
   }
@@ -380,10 +385,29 @@ class DownloadNotificationService {
     }
   }
 
-  /// Handle notification tap (currently a no-op — could navigate to
-  /// the downloads screen in the future).
+  /// Handle notification tap — navigate to the Downloads screen.
+  ///
+  /// Phase 4.17: When the user taps any download notification (start /
+  /// progress / complete / failed), the app opens (if backgrounded) and
+  /// pushes the DownloadPage on top of the current route. The payload
+  /// is the literal string 'downloads', set by all show*() methods below.
+  ///
+  /// We use push(MaterialPageRoute(...)) instead of pushNamed because
+  /// the app does not declare a '/downloads' named route in main.dart's
+  /// routes table. Direct push is also what the rest of the codebase
+  /// uses when opening the Downloads screen (home_page.dart:343,
+  /// movie_download_screen.dart:140, series_download_screen.dart:135).
   void _onNotificationTapped(NotificationResponse response) {
     debugPrint('Download notification tapped: ${response.id}');
-    // Future: Navigate to downloads screen
+    final payload = response.payload;
+    if (payload == 'downloads') {
+      final nav = navigatorKey.currentState;
+      if (nav == null) {
+        debugPrint('Phase 4.17: navigatorKey.currentState is null — '
+            'app likely not yet mounted. Tap ignored.');
+        return;
+      }
+      nav.push(MaterialPageRoute(builder: (_) => const DownloadPage()));
+    }
   }
 }

@@ -15,6 +15,11 @@ class Movie {
   final List<String> categories;
   final String? type;
   final bool isTrending;
+  // Phase 4.23 — content rating (e.g. 'PG-13', 'R', 'TV-MA') + TMDB status
+  // (e.g. 'Released', 'Returning Series', 'Ended'). Both are nullable for
+  // backward compat with docs created before Task 38 Req 2.
+  final String? certification;
+  final String? status;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -33,6 +38,8 @@ class Movie {
     this.categories = const [],
     this.type,
     this.isTrending = false,
+    this.certification,
+    this.status,
     this.createdAt,
     this.updatedAt,
   });
@@ -83,6 +90,8 @@ class Movie {
       categories: _parseStringList(map['categories']),
       type: _parseNullableString(map['type']),
       isTrending: _parseBool(map['isTrending']),
+      certification: _parseNullableString(map['certification']),
+      status: _parseNullableString(map['status']),
       createdAt: _parseDateTime(map['createdAt']),
       updatedAt: _parseDateTime(map['updatedAt']),
     );
@@ -104,6 +113,8 @@ class Movie {
       'categories': categories,
       'type': type,
       'isTrending': isTrending,
+      'certification': certification,
+      'status': status,
       'createdAt': createdAt?.toIso8601String(),
       'updatedAt': updatedAt?.toIso8601String(),
     };
@@ -135,6 +146,39 @@ class Movie {
       return '${diff.inMinutes} min ago';
     } else {
       return 'Just now';
+    }
+  }
+
+  /// Phase 4.21 — Post ကို admin ပြင်လိုက်ပြီလား (updatedAt > createdAt)။
+  /// updatedAt နဲ့ createdAt နှစ်ခုလုံး server timestamp ဖြစ်တဲ့အတွက်
+  /// ၁ စက္ကန့်ထက်ကွာတာမှ edited အဖြစ် သတ်မှတ်ပါမယ် (false positive ကာကွယ်)။
+  bool get wasEdited {
+    if (updatedAt == null) return false;
+    if (createdAt == null) return true;
+    return updatedAt!.difference(createdAt!) > const Duration(seconds: 1);
+  }
+
+  /// Phase 4.21 — "Edited 3h ago" စာသား။ edited မဖြစ်ရင် ဆိုင်ရာ display ကို
+  /// ချန်ထားဖို့ empty string ပြန်ပါတယ်။
+  String get editedAgo {
+    if (!wasEdited || updatedAt == null) return '';
+    final now = DateTime.now();
+    final diff = now.difference(updatedAt!);
+
+    if (diff.inDays > 365) {
+      final years = (diff.inDays / 365).floor();
+      return 'Edited $years year${years > 1 ? 's' : ''} ago';
+    } else if (diff.inDays > 30) {
+      final months = (diff.inDays / 30).floor();
+      return 'Edited $months month${months > 1 ? 's' : ''} ago';
+    } else if (diff.inDays > 0) {
+      return 'Edited ${diff.inDays} day${diff.inDays > 1 ? 's' : ''} ago';
+    } else if (diff.inHours > 0) {
+      return 'Edited ${diff.inHours} hour${diff.inHours > 1 ? 's' : ''} ago';
+    } else if (diff.inMinutes > 0) {
+      return 'Edited ${diff.inMinutes} min ago';
+    } else {
+      return 'Edited just now';
     }
   }
 }

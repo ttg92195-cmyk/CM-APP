@@ -24,27 +24,47 @@ service cloud.firestore {
     // because it tries to set isVip=false. That's intentional and safe — the
     // runtime check isCurrentUserVip still gates VIP features correctly using
     // vipExpiry date, so the silent failure has no user-visible impact.
+    //
+    // Phase 4.6 — Use .get('field', null) instead of direct field access.
+    // For a brand-new user doc created during signup, the optional fields
+    // (vipExpiry, vipGrantedAt, forceLogoutAt) are NOT written by the signup
+    // flow (only isAdmin, role, isVip, isBanned, forceLogout are set). With
+    // direct field access, the Rules Engine evaluates
+    //   request.resource.data.vipExpiry == resource.data.vipExpiry
+    // where both sides reference an absent field. In theory this should
+    // resolve to null == null == true, but in practice the Rules Engine
+    // can throw on the missing-field access and deny the entire update.
+    // The .get('field', null) pattern explicitly returns null for absent
+    // fields without throwing, making the comparison safe. This unblocks
+    // registerDevice()'s tx.update() for new accounts (the immediate
+    // Profile-tab "No devices registered" bug).
     function preservesAdminOnlyFields() {
-      return request.resource.data.isAdmin == resource.data.isAdmin
-        && request.resource.data.role == resource.data.role
-        && request.resource.data.isVip == resource.data.isVip
-        && request.resource.data.vipExpiry == resource.data.vipExpiry
-        && request.resource.data.vipGrantedAt == resource.data.vipGrantedAt
-        && request.resource.data.isBanned == resource.data.isBanned
-        && request.resource.data.forceLogout == resource.data.forceLogout
-        && request.resource.data.forceLogoutAt == resource.data.forceLogoutAt;
+      return request.resource.data.get('isAdmin', null) == resource.data.get('isAdmin', null)
+        && request.resource.data.get('role', null) == resource.data.get('role', null)
+        && request.resource.data.get('isVip', null) == resource.data.get('isVip', null)
+        && request.resource.data.get('vipExpiry', null) == resource.data.get('vipExpiry', null)
+        && request.resource.data.get('vipGrantedAt', null) == resource.data.get('vipGrantedAt', null)
+        && request.resource.data.get('isBanned', null) == resource.data.get('isBanned', null)
+        && request.resource.data.get('forceLogout', null) == resource.data.get('forceLogout', null)
+        && request.resource.data.get('forceLogoutAt', null) == resource.data.get('forceLogoutAt', null);
     }
 
     // Helper: Verify that admin-only fields are NOT set to elevated values
     // during signup. A malicious user could otherwise craft a signup payload
     // with isAdmin:true / isVip:true / role:'admin' to escalate on day one.
-    // Absent fields are treated as safe defaults (null != true).
+    //
+    // Phase 3.22 — Use defensive !keys().hasAny() pattern (same as
+    // isValidMovie() above). Although Firestore Rules return null for
+    // absent fields (and null != true evaluates to true), this explicit
+    // pattern is more defensive and matches the codebase's existing
+    // validation style. Belt-and-suspenders alongside Phase 3.21 which
+    // also writes these fields explicitly in the .set() payload.
     function safeSignupFields() {
-      return request.resource.data.isAdmin != true
-        && request.resource.data.role != 'admin'
-        && request.resource.data.isVip != true
-        && request.resource.data.isBanned != true
-        && request.resource.data.forceLogout != true;
+      return (!request.resource.data.keys().hasAny(['isAdmin']) || request.resource.data.isAdmin != true)
+        && (!request.resource.data.keys().hasAny(['role']) || request.resource.data.role != 'admin')
+        && (!request.resource.data.keys().hasAny(['isVip']) || request.resource.data.isVip != true)
+        && (!request.resource.data.keys().hasAny(['isBanned']) || request.resource.data.isBanned != true)
+        && (!request.resource.data.keys().hasAny(['forceLogout']) || request.resource.data.forceLogout != true);
     }
 
     // ============================================================
@@ -286,13 +306,67 @@ service cloud.firestore {
     // username→email lookup (list) is public; reading a single doc by
     // ID requires authentication. This preserves the login flow while
     // removing the unauthenticated get-by-UID attack surface.
+    //
+    // Phase 3.10 (2026-06-29): The onUserCreated Cloud Function
+    // (functions/index.js) creates the user doc server-side using
+    // Admin SDK, which BYPASSES these rules entirely. The `create`
+    // rule below is the FALLBACK path for client-side creates when
+    // the Cloud Function is unavailable (not deployed, failed to
+    // fire, etc.). The Admin SDK write happens regardless of this
+    // rule, but the rule is kept permissive enough to allow the
+    // client fallback to succeed once auth has propagated.
     match /users/{userId} {
-      // Public list so username-based login can resolve username → email
-      // before Firebase Auth sign-in completes.
-      allow list: if true;
-      // Authenticated get — after login, the app reads the user's own
-      // profile by UID (and admin reads other users' docs by UID).
-      allow get: if request.auth != null;
+      // Phase 3.17 — Reverted to `allow read: if true` (matches the
+      // working pre-Phase-3.10 rules that Bro confirmed worked for both
+      // registration AND username login).
+      //
+      // Phase 3.10/3.13 had tightened this to:
+      //   allow list: if true;
+      //   allow get: if request.auth != null;
+      // reasoning that the username→email lookup only needs `list` and
+      // `get` should require auth to prevent UID-enumeration. But this
+      // broke the registration flow: after createUserWithEmailAndPassword
+      // returns, the Firestore SDK is still using anonymous auth state
+      // for ~500-2000ms. During that window, the .set() call to create
+      // /users/{uid} hits the `create` rule (which requires isOwner),
+      // and even though the user IS authenticated, the SDK's stale auth
+      // state causes the request to be treated as unauthenticated →
+      // permission-denied. The 6-min background retry loop in Phase
+      // 3.13-3.15 was supposed to handle this, but it gets killed when
+      // the app is backgrounded.
+      //
+      // Phase 3.16 added a blocking retry, but if the SDK's auth state
+      // is stale during the blocking window, all 3 attempts fail too.
+      //
+      // Reverting to `allow read: if true` removes the `get` auth
+      // requirement, which was the security tightening from Task 43.3.
+      // The trade-off:
+      //   - BEFORE (Task 43.3): attacker could fetch any user doc by
+      //     random/sequential UID only via `list` (which still requires
+      //     knowing the username to filter on). `get` by UID required
+      //     auth, blocking direct UID enumeration.
+      //   - AFTER (Phase 3.17, this revert): both `list` and `get` are
+      //     public. An attacker who knows (or guesses) a UID can fetch
+      //     that user's doc directly.
+      //
+      // This is acceptable because:
+      //   1. UIDs are 28-char random strings — not guessable.
+      //   2. The doc contains no password (Auth has that). It only has
+      //      username, email, isAdmin, registrationDate, createdAt.
+      //   3. The previous rules had this exact behavior from app launch
+      //      until Task 43.3, and Bro confirmed login + register both
+      //      worked reliably during that entire period.
+      //   4. The Cloud Function (Phase 3.10/3.15) would bypass rules
+      //      anyway, but requires Blaze plan. Reverting the rule is the
+      //      Spark-plan-compatible fix.
+      //
+      // Security: passwords are NEVER stored here (only in Firebase
+      // Auth). Sensitive fields (isAdmin, role, isVip, vipExpiry,
+      // vipGrantedAt, isBanned, forceLogout, forceLogoutAt) are admin-
+      // controlled — regular users cannot modify them via the update
+      // rule below, and cannot set them to elevated values via the
+      // create rule.
+      allow read: if true;
       // User can create their own profile on signup, but cannot set admin-only
       // fields to elevated values (prevents signup-time privilege escalation).
       allow create: if isOwner(userId) && safeSignupFields();

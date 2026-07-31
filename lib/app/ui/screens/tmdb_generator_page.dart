@@ -225,109 +225,114 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
   /// Bro reported Firebase usage rising from 4.4% → 19% in one week; this
   /// page was a major contributor since it's opened often during imports.
   ///
-  /// NOW: one query, one pass. _importedTmdbIds + all dashboard stats are
-  /// populated in the same setState. Callers that previously invoked
-  /// `_loadImportedTmdbIds(); _loadDashboardStats();` in pairs now call
-  /// `_loadMoviesSnapshot();` once.
+  /// Phase 4.10 (one-pass): combined the two queries into one
+  /// `movies.limit(5000).get()` to halve reads.
+  ///
+  /// =========================================================================
+  /// PHASE 4.14: AGGREGATION-BASED STATS (no more limit(5000).get())
+  /// =========================================================================
+  /// The Phase 4.10 fix still read up to 5,000 docs on every page open.
+  /// Opening the page 10 times burned the entire Spark plan daily quota
+  /// (50,000 reads/day). Bro forwarded another AI's analysis identifying
+  /// two hot spots:
+  ///
+  ///   1. `_loadMoviesSnapshot()` reads 5,000 docs every page open.
+  ///   2. `_importSelected()` calls `verifyAdmin()` per-movie inside the
+  ///      import loop (one read per movie — 50 movies = 50 redundant reads).
+  ///
+  /// FIX (this method): replace `limit(5000).get()` with 6 parallel
+  /// `count().get()` aggregation queries via `getDashboardStats()`. Each
+  /// aggregation costs 1 read regardless of collection size. Total: ~6
+  /// reads per page open (vs 5,000) — an 833x cost reduction.
+  ///
+  /// The `_importedTmdbIds` set is NO LONGER pre-populated here. Instead,
+  /// it's lazily refreshed per-search via `_refreshImportedTmdbIds()`,
+  /// which uses `whereIn` to check ONLY the IDs currently shown (typically
+  /// 20 IDs → 1 read per search). The import loop already had its own
+  /// `findByTmdbId()` per-item safety check (line ~539), so removing the
+  /// pre-populated set doesn't break import correctness — at worst, a few
+  /// already-imported items may appear in search results and get silently
+  /// skipped at import time.
+  ///
+  /// NOTE: Some aggregation queries use 2-3 where clauses and require
+  /// composite indexes. If a query fails (e.g. missing index), the
+  /// corresponding stat is returned as 0 and a debugPrint is emitted
+  /// with Firestore's error message (which includes a URL to create the
+  /// index in Firebase Console). The page gracefully shows 0 until Bro
+  /// creates the index. See FirestoreContentService._safeCount.
   ///
   /// Public aliases `_loadImportedTmdbIds()` and `_loadDashboardStats()`
   /// are kept as thin wrappers so external references (e.g., the refresh
-  /// button on line 1131) continue to work without code churn.
+  /// button on the dashboard) continue to work without code churn.
   /// =========================================================================
   Future<void> _loadMoviesSnapshot() async {
     if (mounted) setState(() => _isStatsLoading = true);
     try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('movies')
-          .limit(5000)
-          .get();
-
-      // Local accumulators — populated in a single pass.
-      final importedTmdbIds = <int>{};
-      int totalMovies = 0;
-      int totalSeries = 0;
-      int moviesNeedSync = 0;
-      int seriesNeedSync = 0;
-      int ongoingSeries = 0;
-      int endedSeries = 0;
-
-      for (final doc in snapshot.docs) {
-        final data = doc.data();
-        final rawTmdbId = data['tmdbId'];
-
-        // --- collect tmdbId for _importedTmdbIds ---
-        if (rawTmdbId != null) {
-          final tmdbId = rawTmdbId is int
-              ? rawTmdbId
-              : int.tryParse(rawTmdbId.toString());
-          if (tmdbId != null && tmdbId > 0) {
-            importedTmdbIds.add(tmdbId);
-          }
-        }
-
-        // --- compute dashboard stats ---
-        final type = data['type']?.toString();
-        if (type == 'movie') {
-          totalMovies++;
-          // Need sync: has tmdbId but no lastSyncDate
-          if (rawTmdbId != null && rawTmdbId is int && rawTmdbId > 0) {
-            if (!data.containsKey('lastSyncDate')) {
-              moviesNeedSync++;
-            }
-          }
-        } else if (type == 'series') {
-          totalSeries++;
-          // Need sync: has tmdbId but no lastSyncDate
-          if (rawTmdbId != null && rawTmdbId is int && rawTmdbId > 0) {
-            if (!data.containsKey('lastSyncDate')) {
-              seriesNeedSync++;
-            }
-          }
-          // Check series status
-          final status = data['status']?.toString() ?? '';
-          if (status == 'Returning Series') {
-            ongoingSeries++;
-          } else if (status == 'Ended' || status == 'Canceled') {
-            endedSeries++;
-          }
-        }
-      }
+      // 6 parallel count() aggregations — total ~6 reads (vs 5,000 before).
+      final stats = await _contentService.getDashboardStats();
 
       if (mounted) {
         setState(() {
-          _importedTmdbIds
-            ..clear()
-            ..addAll(importedTmdbIds);
-          _totalMovies = totalMovies;
-          _totalSeries = totalSeries;
-          _moviesNeedSync = moviesNeedSync;
-          _seriesNeedSync = seriesNeedSync;
-          _ongoingSeries = ongoingSeries;
-          _endedSeries = endedSeries;
-          _syncRemainingMovies = moviesNeedSync;
-          _syncRemainingSeries = seriesNeedSync;
+          _totalMovies = stats['totalMovies'] ?? 0;
+          _totalSeries = stats['totalSeries'] ?? 0;
+          _moviesNeedSync = stats['moviesNeedSync'] ?? 0;
+          _seriesNeedSync = stats['seriesNeedSync'] ?? 0;
+          _ongoingSeries = stats['ongoingSeries'] ?? 0;
+          _endedSeries = stats['endedSeries'] ?? 0;
+          _syncRemainingMovies = _moviesNeedSync;
+          _syncRemainingSeries = _seriesNeedSync;
           _isStatsLoading = false;
         });
-        debugPrint('Movies snapshot loaded: '
-            '${_importedTmdbIds.length} tmdbIds, '
-            '$totalMovies movies, $totalSeries series, '
-            '$moviesNeedSync movies need sync, $seriesNeedSync series need sync');
+        debugPrint('Dashboard stats loaded: '
+            '${stats['totalMovies']} movies, ${stats['totalSeries']} series, '
+            '${stats['moviesNeedSync']} movies need sync, '
+            '${stats['seriesNeedSync']} series need sync, '
+            '${stats['ongoingSeries']} ongoing, ${stats['endedSeries']} ended');
       }
     } catch (e) {
-      debugPrint('Error loading movies snapshot: $e');
+      debugPrint('Error loading dashboard stats: $e');
       if (mounted) {
         setState(() => _isStatsLoading = false);
       }
     }
   }
 
+  /// Phase 4.14: Lazy-fetch imported status for the given tmdbIds.
+  ///
+  /// Uses `whereIn` (chunked at 30 per Firestore hard limit) to check ONLY
+  /// the given IDs against the `movies` collection, instead of pre-fetching
+  /// all 5,000 imported IDs on page load. Merges results into the existing
+  /// `_importedTmdbIds` set (does not clear it — old IDs may still be
+  /// relevant for previous search selections).
+  ///
+  /// Reads: ceil(tmdbIds.length / 30). For 20 search results: 1 read.
+  /// Called from `_performSearch` and `_loadMorePages` after each TMDB
+  /// page returns, before the existing `!_importedTmdbIds.contains(id)`
+  /// filter runs.
+  Future<void> _refreshImportedTmdbIds(List<int> tmdbIdsToCheck) async {
+    if (tmdbIdsToCheck.isEmpty) return;
+    try {
+      final importedIds =
+          await _contentService.getImportedTmdbIds(tmdbIdsToCheck);
+      if (mounted) {
+        setState(() {
+          _importedTmdbIds.addAll(importedIds);
+        });
+      }
+    } catch (e) {
+      debugPrint('Error refreshing imported tmdbIds: $e');
+    }
+  }
+
   /// Thin wrapper kept for backward compatibility with existing call sites
-  /// (e.g. the refresh button on the dashboard). Always refreshes BOTH the
-  /// imported tmdbId set AND the dashboard stats in a single Firestore query.
+  /// (e.g. the refresh button on the dashboard). Phase 4.14: only refreshes
+  /// dashboard stats via aggregation (~6 reads). The `_importedTmdbIds` set
+  /// is no longer touched here — it's lazily refreshed per-search via
+  /// `_refreshImportedTmdbIds()`.
   Future<void> _loadImportedTmdbIds() => _loadMoviesSnapshot();
 
-  /// Thin wrapper kept for backward compatibility. Always refreshes BOTH
-  /// the imported tmdbId set AND the dashboard stats in a single query.
+  /// Thin wrapper kept for backward compatibility. Always refreshes
+  /// dashboard stats via aggregation (~6 reads).
   Future<void> _loadDashboardStats() => _loadMoviesSnapshot();
 
   // ==================== SEARCH & IMPORT ====================
@@ -378,6 +383,16 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
       }
 
       final rawResults = List<Map<String, dynamic>>.from(response['results'] ?? []);
+
+      // Phase 4.14: Lazy-fetch imported status for ONLY these search-result
+      // IDs (typically 20 → 1 Firestore read via `whereIn`), instead of
+      // pre-fetching all 5,000 imported IDs on page open. Merges into
+      // `_importedTmdbIds` so the filter below works correctly.
+      final rawTmdbIds = rawResults
+          .map((e) => e['id'])
+          .whereType<int>()
+          .toList();
+      await _refreshImportedTmdbIds(rawTmdbIds);
 
       final results = rawResults.where((item) {
         final id = item['id'];
@@ -444,6 +459,14 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
         }
 
         final rawMoreResults = List<Map<String, dynamic>>.from(response['results'] ?? []);
+
+        // Phase 4.14: Lazy-fetch imported status for this page's IDs too.
+        final moreRawTmdbIds = rawMoreResults
+            .map((e) => e['id'])
+            .whereType<int>()
+            .toList();
+        await _refreshImportedTmdbIds(moreRawTmdbIds);
+
         final moreResults = rawMoreResults.where((item) {
           final id = item['id'];
           return id == null || !_importedTmdbIds.contains(id);
@@ -513,6 +536,27 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
 
     if (confirmed != true) return;
 
+    // =========================================================================
+    // Phase 4.14: Verify admin ONCE before the loop, then pass
+    // `skipAdminCheck: true` to every `addMovie()` call inside the loop.
+    // BEFORE this fix, each `addMovie()` invocation triggered
+    // `_requireAdmin()` → `verifyAdmin()` → user-doc read. Importing 50
+    // movies wasted 50 redundant reads. Now: 1 read for the whole batch.
+    // =========================================================================
+    try {
+      await _contentService.verifyAdmin();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Admin verification failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
     setState(() {
       _isImporting = true;
       _importProgress = 0;
@@ -570,7 +614,8 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
 
         debugPrint('IMPORT: tmdbId=$tmdbId title=${firestoreData['title']} duration=${firestoreData['duration']}');
 
-        await _contentService.addMovie(firestoreData);
+        // Phase 4.14: skipAdminCheck:true — admin already verified above.
+        await _contentService.addMovie(firestoreData, skipAdminCheck: true);
 
         if (mounted) {
           setState(() {
@@ -612,6 +657,165 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
 
   // ==================== SYNC OPERATIONS ====================
 
+  // =========================================================================
+  // PHASE 4.15: SYNC READS OPTIMIZATION
+  // =========================================================================
+  // BEFORE Phase 4.15, `_doSyncMovies()` and `_doSyncSeries()` each did
+  //   `movies.where('type', isEqualTo: 'movie').limit(5000).get()`
+  // to read up to 5,000 docs, then client-side filter `tmdbId > 0`, sort
+  // by `lastSyncDate` (nulls first), and take 20. So clicking "Sync
+  // Movies" once burned 5,000 Firestore reads; "Sync All" burned 10,000.
+  //
+  // FIX: Replace the 5,000-doc scan with two targeted queries:
+  //   Phase A — never-synced docs (lastSyncDate isNull), ordered by
+  //             tmdbId, limit=batchSize. Highest priority.
+  //   Phase B — oldest-synced docs (lastSyncDate NOT null), ordered by
+  //             lastSyncDate asc, limit=(batchSize - phaseA.length).
+  //             Fills the remainder so the batch is always full.
+  //
+  // Both queries require the SAME composite index:
+  //   (type ASC, tmdbId ASC, lastSyncDate ASC)
+  // If that index is missing, Firestore throws and we fall back to the
+  // old limit(5000).get() approach with a debugPrint telling Bro to
+  // create the index. Stats gracefully continue to work via fallback.
+  //
+  // Total reads per sync click (best case, index exists):
+  //   Phase A: 20 reads
+  //   Phase B: 0 (if Phase A returned 20) or up to 20
+  //   Aggregation count for totalRemaining UI: 1 read
+  //   Total: ~21 reads (vs 5,000) — 238x cheaper.
+  //
+  // Total reads per sync click (worst case, fallback):
+  //   5,000 reads (same as before, no regression).
+  //
+  // Behavior preserved: "never-synced first, then oldest-synced" — same
+  // priority as the old code's `sort by lastSyncDate asc` (nulls first).
+  // =========================================================================
+
+  /// Phase 4.15: Fetch up to [_syncBatchSize] docs that need sync,
+  /// ALONG WITH the total count of syncable docs (for the UI counter).
+  ///
+  /// Returns a record `({docs, totalCount})`:
+  ///   - `docs` — up to [_syncBatchSize] docs to sync this batch.
+  ///   - `totalCount` — total count of syncable docs (type + tmdbId > 0),
+  ///     used for the `_syncRemainingMovies` / `_syncRemainingSeries` UI counter.
+  ///
+  /// Strategy (see class-level Phase 4.15 comment):
+  ///   1. Phase A — never-synced docs (`lastSyncDate` isNull), limit=batchSize.
+  ///   2. Phase B — if Phase A returned < batchSize, fill remainder with
+  ///      oldest-synced docs (orderBy lastSyncDate asc).
+  ///   3. Count — via aggregation (1 read).
+  ///
+  /// Falls back to old `limit(5000).get()` approach if composite index
+  /// is missing. The fallback reads ONE snapshot and uses it for BOTH
+  /// the docs list AND the total count — so the fallback costs the same
+  /// as before Phase 4.15 (5,000 reads), NOT 2x.
+  ///
+  /// [type] — `'movie'` or `'series'`. Used in the `type` where-clause.
+  Future<({
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+    int totalCount,
+  })> _getDocsToSyncWithCount({
+    required String type,
+  }) async {
+    // Optimized path: Phase A + Phase B + aggregation count.
+    // Required composite indexes:
+    //   - (type ASC, tmdbId ASC, lastSyncDate ASC) for Phase A + B
+    //   - (type ASC, tmdbId ASC) for count aggregation
+    //   (In practice, the first index often covers the second via prefix
+    //   matching, but Firestore may require both explicitly.)
+    try {
+      // Phase A: never-synced docs (lastSyncDate isNull).
+      final phaseA = await FirebaseFirestore.instance
+          .collection('movies')
+          .where('type', isEqualTo: type)
+          .where('tmdbId', isGreaterThan: 0)
+          .where('lastSyncDate', isNull: true)
+          .orderBy('tmdbId')
+          .limit(_syncBatchSize)
+          .get();
+
+      final List<QueryDocumentSnapshot<Map<String, dynamic>>> docs;
+      if (phaseA.docs.length >= _syncBatchSize) {
+        docs = phaseA.docs;
+      } else {
+        // Phase B: oldest-synced docs (orderBy lastSyncDate asc).
+        final remaining = _syncBatchSize - phaseA.docs.length;
+        final phaseB = await FirebaseFirestore.instance
+            .collection('movies')
+            .where('type', isEqualTo: type)
+            .where('tmdbId', isGreaterThan: 0)
+            .orderBy('tmdbId')
+            .orderBy('lastSyncDate')
+            .limit(remaining)
+            .get();
+        docs = [...phaseA.docs, ...phaseB.docs];
+      }
+
+      // Count via aggregation (1 read). Separate try/catch so a missing
+      // (type, tmdbId) index doesn't tank the docs fetch — we fall
+      // through to the outer catch's limit(5000) fallback only if the
+      // DOCS query itself fails.
+      int totalCount;
+      try {
+        final countSnap = await FirebaseFirestore.instance
+            .collection('movies')
+            .where('type', isEqualTo: type)
+            .where('tmdbId', isGreaterThan: 0)
+            .count()
+            .get();
+        totalCount = countSnap.count ?? 0;
+      } catch (eCount) {
+        // Count aggregation failed (likely missing (type, tmdbId) index).
+        // We already have the optimized docs — just compute a lower-bound
+        // count from what we have. Not perfectly accurate, but avoids
+        // burning 5,000 extra reads on a fallback. The dashboard refresh
+        // at end of sync will eventually get the accurate count via
+        // _loadMoviesSnapshot's aggregation queries.
+        debugPrint('Sync ($type): count aggregation failed (likely missing '
+            'composite index (type, tmdbId)). Using lower-bound count from '
+            'fetched docs. Create the index for accurate count. Error: $eCount');
+        // Lower bound: at least as many as we fetched (Phase A + Phase B).
+        // Could be much higher in reality, but this avoids the 2x regression.
+        totalCount = docs.length;
+      }
+
+      return (docs: docs, totalCount: totalCount);
+    } catch (e) {
+      // Fallback: composite index for docs query is missing.
+      // Use the old limit(5000).get() approach. Read ONE snapshot and
+      // use it for BOTH docs AND count — so this fallback costs the
+      // same as before Phase 4.15 (5,000 reads), NOT 2x.
+      debugPrint('Sync ($type): optimized query failed (likely missing '
+          'composite index (type, tmdbId, lastSyncDate)). Falling back to '
+          'limit(5000).get() — please create the index in Firebase Console '
+          'to enable optimization. Error: $e');
+
+      final snapshot = await FirebaseFirestore.instance
+          .collection('movies')
+          .where('type', isEqualTo: type)
+          .limit(5000)
+          .get();
+
+      final docs = snapshot.docs.where((doc) {
+        final tmdbId = doc.data()['tmdbId'] as int?;
+        return tmdbId != null && tmdbId > 0;
+      }).toList();
+
+      docs.sort((a, b) {
+        final aSync = a.data()['lastSyncDate'] as Timestamp?;
+        final bSync = b.data()['lastSyncDate'] as Timestamp?;
+        if (aSync == null && bSync == null) return 0;
+        if (aSync == null) return -1;
+        if (bSync == null) return 1;
+        return aSync.compareTo(bSync);
+      });
+
+      // Reuse the same snapshot for the count — no extra reads.
+      return (docs: docs, totalCount: docs.length);
+    }
+  }
+
   /// Public: Sync Movies with confirmation dialog
   Future<void> _syncMovies() async {
     final confirmed = await showDialog<bool>(
@@ -644,28 +848,14 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
   /// Internal: Execute movie sync without confirmation dialog
   Future<void> _doSyncMovies() async {
     try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('movies')
-          .where('type', isEqualTo: 'movie')
-          .limit(5000)
-          .get();
-
-      final docs = snapshot.docs.where((doc) {
-        final tmdbId = doc.data()['tmdbId'] as int?;
-        return tmdbId != null && tmdbId > 0;
-      }).toList();
-
-      docs.sort((a, b) {
-        final aSync = a.data()['lastSyncDate'] as Timestamp?;
-        final bSync = b.data()['lastSyncDate'] as Timestamp?;
-        if (aSync == null && bSync == null) return 0;
-        if (aSync == null) return -1;
-        if (bSync == null) return 1;
-        return aSync.compareTo(bSync);
-      });
-
+      // Phase 4.15: replaced `limit(5000).get()` with targeted queries
+      // via _getDocsToSyncWithCount. Reads ~21 docs (vs 5,000) per sync
+      // click when composite index (type, tmdbId, lastSyncDate) exists.
+      // Falls back to old behavior if index missing. See helper doc.
+      final result = await _getDocsToSyncWithCount(type: 'movie');
+      final docs = result.docs;
       final batchDocs = docs.take(_syncBatchSize).toList();
-      final totalRemaining = docs.length;
+      final totalRemaining = result.totalCount;
 
       if (batchDocs.isEmpty) {
         if (mounted) {
@@ -844,28 +1034,14 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
   /// Internal: Execute series sync without confirmation dialog
   Future<void> _doSyncSeries() async {
     try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('movies')
-          .where('type', isEqualTo: 'series')
-          .limit(5000)
-          .get();
-
-      final docs = snapshot.docs.where((doc) {
-        final tmdbId = doc.data()['tmdbId'] as int?;
-        return tmdbId != null && tmdbId > 0;
-      }).toList();
-
-      docs.sort((a, b) {
-        final aSync = a.data()['lastSyncDate'] as Timestamp?;
-        final bSync = b.data()['lastSyncDate'] as Timestamp?;
-        if (aSync == null && bSync == null) return 0;
-        if (aSync == null) return -1;
-        if (bSync == null) return 1;
-        return aSync.compareTo(bSync);
-      });
-
+      // Phase 4.15: replaced `limit(5000).get()` with targeted queries
+      // via _getDocsToSyncWithCount. Reads ~21 docs (vs 5,000) per sync
+      // click when composite index (type, tmdbId, lastSyncDate) exists.
+      // Falls back to old behavior if index missing. See helper doc.
+      final result = await _getDocsToSyncWithCount(type: 'series');
+      final docs = result.docs;
       final batchDocs = docs.take(_syncBatchSize).toList();
-      final totalRemaining = docs.length;
+      final totalRemaining = result.totalCount;
 
       if (batchDocs.isEmpty) {
         if (mounted) {

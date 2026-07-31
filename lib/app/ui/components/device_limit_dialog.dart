@@ -190,12 +190,16 @@ class _DeviceLimitDialogState extends State<DeviceLimitDialog> {
                                   child: CircularProgressIndicator(strokeWidth: 2),
                                 )
                               : IconButton(
-                                  icon: const Icon(
+                                  icon: Icon(
                                     Icons.delete_outline,
-                                    color: Color(0xFFE50914),
+                                    // Disable ဖြစ်နေချိန်မှာ grey ပြောင်းပြ
+                                    color: _isRemoving ? Colors.grey : const Color(0xFFE50914),
                                     size: 20,
                                   ),
-                                  onPressed: () => _removeDevice(device.deviceId),
+                                  // ဖုန်းတစ်လုံး ဖျက်နေချိန် ကျန်ခလုတ်များကို နှိပ်၍မရအောင် disable လုပ်ခြင်း
+                                  // (Concurrency UI Bug ကာကွယ်ရန် - မဟုတ်ရင် parallel Firestore
+                                  // transactions + spinner glitch ဖြစ်သွားမယ်)
+                                  onPressed: _isRemoving ? null : () => _removeDevice(device.deviceId),
                                   padding: EdgeInsets.zero,
                                   constraints: const BoxConstraints(
                                     minWidth: 32,

@@ -26,33 +26,60 @@ class AgeRatingGate {
     );
 
     if (result == true) {
-      // Store verification in secure storage (encrypted)
-      await _storage.write(
-        key: _ageVerifiedKey,
-        value: DateTime.now().toIso8601String(),
-      );
+      // Store verification in secure storage (encrypted).
+      // Phase 4.18: wrap in try-catch — Android Keystore can throw
+      // PlatformException on certain devices (notably older OS versions
+      // and after app backup/restore). Without this guard, a single
+      // failing write would crash the app right after the user confirmed
+      // they were 18+, which is a particularly bad UX.
+      try {
+        await _storage.write(
+          key: _ageVerifiedKey,
+          value: DateTime.now().toIso8601String(),
+        );
+      } catch (e) {
+        debugPrint('AgeRatingGate: failed to write verification token '
+            '(non-fatal — user will be re-prompted next time): $e');
+      }
     }
 
     return result ?? false;
   }
 
-  /// Check if already verified this session
+  /// Check if already verified this session.
+  ///
+  /// Phase 4.18: the entire body is now wrapped in try-catch. Previously
+  /// only DateTime.parse(value) was guarded, leaving _storage.read()
+  /// exposed — on devices where Android Keystore fails (older OS,
+  // backup/restore corruption), _storage.read() throws PlatformException
+  // and the unhandled exception would crash the app at the very moment
+  // the user tried to open an adult-rated movie. Now we return false on
+  // any error, which gracefully forces re-verification.
   static Future<bool> isVerifiedThisSession() async {
-    final value = await _storage.read(key: _ageVerifiedKey);
-    if (value == null) return false;
-    // Check if verification was done in current app session (within last 24 hours)
     try {
+      final value = await _storage.read(key: _ageVerifiedKey);
+      if (value == null) return false;
+      // Check if verification was done in current app session (within last 24 hours)
       final verifiedAt = DateTime.parse(value);
       final now = DateTime.now();
       return now.difference(verifiedAt).inHours < 24;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('AgeRatingGate: isVerifiedThisSession failed (non-fatal — '
+          'treating as not verified): $e');
       return false;
     }
   }
 
-  /// Clear age verification (on logout)
+  /// Clear age verification (on logout).
+  /// Phase 4.18: wrapped in try-catch for the same Keystore-crash reason
+  /// as the other methods. A failed delete should NOT block logout.
   static Future<void> clearVerification() async {
-    await _storage.delete(key: _ageVerifiedKey);
+    try {
+      await _storage.delete(key: _ageVerifiedKey);
+    } catch (e) {
+      debugPrint('AgeRatingGate: failed to delete verification token '
+          '(non-fatal — stale token will be ignored on next read): $e');
+    }
   }
 
   /// Check if movie is adult content and show gate if needed
@@ -172,6 +199,25 @@ class _AgeGateDialogState extends State<_AgeGateDialog>
                   ),
                   textAlign: TextAlign.center,
                 ),
+                // Phase 4.18: show the movie title so the user knows which
+                // title they are confirming 18+ for. Previously the
+                // movieTitle parameter was passed all the way down from
+                // checkAndShowGate() but never rendered — pure dead weight.
+                if (widget.movieTitle != null &&
+                    widget.movieTitle!.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    widget.movieTitle!,
+                    style: TextStyle(
+                      color: isDark ? Colors.white : Colors.black87,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
                 const SizedBox(height: 24),
 
                 // 18+ badge

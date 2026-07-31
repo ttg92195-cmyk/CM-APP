@@ -21,6 +21,8 @@ import 'package:cm_movies/app/core/services/download_manager_service.dart';
 import 'package:cm_movies/app/core/services/fcm_notification_service.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
 import 'package:cm_movies/app/ui/screens/login_page.dart';
+import 'package:cm_movies/app/ui/screens/splash_screen.dart';
+import 'package:cm_movies/app/ui/components/premium_snackbar.dart';
 import 'firebase_options.dart';
 // Phase 2.5: Crashlytics — crash + non-fatal error reporting.
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
@@ -127,12 +129,23 @@ void main() async {
           .setCustomKey('app_version', const String.fromEnvironment(
               'APP_VERSION', defaultValue: 'unknown'));
 
-      // Initialize OneSignal push notifications (free, no Cloud Functions needed)
-      try {
-        await FcmNotificationService().initialize();
-      } catch (e) {
-        debugPrint('OneSignal initialization error: $e');
-      }
+      // Initialize OneSignal push notifications (free, no Cloud Functions needed).
+      //
+      // CRITICAL FIX (Phase 4.30, 2026-07-26):
+      // Previously this used `await FcmNotificationService().initialize();`
+      // BEFORE runApp(). On Oppo A16 (ColorOS 11) and other Chinese OEM
+      // Android variants, OneSignal.Notifications.requestPermission(true)
+      // hangs indefinitely when notification permission is DENIED at the
+      // system level — ColorOS's custom permission UI does not respond the
+      // way stock Android 13+ does. Because this `await` sat before
+      // runApp(), the entire app startup was blocked → user saw a permanent
+      // WHITE SCREEN until they manually re-enabled notifications.
+      //
+      // Fix: Fire the OneSignal init as a non-blocking future. runApp()
+      // proceeds immediately and the splash screen renders normally even
+      // if OneSignal hangs. The FCM service itself also has an internal
+      // timeout on requestPermission() as a second safety net.
+      unawaited(_initNotificationsSafely());
     } catch (e) {
       debugPrint('Firebase initialization error: $e');
       // Firebase failed to init — record the error so Bro sees it in the
@@ -249,6 +262,35 @@ void main() async {
         .recordError(error, stackTrace, fatal: true);
     // Don't rethrow — keep the app alive
   });
+}
+
+/// Phase 4.30 — Initialize OneSignal/Firebase Messaging in the background
+/// AFTER runApp() has been called. This is intentionally fire-and-forget:
+/// the app's UI must never be blocked by notification permission flows.
+///
+/// Why this exists: On Oppo A16 / ColorOS 11 (and several other Chinese
+/// OEM Android variants), OneSignal's `requestPermission(true)` can hang
+/// indefinitely when notifications are disabled at the system level. If
+/// this were awaited inside main() before runApp(), the user would see a
+/// permanent white screen. By running it as a detached future, the splash
+/// screen renders immediately and OneSignal either completes in the
+/// background or times out (see FcmNotificationService for the timeout).
+Future<void> _initNotificationsSafely() async {
+  try {
+    await FcmNotificationService().initialize();
+  } catch (e) {
+    debugPrint('OneSignal initialization error: $e');
+    try {
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        StackTrace.current,
+        reason: 'OneSignal init failure (non-blocking)',
+        fatal: false,
+      );
+    } catch (_) {
+      // Crashlytics itself may not be ready — ignore.
+    }
+  }
 }
 
 class CMMoviesApp extends StatefulWidget {
@@ -564,12 +606,23 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
           // Session timed out while app was in background
           // Only show SnackBar if still mounted (prevents crash)
           if (mounted) {
+            // Phase 4.35: Premium styled SnackBar replaces the old plain
+            // orange bar. Uses warning amber accent (rather than brand
+            // red) to distinguish "session expired" from "user logged out".
+            final isMy = appConfig.languageCode == 'my';
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Session expired due to inactivity. Please login again.'),
-                backgroundColor: Colors.orange,
-                duration: Duration(seconds: 4),
-              ),
+              PremiumSnackBar(
+                context: context,
+                icon: Icons.timer_off_rounded,
+                title: isMy
+                    ? 'ဆက်ရှင် ကုန်သွားပါပြီ'
+                    : 'Session expired',
+                subtitle: isMy
+                    ? 'မအောင်မြင်ခဲ့ပါ။ ပြန်လည် login ၀င်ပါ။'
+                    : 'Please login again to continue.',
+                accentColor: const Color(0xFFFFB300), // amber warning
+                duration: const Duration(seconds: 4),
+              ).build(),
             );
           }
         } else {
@@ -662,54 +715,11 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
   }
 
   Widget _buildSplashScreen() {
-    // Adaptive splash: follows the app's theme mode (dark/light)
-    final appConfig = Provider.of<AppConfig>(context);
-    final isDark = appConfig.themeMode == ThemeMode.dark;
-
-    final bgColor = isDark ? const Color(0xFF121212) : Colors.white;
-    final textColor = isDark ? Colors.white : const Color(0xFF212121);
-    final iconBgColor = const Color(0xFFE50914).withOpacity(isDark ? 0.2 : 0.15);
-
-    return Theme(
-      data: (isDark ? ThemeData.dark(useMaterial3: true) : ThemeData.light(useMaterial3: true)).copyWith(
-        scaffoldBackgroundColor: bgColor,
-      ),
-      child: Scaffold(
-        backgroundColor: bgColor,
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: iconBgColor,
-                ),
-                child: const Icon(
-                  Icons.play_circle_fill,
-                  size: 60,
-                  color: Color(0xFFE50914),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'KMM',
-                style: TextStyle(
-                  color: textColor,
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 16),
-              const CircularProgressIndicator(
-                color: Color(0xFFE50914),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+    // Phase 4.34: Premium animated splash screen.
+    // The splash is always rendered in cinematic dark mode (Netflix/Disney+
+    // style) regardless of the app's theme, so we don't need to pass the
+    // theme mode down — the SplashScreen widget handles its own theming.
+    return const SplashScreen();
   }
 
   ThemeData _buildDarkTheme() {

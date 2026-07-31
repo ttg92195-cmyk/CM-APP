@@ -21,19 +21,17 @@ class DownloadNotificationBanner extends StatefulWidget {
   State<DownloadNotificationBanner> createState() => _DownloadNotificationBannerState();
 }
 
-class _DownloadNotificationBannerState extends State<DownloadNotificationBanner>
-    with SingleTickerProviderStateMixin {
+class _DownloadNotificationBannerState extends State<DownloadNotificationBanner> {
   bool _dismissed = false;
-  late AnimationController _progressAnimController;
-  double _previousProgress = 0.0;
+  // ဒေါင်းလုဒ် task အရေအတွက်ကို မှတ်သားထားပြီး အသစ်တိုးလာမှသာ
+  // _dismissed = false ပြန်လုပ်မည် (progress update တိုင်း မပြန်လုပ်ဘဲ)။
+  // ၎င်းသည် swipe-to-dismiss လုပ်ပြီးချိန်တွင် banner ချက်ချင်းပြန်ပေါ်တဲ့
+  // bug ကို ကာကွယ်ပါသည်။
+  int _previousTaskCount = 0;
 
   @override
   void initState() {
     super.initState();
-    _progressAnimController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 300),
-    );
     // Listen to download manager to reset dismissed state when new downloads start
     widget.downloadManager.addListener(_onDownloadManagerUpdate);
   }
@@ -41,7 +39,6 @@ class _DownloadNotificationBannerState extends State<DownloadNotificationBanner>
   @override
   void dispose() {
     widget.downloadManager.removeListener(_onDownloadManagerUpdate);
-    _progressAnimController.dispose();
     super.dispose();
   }
 
@@ -50,19 +47,13 @@ class _DownloadNotificationBannerState extends State<DownloadNotificationBanner>
         .where((t) => t.status == DownloadStatus.downloading)
         .toList();
 
-    // If there are active downloads and banner was dismissed, show it again
-    if (downloadingTasks.isNotEmpty && _dismissed) {
+    // SMART FIX: ဒေါင်းလုဒ် task count တိုးလာမှသာ banner ကို ပြန်ပြပါမယ်။
+    // ဒီလိုမှ မဟုတ်လည်း progress update တိုင်း (250ms တစ်ခါ) _dismissed=false
+    // ဖြစ်သွားပြီး swipe-to-dismiss လုပ်လိုက်တာ ချက်ချင်းပျက်သွားမှာ မဟုတ်ပါဘူး။
+    if (downloadingTasks.length > _previousTaskCount && _dismissed) {
       setState(() => _dismissed = false);
     }
-
-    // Animate progress changes
-    if (downloadingTasks.isNotEmpty) {
-      final task = downloadingTasks.first;
-      if (task.progress != _previousProgress) {
-        _previousProgress = task.progress;
-        _progressAnimController.forward(from: 0.0);
-      }
-    }
+    _previousTaskCount = downloadingTasks.length;
   }
 
   @override

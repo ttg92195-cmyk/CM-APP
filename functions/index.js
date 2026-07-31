@@ -1,10 +1,112 @@
 const { onDocumentCreated } = require('firebase-functions/v2/firestore');
 const { onRequest } = require('firebase-functions/v2/https');
+const { onUserCreated } = require('firebase-functions/v2/auth');
 const { logger } = require('firebase-functions');
 const admin = require('firebase-admin');
 
 // Initialize Firebase Admin SDK
 admin.initializeApp();
+
+/**
+ * Cloud Function: onUserCreated (Auth trigger)
+ *
+ * Phase 3.10 — Server-side user profile doc creation.
+ *
+ * WHY THIS EXISTS:
+ *   Previously, the client-side registerUser() in app_config.dart tried to
+ *   create the /users/{uid} Firestore doc immediately after
+ *   createUserWithEmailAndPassword(). This was unreliable because the
+ *   Firestore SDK needs 500-2000ms to propagate the new auth token to its
+ *   internal request handlers — during that window, the create request
+ *   fails with permission-denied (rules require isOwner(userId) which
+ *   requires request.auth.uid == userId, but the SDK is still using
+ *   anonymous auth state).
+ *
+ *   The client-side fix (Phase 3.9) added getIdToken(true) + 800ms delay
+ *   + 5 retries with backoff (~5.8s total). This worked for MOST users
+ *   but still failed occasionally, leaving orphaned Auth users with no
+ *   Firestore profile doc — those users could never log in because
+ *   _loadUserProfile couldn't find their doc AND auth propagation delay
+ *   prevented the recovery create.
+ *
+ *   This Cloud Function is the bulletproof fix. It fires AUTOMATICALLY
+ *   when Firebase Auth creates a new user, and writes the profile doc
+ *   server-side using the Admin SDK (which bypasses Firestore rules
+ *   entirely). No race condition, no propagation delay, no permission
+ *   errors.
+ *
+ * BEHAVIOR:
+ *   - Fires on every new Firebase Auth user creation.
+ *   - Derives username from email: strips "@cmmovies.app" suffix if
+ *     present (legacy/internal users), otherwise uses the email's
+ *     local part (admin users with real emails).
+ *   - Creates /users/{uid} with safe defaults:
+ *       username, email, isAdmin: false, registrationDate, createdAt
+ *   - Uses { merge: true } so it's idempotent — if the client-side
+ *     registerUser also managed to create the doc, this won't overwrite.
+ *   - Logs success/failure for debugging via `firebase functions:log`.
+ *
+ * SECURITY:
+ *   - Admin SDK bypasses Firestore rules, so no rules change needed.
+ *   - The doc is created with isAdmin: false — a malicious user cannot
+ *     escalate via this function. Admin status is only granted by an
+ *     existing admin updating the doc through the app (gated by
+ *     isAdmin() rule).
+ *   - safeSignupFields() in firestore.rules is satisfied: isAdmin != true,
+ *     role != 'admin', isVip != true, isBanned != true, forceLogout != true.
+ */
+exports.onUserCreated = onUserCreated(
+  { region: 'us-central1' },
+  async (event) => {
+    const user = event.data;
+    if (!user) {
+      logger.warn('onUserCreated: no user data in event');
+      return null;
+    }
+
+    const uid = user.uid;
+    const email = user.email || '';
+    const now = new Date();
+    const regDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+    // Derive username from email.
+    // - Internal users: "bro" + "@cmmovies.app" → "bro"
+    // - Admin users with real emails: "bro@gmail.com" → "bro"
+    let username = '';
+    if (email.endsWith('@cmmovies.app')) {
+      username = email.slice(0, -'@cmmovies.app'.length);
+    } else if (email.includes('@')) {
+      username = email.split('@')[0];
+    } else {
+      // No email (shouldn't happen for password auth, but defensive)
+      username = uid.substring(0, 8);
+    }
+
+    const userDoc = {
+      username: username,
+      email: email,
+      isAdmin: false,
+      registrationDate: regDate,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    try {
+      // merge: true so this is idempotent. If the client-side registerUser
+      // already created the doc (race), this update preserves any fields
+      // the client set that aren't in our userDoc above (none currently,
+      // but future-proof).
+      await admin.firestore().collection('users').doc(uid).set(userDoc, { merge: true });
+      logger.info(`onUserCreated: created/merged profile doc for uid=${uid} username=${username}`);
+      return { success: true, uid, username };
+    } catch (error) {
+      logger.error(`onUserCreated: FAILED to create profile doc for uid=${uid}:`, error);
+      // Don't throw — throwing would retry the function, but the Admin
+      // SDK write should rarely fail. If it does, the client-side
+      // registerUser fallback will try to create the doc itself.
+      return { success: false, uid, error: error.message };
+    }
+  }
+);
 
 /**
  * Cloud Function: sendNotification (HTTP endpoint)

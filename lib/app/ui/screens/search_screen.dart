@@ -19,14 +19,16 @@ class SearchScreen extends StatefulWidget {
   State<SearchScreen> createState() => _SearchScreenState();
 }
 
-class _SearchScreenState extends State<SearchScreen> {
+class _SearchScreenState extends State<SearchScreen>
+    with TickerProviderStateMixin {
   final FirestoreContentService _contentService = FirestoreContentService();
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final SearchHistoryService _historyService = SearchHistoryService.instance;
   Timer? _debounceTimer;
 
-  List<Movie> _results = [];
+  List<Movie> _results = [];          // Visible results
+  static const int _pageSize = 20;   // Items per page (true server-side pagination)
   bool _isLoading = false;
   bool _hasSearched = false;
 
@@ -35,6 +37,9 @@ class _SearchScreenState extends State<SearchScreen> {
   StreamSubscription<List<String>>? _historySub;
 
   // Pagination state for infinite scroll
+  // Phase 4.7 — True server-side cursor pagination. _lastDoc is now used
+  // for BOTH filter-only and keyword search paths. _seenIds is a
+  // dedup safety net (not a chunk slicer).
   DocumentSnapshot? _lastDoc;
   bool _hasMore = true;
   bool _isLoadingMore = false;
@@ -44,17 +49,54 @@ class _SearchScreenState extends State<SearchScreen> {
   String? _selectedGenre;
   String? _selectedType; // 'movie' or 'series'
   String? _selectedYear;
-  String? _selectedRating; // minimum rating
+  String? _selectedRating; // minimum rating (numeric, e.g. '7')
   String _sortBy = 'latest'; // 'latest', 'rating', 'name'
+  // Phase 4.23 — content rating (e.g. 'PG-13') + TMDB status (e.g. 'Released')
+  String? _selectedCertification;
+  String? _selectedStatus;
 
   // Available filter options
   List<TagAndGenres> _genres = [];
   List<String> _years = [];
   bool _isLoadingFilters = true;
 
+  // Phase 4.33 (2026-07-28): "Alive" breathing animation for the empty-state
+  // icons on the search screen. A subtle scale + opacity pulse that makes
+  // the search_off / movie_filter / tune icons feel like they're breathing
+  // instead of sitting dead on the page. Inspired by Airbnb's empty-search
+  // illustration and modern onboarding flows.
+  //
+  // Why a single shared controller (not one-per-icon):
+  //   - All three empty states are mutually exclusive (you only ever see
+  //     one at a time), so a single 1.5s loop covers every visible icon.
+  //   - Saves memory + reduces ticker overhead.
+  late final AnimationController _breatheController;
+  late final Animation<double> _breatheScale;
+  late final Animation<double> _breatheOpacity;
+
   @override
   void initState() {
     super.initState();
+
+    // Breathing animation: 1.6s loop, smooth ease-in-out.
+    //   Scale:    1.00 → 1.10 → 1.00  (subtle 10% grow)
+    //   Opacity:  0.85 → 1.00 → 0.85  (soft fade)
+    // The 0.85 floor keeps the icon visible — never disappears.
+    _breatheController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1600),
+    )..repeat(reverse: true);
+    _breatheScale = Tween<double>(begin: 1.0, end: 1.10)
+        .animate(CurvedAnimation(
+      parent: _breatheController,
+      curve: Curves.easeInOutSine,
+    ));
+    _breatheOpacity = Tween<double>(begin: 0.85, end: 1.0)
+        .animate(CurvedAnimation(
+      parent: _breatheController,
+      curve: Curves.easeInOutSine,
+    ));
+
     _scrollController.addListener(_onScroll);
     // Load local search history (no Firestore cost).
     _historyService.load().then((h) {
@@ -85,6 +127,7 @@ class _SearchScreenState extends State<SearchScreen> {
 
   @override
   void dispose() {
+    _breatheController.dispose(); // Phase 4.33: stop the breathing animation
     _debounceTimer?.cancel();
     _historySub?.cancel();
     _searchController.dispose();
@@ -118,6 +161,8 @@ class _SearchScreenState extends State<SearchScreen> {
       _selectedType != null ||
       _selectedYear != null ||
       _selectedRating != null ||
+      _selectedCertification != null ||
+      _selectedStatus != null ||
       _sortBy != 'latest';
 
   Future<void> _search() async {
@@ -146,6 +191,12 @@ class _SearchScreenState extends State<SearchScreen> {
     });
 
     try {
+      // Phase 4.7 — TRUE server-side cursor pagination.
+      // Fetch only _pageSize (20) docs from Firestore on the first page.
+      // _searchWithKeyword now returns a real DocumentSnapshot cursor for
+      // keyword searches too, so subsequent pages load 20 more docs each
+      // via startAfterDocument(_lastDoc). No more 200-doc client-side
+      // cache — first search returns 20 docs instantly, scroll loads next 20.
       final result = await _contentService.searchMoviesWithFilters(
         keyword: query.isEmpty ? null : query,
         genre: _selectedGenre,
@@ -153,18 +204,21 @@ class _SearchScreenState extends State<SearchScreen> {
         year: _selectedYear,
         rating: _selectedRating,
         sortBy: _sortBy,
-        limit: 20, // PAGINATION: 20/page (see movies_page.dart)
+        certification: _selectedCertification,
+        status: _selectedStatus,
+        limit: _pageSize,
       );
       if (mounted) {
         final movies = result['movies'] as List<Movie>;
-        // Track IDs to prevent duplicates
+        // Track IDs of shown movies for dedup safety net.
         for (final m in movies) {
           _seenIds.add(m.id);
         }
+        final serverHasMore = (result['hasMore'] as bool? ?? false);
         setState(() {
           _results = movies;
           _lastDoc = result['lastDoc'] as DocumentSnapshot?;
-          _hasMore = (result['hasMore'] as bool? ?? false) && movies.length >= 20;
+          _hasMore = serverHasMore && movies.isNotEmpty;
           _isLoading = false;
         });
       }
@@ -185,6 +239,8 @@ class _SearchScreenState extends State<SearchScreen> {
       _selectedType = null;
       _selectedYear = null;
       _selectedRating = null;
+      _selectedCertification = null;
+      _selectedStatus = null;
       _sortBy = 'latest';
       _lastDoc = null;
       _hasMore = true;
@@ -204,6 +260,20 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Future<void> _loadMore() async {
     if (_isLoadingMore || !_hasMore || _isLoading) return;
+
+    // Phase 4.7 — True server-side cursor pagination for BOTH keyword and
+    // filter-only paths. _lastDoc is the Firestore DocumentSnapshot returned
+    // by the previous page; we use startAfterDocument to fetch the next page.
+    if (_lastDoc == null) {
+      // No cursor means no more pages (first page would have set _lastDoc
+      // if there was more data). Bail out.
+      setState(() {
+        _hasMore = false;
+        _isLoadingMore = false;
+      });
+      return;
+    }
+
     setState(() => _isLoadingMore = true);
     try {
       final query = _searchController.text.trim();
@@ -214,12 +284,15 @@ class _SearchScreenState extends State<SearchScreen> {
         year: _selectedYear,
         rating: _selectedRating,
         sortBy: _sortBy,
-        limit: 20, // PAGINATION: 20/page (see movies_page.dart)
+        certification: _selectedCertification,
+        status: _selectedStatus,
+        limit: _pageSize,
         startAfter: _lastDoc,
       );
       if (mounted) {
         final newMovies = result['movies'] as List<Movie>;
-        // Deduplicate by ID
+        // Deduplicate by ID (safety net — Strategy 1 cursor is monotonic
+        // but filters can cause subtle edge cases).
         final dedupedMovies = <Movie>[];
         for (final m in newMovies) {
           if (!_seenIds.contains(m.id)) {
@@ -256,6 +329,12 @@ class _SearchScreenState extends State<SearchScreen> {
           break;
         case 'rating':
           _selectedRating = null;
+          break;
+        case 'certification':
+          _selectedCertification = null;
+          break;
+        case 'status':
+          _selectedStatus = null;
           break;
       }
     });
@@ -346,6 +425,8 @@ class _SearchScreenState extends State<SearchScreen> {
                               _selectedType = null;
                               _selectedYear = null;
                               _selectedRating = null;
+                              _selectedCertification = null;
+                              _selectedStatus = null;
                               _sortBy = 'latest';
                             });
                           },
@@ -386,6 +467,22 @@ class _SearchScreenState extends State<SearchScreen> {
                         _buildFilterSection(
                           title: appConfig.translate('year'),
                           child: _buildYearSelector(appConfig, theme, setModalState),
+                        ),
+
+                        const SizedBox(height: 20),
+
+                        // Phase 4.23 — Content Rating filter (PG-13, R, TV-MA, etc.)
+                        _buildFilterSection(
+                          title: appConfig.translate('content_rating'),
+                          child: _buildCertificationSelector(appConfig, theme, setModalState),
+                        ),
+
+                        const SizedBox(height: 20),
+
+                        // Phase 4.23 — Status filter (Released, Returning Series, Ended, etc.)
+                        _buildFilterSection(
+                          title: appConfig.translate('status'),
+                          child: _buildStatusSelector(appConfig, theme, setModalState),
                         ),
 
                         const SizedBox(height: 20),
@@ -649,6 +746,150 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
+  // ===========================================================================
+  // Phase 4.23 — Content Rating (certification) + Status selectors
+  // ===========================================================================
+  // TMDB already fetches and stores both fields on every movie/series doc
+  // (see tmdb_service.dart mapMovieToFirestore / mapTVToFirestore).
+  // Movies created before Task 38 Req 2 may have null fields — those are
+  // simply excluded from filtered results. Bro can run a TMDB Sync on older
+  // posts to backfill the certification/status fields.
+
+  Widget _buildCertificationSelector(
+      AppConfig appConfig, ThemeData theme, StateSetter setModalState) {
+    final isDark = theme.brightness == Brightness.dark;
+    // Common TMDB certifications — both movie and TV variants included.
+    // Filterable exactly as stored in Firestore (case-sensitive match).
+    final certifications = <String>[
+      'G', 'PG', 'PG-13', 'R', 'NC-17', 'NR',
+      'TV-G', 'TV-PG', 'TV-14', 'TV-MA',
+    ];
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        // "All" option
+        ChoiceChip(
+          label: Text(appConfig.translate('type_all')),
+          selected: _selectedCertification == null,
+          onSelected: (selected) {
+            setModalState(() {
+              _selectedCertification = null;
+            });
+          },
+          selectedColor: const Color(0xFFE50914).withOpacity(0.2),
+          backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
+          labelStyle: TextStyle(
+            color: _selectedCertification == null
+                ? const Color(0xFFE50914)
+                : isDark ? Colors.white70 : Colors.black87,
+            fontWeight: _selectedCertification == null ? FontWeight.bold : FontWeight.normal,
+          ),
+          side: BorderSide(
+            color: _selectedCertification == null
+                ? const Color(0xFFE50914)
+                : isDark ? Colors.white24 : Colors.grey.shade400,
+          ),
+        ),
+        ...certifications.map((cert) {
+          final isSelected = _selectedCertification == cert;
+          return ChoiceChip(
+            label: Text(cert),
+            selected: isSelected,
+            onSelected: (selected) {
+              setModalState(() {
+                _selectedCertification = selected ? cert : null;
+              });
+            },
+            selectedColor: const Color(0xFFE50914).withOpacity(0.2),
+            backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
+            labelStyle: TextStyle(
+              color: isSelected ? const Color(0xFFE50914) : isDark ? Colors.white70 : Colors.black87,
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            ),
+            side: BorderSide(
+              color: isSelected
+                  ? const Color(0xFFE50914)
+                  : isDark ? Colors.white24 : Colors.grey.shade400,
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  Widget _buildStatusSelector(
+      AppConfig appConfig, ThemeData theme, StateSetter setModalState) {
+    final isDark = theme.brightness == Brightness.dark;
+    // Phase 4.23 (Option A) — start with the three SERIES statuses that
+    // already have Firestore composite indexes for the admin dashboard
+    // (see firestore_content_service.dart ongoingSeries/endedSeries queries).
+    // Movies use "Released" — including it here so users can find movies
+    // that are out vs rumored/in-production. Future Phase can extend to the
+    // full TMDB status enum if Bro wants more granularity.
+    final statuses = <String>[
+      'Released',          // movies that are out
+      'Returning Series',  // ongoing series
+      'Ended',             // completed series
+      'Canceled',          // cancelled series
+    ];
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        // "All" option
+        ChoiceChip(
+          label: Text(appConfig.translate('type_all')),
+          selected: _selectedStatus == null,
+          onSelected: (selected) {
+            setModalState(() {
+              _selectedStatus = null;
+            });
+          },
+          selectedColor: const Color(0xFFE50914).withOpacity(0.2),
+          backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
+          labelStyle: TextStyle(
+            color: _selectedStatus == null
+                ? const Color(0xFFE50914)
+                : isDark ? Colors.white70 : Colors.black87,
+            fontWeight: _selectedStatus == null ? FontWeight.bold : FontWeight.normal,
+          ),
+          side: BorderSide(
+            color: _selectedStatus == null
+                ? const Color(0xFFE50914)
+                : isDark ? Colors.white24 : Colors.grey.shade400,
+          ),
+        ),
+        ...statuses.map((status) {
+          final isSelected = _selectedStatus == status;
+          return ChoiceChip(
+            label: Text(status),
+            selected: isSelected,
+            onSelected: (selected) {
+              setModalState(() {
+                _selectedStatus = selected ? status : null;
+              });
+            },
+            selectedColor: const Color(0xFFE50914).withOpacity(0.2),
+            backgroundColor: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
+            labelStyle: TextStyle(
+              color: isSelected ? const Color(0xFFE50914) : isDark ? Colors.white70 : Colors.black87,
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              fontSize: 13,
+            ),
+            side: BorderSide(
+              color: isSelected
+                  ? const Color(0xFFE50914)
+                  : isDark ? Colors.white24 : Colors.grey.shade400,
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
   Widget _buildSortSelector(AppConfig appConfig, StateSetter setModalState) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -855,6 +1096,19 @@ class _SearchScreenState extends State<SearchScreen> {
                               onRemove: () => _removeFilter('rating'),
                               theme: theme,
                             ),
+                          // Phase 4.23 — certification + status chips
+                          if (_selectedCertification != null)
+                            _buildActiveFilterChip(
+                              label: _selectedCertification!,
+                              onRemove: () => _removeFilter('certification'),
+                              theme: theme,
+                            ),
+                          if (_selectedStatus != null)
+                            _buildActiveFilterChip(
+                              label: _selectedStatus!,
+                              onRemove: () => _removeFilter('status'),
+                              theme: theme,
+                            ),
                           if (_sortBy != 'latest')
                             _buildActiveFilterChip(
                               label: _sortBy == 'rating'
@@ -898,10 +1152,17 @@ class _SearchScreenState extends State<SearchScreen> {
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(
-                                Icons.search_off,
-                                size: 64,
-                                color: theme.colorScheme.onSurface.withOpacity(0.3),
+                              // Phase 4.33: breathing "alive" animation
+                              ScaleTransition(
+                                scale: _breatheScale,
+                                child: FadeTransition(
+                                  opacity: _breatheOpacity,
+                                  child: Icon(
+                                    Icons.search_off,
+                                    size: 64,
+                                    color: theme.colorScheme.onSurface.withOpacity(0.3),
+                                  ),
+                                ),
                               ),
                               const SizedBox(height: 16),
                               Text(
@@ -920,10 +1181,17 @@ class _SearchScreenState extends State<SearchScreen> {
                                   child: Column(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
-                                      Icon(
-                                        Icons.movie_filter_outlined,
-                                        size: 64,
-                                        color: theme.colorScheme.onSurface.withOpacity(0.3),
+                                      // Phase 4.33: breathing "alive" animation
+                                      ScaleTransition(
+                                        scale: _breatheScale,
+                                        child: FadeTransition(
+                                          opacity: _breatheOpacity,
+                                          child: Icon(
+                                            Icons.movie_filter_outlined,
+                                            size: 64,
+                                            color: theme.colorScheme.onSurface.withOpacity(0.3),
+                                          ),
+                                        ),
                                       ),
                                       const SizedBox(height: 16),
                                       Text(
@@ -940,10 +1208,20 @@ class _SearchScreenState extends State<SearchScreen> {
                                         ),
                                       ),
                                       const SizedBox(height: 4),
-                                      Icon(
-                                        Icons.tune,
-                                        size: 32,
-                                        color: theme.colorScheme.onSurface.withOpacity(0.2),
+                                      // Phase 4.33: tune icon also breathes — both
+                                      // icons share the same controller so they
+                                      // pulse in sync, which feels intentional
+                                      // rather than chaotic.
+                                      ScaleTransition(
+                                        scale: _breatheScale,
+                                        child: FadeTransition(
+                                          opacity: _breatheOpacity,
+                                          child: Icon(
+                                            Icons.tune,
+                                            size: 32,
+                                            color: theme.colorScheme.onSurface.withOpacity(0.2),
+                                          ),
+                                        ),
                                       ),
                                     ],
                                   ),

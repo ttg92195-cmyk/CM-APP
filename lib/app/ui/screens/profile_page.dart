@@ -4,6 +4,7 @@ import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/services/device_management_service.dart';
 import 'package:cm_movies/app/ui/screens/watchlist_screen.dart';
 import 'package:cm_movies/app/ui/screens/movie_bookmark_screen.dart';
+import 'package:cm_movies/app/ui/components/premium_snackbar.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -29,6 +30,26 @@ class _ProfilePageState extends State<ProfilePage> {
   bool _isLoadingDevices = true;
   bool _isRemovingDevice = false;
 
+  // Phase 4.4 — Self-healing device registration.
+  //
+  // HISTORY: Phase 4.2 added registerDevice() to the signup flow, but it has
+  // a fail-open design — if the user doc doesn't exist yet (race with
+  // _loadUserProfile's doc creation) OR the Firestore SDK's auth state hasn't
+  // fully propagated after createUserWithEmailAndPassword, registerDevice's
+  // tx.get() either returns "doc not found" or throws permission-denied. In
+  // BOTH cases, the catch block returns allowed=true with an EMPTY devices
+  // list — NO WRITE HAPPENS. The signup flow can't distinguish this from a
+  // successful registration.
+  //
+  // FIX (Phase 4.4): When the Profile page loads and finds an empty device
+  // list, automatically try to register the current device. This catches
+  // ALL failure cases (race, auth delay, transient Firestore errors, accounts
+  // created before Phase 4.2 was deployed). The _autoRegisterAttempted flag
+  // prevents infinite loops — we only try once per page session. The manual
+  // refresh button (added next to the "Connected Devices" header) resets
+  // this flag so Bro can trigger another auto-register attempt.
+  bool _autoRegisterAttempted = false;
+
   @override
   void dispose() {
     _oldPasswordController.dispose();
@@ -45,12 +66,80 @@ class _ProfilePageState extends State<ProfilePage> {
       return;
     }
     final devices = await _deviceService.getDevices(uid);
+
+    // Phase 4.4 — Self-healing: if no devices are registered AND we haven't
+    // already attempted an auto-register this session, try to register the
+    // current device now. This catches the case where signup-time
+    // registerDevice failed silently (fail-open) due to a race condition
+    // with user-doc creation or Firestore SDK auth-state propagation delay.
+    //
+    // We only attempt ONCE per page session to avoid infinite loops if
+    // registration keeps failing. The manual refresh button (see _refreshDevices
+    // below) resets _autoRegisterAttempted so the user can trigger another try.
+    if (devices.isEmpty && !_autoRegisterAttempted) {
+      _autoRegisterAttempted = true;
+      try {
+        debugPrint('Phase 4.4: no devices found — auto-registering current device');
+        final result = await _deviceService.registerDevice(uid);
+        if (result.allowed && result.devices.isNotEmpty) {
+          // Registration succeeded — use the returned device list directly
+          // (registerDevice returns the full post-write device list, so we
+          // don't need a second getDevices() call).
+          if (mounted) {
+            setState(() {
+              _devices = result.devices;
+              _isLoadingDevices = false;
+            });
+          }
+          return;
+        }
+        if (!result.allowed) {
+          // Device limit reached — show a SnackBar so Bro knows why the
+          // list is still empty. The DeviceLimitDialog is NOT shown here
+          // because the user is already logged in (signup succeeded); we
+          // don't want to sign them out just because they opened Profile.
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'Device limit reached (${result.currentDevices}/${result.maxDevices}). '
+                  'Remove an old device to register this one.',
+                ),
+                backgroundColor: Colors.orange,
+                duration: const Duration(seconds: 5),
+              ),
+            );
+          }
+        }
+        // If allowed=true but devices is STILL empty, the doc probably
+        // doesn't exist yet (fail-open branch). Leave _devices empty —
+        // the user can pull-to-refresh or tap the refresh button after
+        // a few seconds.
+      } catch (e) {
+        debugPrint('Phase 4.4: auto-register failed (non-fatal): $e');
+        // Leave _devices empty. User can retry via refresh button.
+      }
+    }
+
     if (mounted) {
       setState(() {
         _devices = devices;
         _isLoadingDevices = false;
       });
     }
+  }
+
+  /// Phase 4.4 — Manual refresh handler for the Connected Devices section.
+  ///
+  /// Resets the _autoRegisterAttempted flag so self-healing can run again,
+  /// then reloads the device list. Bound to the refresh IconButton next to
+  /// the "Connected Devices" header (see build method).
+  Future<void> _refreshDevices() async {
+    setState(() {
+      _isLoadingDevices = true;
+      _autoRegisterAttempted = false;
+    });
+    await _loadDevices();
   }
 
   Future<void> _removeDevice(String deviceId) async {
@@ -516,12 +605,26 @@ class _ProfilePageState extends State<ProfilePage> {
 
             const SizedBox(height: 24),
 
-            // Connected Devices Section
-            Text(
-              'Connected Devices',
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
+            // Connected Devices Section — Phase 4.4: header now includes a
+            // refresh button so Bro can manually trigger device list reload
+            // (also resets the auto-register flag so self-healing retries).
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Connected Devices',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.refresh, size: 20),
+                  tooltip: 'Refresh devices',
+                  onPressed: _refreshDevices,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
 
@@ -814,11 +917,21 @@ class _ProfilePageState extends State<ProfilePage> {
                   await appConfig.logoutUser();
                   if (mounted) {
                     Navigator.pop(context);
+                    // Phase 4.35: Premium styled SnackBar (replaces plain
+                    // orange bar). Bilingual title + subtitle, dark
+                    // gradient floating card with red accent.
+                    final isMy = appConfig.languageCode == 'my';
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(appConfig.translate('logout')),
-                        backgroundColor: Colors.orange,
-                      ),
+                      PremiumSnackBar(
+                        context: context,
+                        icon: Icons.logout_rounded,
+                        title: isMy ? 'ထွက်ပြီးပါပြီ' : 'Logged out',
+                        subtitle: isMy
+                            ? 'သင် sign out လုပ်ပြီးပါပြီ။'
+                            : 'You have been signed out.',
+                        accentColor: const Color(0xFFE50914),
+                        duration: const Duration(seconds: 3),
+                      ).build(),
                     );
                   }
                 },

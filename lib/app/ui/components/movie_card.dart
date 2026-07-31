@@ -4,6 +4,88 @@ import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/services/poster_cache_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// Phase 4.28 — Shimmer placeholder shown while a poster image is
+/// being fetched from the network. Replaces the previous flat-colored
+/// Container which looked visually flat and gave no indication that
+/// the image was actually loading. The shimmer is a subtle horizontal
+/// gradient sweep (1.2s loop) that matches the MovieCardSkeleton used
+/// elsewhere in the app — so the loading state visually matches the
+/// grid skeleton state the user already sees on first page load.
+///
+/// Performance: one AnimationController per visible card. Cards that
+/// scroll off-screen dispose their State (and therefore their
+/// AnimationController), so the cost scales with the number of
+/// visible cards (~9-12 in a 3-col grid). Animation is GPU-composited
+/// so it adds negligible CPU load.
+class _ShimmerPlaceholder extends StatefulWidget {
+  const _ShimmerPlaceholder();
+
+  @override
+  State<_ShimmerPlaceholder> createState() => _ShimmerPlaceholderState();
+}
+
+class _ShimmerPlaceholderState extends State<_ShimmerPlaceholder>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    // Two-tone palette for the gradient sweep. The 'highlight' color
+    // is the light band that sweeps across; the 'base' is the resting
+    // color. We use the same color tokens as MovieCardSkeleton so the
+    // placeholder matches the surrounding grid skeleton look.
+    final baseColor = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE0E0E0);
+    final highlightColor =
+        isDark ? const Color(0xFF3D3D3D) : const Color(0xFFF5F5F5);
+
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return ShaderMask(
+          // Linear gradient with three stops — middle stop is the
+          // 'highlight' band. The gradient is twice as wide as the
+          // box so the highlight band sweeps from off-screen left to
+          // off-screen right; `begin` and `end` are animated from
+          // -1.0 → 2.0 over the animation duration.
+          shaderCallback: (bounds) {
+            final t = _controller.value;
+            return LinearGradient(
+              begin: Alignment(t * 3 - 1, 0),
+              end: Alignment(t * 3 + 0.5, 0),
+              colors: [
+                baseColor,
+                highlightColor,
+                baseColor,
+              ],
+              stops: const [0.0, 0.5, 1.0],
+            ).createShader(bounds);
+          },
+          child: Container(
+            color: baseColor,
+          ),
+        );
+      },
+    );
+  }
+}
+
 class MovieCard extends StatefulWidget {
   final Movie movie;
   final VoidCallback onTap;
@@ -62,11 +144,11 @@ class _MovieCardState extends State<MovieCard> {
     final prefs = _prefsCache ??= await SharedPreferences.getInstance();
     final posMs = prefs.getInt('watch_pos_${widget.movie.id}');
     final durMs = prefs.getInt('watch_dur_${widget.movie.id}');
-    // Phase 4.38 — raised threshold from 5s → 30s. 5s was too low:
-    // any accidental tap that briefly started playback (then closed)
-    // would leave a progress bar artifact on the home grid forever.
-    // 30s of deliberate watching is a much stronger signal that the
-    // user actually wants to resume later.
+    // Phase 4.36 / 4.38 — raised threshold from 5s → 30s. 5s was too
+    // low: any accidental tap that briefly started playback (then
+    // closed) would leave a progress bar artifact on the home grid
+    // forever. 30s of deliberate watching is a much stronger signal
+    // that the user actually wants to resume later.
     if (posMs != null && durMs != null && posMs > 30000 && durMs > 0) {
       final progress = (posMs / durMs).clamp(0.0, 1.0);
       if (progress < 0.95 && mounted) {
@@ -74,6 +156,13 @@ class _MovieCardState extends State<MovieCard> {
       }
     }
   }
+
+  // Phase 4.36: _formatWatchPosition() helper removed — the text
+  // percentage "0%" / "42%" that used to live in the metadata row below
+  // the title has been removed (Netflix-style visual progress bar at the
+  // bottom of the poster is the single source of truth now). If we ever
+  // want to bring the text back, restore this helper and re-add the
+  // `if (_watchProgress != null)` block in the metadata Row.
 
   // Task 40 — image URL with cache-busting retry suffix.
   // On retry, append `?retry=N` (or `&retry=N` if URL already has a
@@ -162,20 +251,55 @@ class _MovieCardState extends State<MovieCard> {
                               // down the grid on devices with limited
                               // RAM — leading to posters appearing
                               // "stuck" or never loading when many are
-                              // visible at once. memCacheWidth=400 keeps
-                              // decoded size ~200KB per poster while
-                              // remaining visually crisp on phones.
-                              memCacheWidth: 400,
-                              fadeInDuration: const Duration(milliseconds: 150),
-                              // Task 40 — quieter placeholder. The old
-                              // spinner was visually noisy in a 3-col
-                              // grid (12+ spinners spinning at once is
-                              // distracting). A flat skeleton-colored
-                              // Container matches the MovieCardSkeleton
-                              // shimmer look and feels less anxious.
-                              placeholder: (context, url) => Container(
-                                color: theme.colorScheme.surfaceContainerHighest,
-                              ),
+                              // visible at once.
+                              //
+                              // Phase 4.28 — bumped from 400 → 500. On a
+                              // 3x device pixel ratio phone showing a 3-col
+                              // grid at ~140px logical width, each poster
+                              // is rendered at ~420px device pixels. The old
+                              // 400 value was just under that threshold and
+                              // caused slight softness on high-DPI screens.
+                              // 500 gives us headroom for 4x DPR phones and
+                              // horizontal scrollers (where cards are wider)
+                              // while still keeping decoded size ~300KB per
+                              // poster. With the 2000-object cache limit,
+                              // worst case is ~600MB on disk — within
+                              // reason for an image-heavy app.
+                              memCacheWidth: 500,
+                              // Phase 4.28 — high filter quality for sharper
+                              // downscaling. CachedNetworkImage defaults to
+                              // FilterQuality.low (nearest-neighbor) which
+                              // produces visible aliasing on diagonal edges
+                              // (poster text, faces) when the source image
+                              // is much larger than the display size. High
+                              // uses bicubic interpolation — slightly more
+                              // CPU on first decode but the result is cached
+                              // in the poster cache so subsequent renders
+                              // are free.
+                              filterQuality: FilterQuality.high,
+                              // Phase 4.28 — smoother fade-in. Old 150ms was
+                              // a bit jarring (too quick). 300ms feels more
+                              // polished and matches Material's standard
+                              // motion duration for content appearance.
+                              //
+                              // Note: cached_network_image v3.4.1 (current
+                              // pinned version) does NOT expose a separate
+                              // `fadeInDurationOnRebuild` parameter. However,
+                              // the default behavior in v3.4.1 is exactly
+                              // what we want: the fade-in animation only
+                              // fires on the FIRST load from network/disk —
+                              // when the parent widget rebuilds and the
+                              // image is still in the in-memory cache, the
+                              // image is shown instantly with no fade. So
+                              // we do not need to override anything here.
+                              fadeInDuration: const Duration(milliseconds: 300),
+                              // Phase 4.28 — shimmer placeholder. Replaces
+                              // the old flat Container — gives the user a
+                              // subtle visual indication that the image is
+                              // loading, matching the MovieCardSkeleton used
+                              // elsewhere in the app.
+                              placeholder: (context, url) =>
+                                  const _ShimmerPlaceholder(),
                               errorWidget: (context, url, error) {
                                 // Task 40 — auto-retry once on first
                                 // failure (covers transient TMDB 429 /
@@ -189,6 +313,13 @@ class _MovieCardState extends State<MovieCard> {
                                     if (mounted) setState(() {});
                                   });
                                 }
+                                // Phase 4.28 — improved error state. Old
+                                // version was a bare Icon on a flat color
+                                // (looked unfinished). Now we add a small
+                                // caption below the icon ('Tap to retry')
+                                // so the user knows the placeholder is
+                                // interactive, and use a slightly larger
+                                // icon for better tap-target affordance.
                                 return GestureDetector(
                                   onTap: () {
                                     setState(() {
@@ -197,10 +328,24 @@ class _MovieCardState extends State<MovieCard> {
                                   },
                                   child: Container(
                                     color: theme.colorScheme.surfaceContainerHighest,
-                                    child: Icon(
-                                      Icons.refresh,
-                                      color: theme.colorScheme.onSurface.withOpacity(0.5),
-                                      size: 32,
+                                    child: Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.broken_image_outlined,
+                                          color: theme.colorScheme.onSurface.withOpacity(0.5),
+                                          size: 32,
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Tap to retry',
+                                          style: TextStyle(
+                                            color: theme.colorScheme.onSurface.withOpacity(0.4),
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 );
@@ -410,14 +555,15 @@ class _MovieCardState extends State<MovieCard> {
               ),
             ),
             // Year + Duration/Season metadata below title.
-            // Phase 4.38 — removed the inline watch-progress text block
-            // (play icon + "X%") that used to live at the end of this Row.
-            // The visual progress bar at the bottom of the poster is now
-            // the single source of truth for watch progress — same
-            // convention as Netflix / Disney+ / Prime Video mobile.
-            // Removing the text also de-clutters the row (was 5 elements,
-            // now 3) and avoids the "0%" artifact on freshly-started
-            // titles.
+            // Phase 4.36 / 4.38 — removed the inline "0%" watch-progress
+            // text + play icon that used to sit at the end of this row.
+            // Reason: the row was getting cramped (5 elements on a
+            // narrow card), and the percentage text was REDUNDANT with
+            // the visual progress bar at the bottom of the poster.
+            // Netflix / Disney+ / Prime Video all use the visual progress
+            // bar alone — no text percentage — and it reads as more
+            // premium + less cluttered. Metadata row went from 5 elements
+            // to 3.
             if (widget.movie.year != null && widget.movie.year!.isNotEmpty ||
                 (widget.movie.type == 'series' && widget.movie.seasons != null && widget.movie.seasons!.isNotEmpty) ||
                 (widget.movie.type != 'series' && widget.movie.duration != null && widget.movie.duration!.isNotEmpty))
@@ -426,69 +572,62 @@ class _MovieCardState extends State<MovieCard> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Flexible(
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (widget.movie.year != null && widget.movie.year!.isNotEmpty)
-                            Flexible(
-                              child: Text(
-                                widget.movie.year!,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.labelSmall?.copyWith(
-                                  color: theme.colorScheme.onSurface.withOpacity(0.6),
-                                  fontSize: 10,
-                                ),
-                              ),
-                            ),
-                          // Show "Season X" for series, or duration for movies
-                          if (widget.movie.type == 'series' && widget.movie.seasons != null && widget.movie.seasons!.isNotEmpty) ...[
-                            if (widget.movie.year != null && widget.movie.year!.isNotEmpty)
-                              const SizedBox(width: 4),
-                            Icon(
-                              Icons.tv,
-                              size: 10,
-                              color: theme.colorScheme.onSurface.withOpacity(0.6),
-                            ),
-                            const SizedBox(width: 2),
-                            Flexible(
-                              child: Text(
-                                'Season ${widget.movie.seasons}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: theme.colorScheme.onSurface.withOpacity(0.6),
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ),
-                          ] else if (widget.movie.type != 'series' && widget.movie.duration != null && widget.movie.duration!.isNotEmpty) ...[
-                            if (widget.movie.year != null && widget.movie.year!.isNotEmpty)
-                              const SizedBox(width: 4),
-                            Icon(
-                              Icons.access_time,
-                              size: 10,
-                              color: theme.colorScheme.onSurface.withOpacity(0.6),
-                            ),
-                            const SizedBox(width: 2),
-                            Flexible(
-                              child: Text(
-                                '${widget.movie.duration} min',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: theme.colorScheme.onSurface.withOpacity(0.6),
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
+                    if (widget.movie.year != null && widget.movie.year!.isNotEmpty)
+                      Flexible(
+                        child: Text(
+                          widget.movie.year!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.onSurface.withOpacity(0.6),
+                            fontSize: 10,
+                          ),
+                        ),
                       ),
-                    ),
+                    // Show "Season X" for series, or duration for movies
+                    if (widget.movie.type == 'series' && widget.movie.seasons != null && widget.movie.seasons!.isNotEmpty) ...[
+                      if (widget.movie.year != null && widget.movie.year!.isNotEmpty)
+                        const SizedBox(width: 4),
+                      Icon(
+                        Icons.tv,
+                        size: 10,
+                        color: theme.colorScheme.onSurface.withOpacity(0.6),
+                      ),
+                      const SizedBox(width: 2),
+                      Flexible(
+                        child: Text(
+                          'Season ${widget.movie.seasons}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: theme.colorScheme.onSurface.withOpacity(0.6),
+                            fontSize: 9,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ] else if (widget.movie.type != 'series' && widget.movie.duration != null && widget.movie.duration!.isNotEmpty) ...[
+                      if (widget.movie.year != null && widget.movie.year!.isNotEmpty)
+                        const SizedBox(width: 4),
+                      Icon(
+                        Icons.access_time,
+                        size: 10,
+                        color: theme.colorScheme.onSurface.withOpacity(0.6),
+                      ),
+                      const SizedBox(width: 2),
+                      Flexible(
+                        child: Text(
+                          '${widget.movie.duration} min',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: theme.colorScheme.onSurface.withOpacity(0.6),
+                            fontSize: 9,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
