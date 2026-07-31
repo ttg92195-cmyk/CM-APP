@@ -392,6 +392,19 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
                         child: ExpansionTile(
                           tilePadding: const EdgeInsets.all(12),
                           childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                          // Phase 4.44 — remove the colored border line that
+                          // Material 3 draws around the tile when expanded.
+                          // Bro reported "Season 1 နိုပ်ရင် အနီရောင် မျဉ်းကြောင်း
+                          // ပေါ်လာတာ" (a red/colored line appears when
+                          // expanding Season 1). The default Material 3
+                          // ExpansionTile uses `shape: RoundedRectangleBorder`
+                          // with a BorderSide based on the theme's divider
+                          // color, which shows up as a visible border around
+                          // the tile only when expanded. Setting both `shape`
+                          // and `collapsedShape` to `Border()` (empty border)
+                          // removes this line on both states.
+                          shape: const Border(),
+                          collapsedShape: const Border(),
                           leading: Container(
                             padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
@@ -440,14 +453,24 @@ class _AddSeriesPageState extends State<AddSeriesPage> {
                               );
                             }),
                             // Add Episode buttons
-                            Row(
+                            // Phase 4.44 — stack vertically instead of in a Row.
+                            // Bro reported "Add Episode (Download) Add Episode
+                            // (Watch) ဆိုတယ်ဟာကနေရာမဆံဘူထင်ရပါတယ်"
+                            // (the two buttons appear on the same line, looks
+                            // like they're not separated). Changed from Row to
+                            // Column with crossAxisAlignment.startAlign so
+                            // each button gets its own line — Bro's exact
+                            // requested layout:
+                            //   Add Episode (Download)
+                            //   Add Episode (Watch)
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
                                 TextButton.icon(
                                   onPressed: () => _showAddEpisodeDownloadDialog(seasonIndex),
                                   icon: const Icon(Icons.download, size: 18),
                                   label: const Text('Add Episode (Download)'),
                                 ),
-                                const SizedBox(width: 8),
                                 TextButton.icon(
                                   onPressed: () => _showAddEpisodeWatchDialog(seasonIndex),
                                   icon: const Icon(Icons.play_arrow, size: 18),

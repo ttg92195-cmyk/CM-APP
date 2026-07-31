@@ -703,6 +703,13 @@ class _EditMoviePageState extends State<EditMoviePage> {
                           child: ExpansionTile(
                             tilePadding: const EdgeInsets.all(12),
                             childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                            // Phase 4.44 — remove the colored border line
+                            // that Material 3 draws around the tile when
+                            // expanded. Bro reported "Season 1 နိုပ်ရင် အနီရောင်
+                            // မျဉ်းကြောင်း ပေါ်လာတာ" — see add_series_page.dart
+                            // for the full comment.
+                            shape: const Border(),
+                            collapsedShape: const Border(),
                             leading: Container(
                               padding: const EdgeInsets.all(8),
                               decoration: BoxDecoration(
@@ -737,7 +744,13 @@ class _EditMoviePageState extends State<EditMoviePage> {
                                   ),
                                 );
                               }),
-                              Row(
+                              // Phase 4.44 — stack vertically instead of in a
+                              // Row so each button gets its own line. Bro's
+                              // exact requested layout:
+                              //   Add Episode (Download)
+                              //   Add Episode (Watch)
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
                                   TextButton.icon(
                                     onPressed: () => _showAddEpisodeDownloadLinkDialog(seasonIndex),
