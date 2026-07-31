@@ -4353,3 +4353,19 @@ Stage Summary:
   * lib/main.dart (+10, -3)
 - No new files, no new dependencies
 - Visual effect: Light Mode users now see a clean, premium light splash on app launch — warm paper-like background, soft ink-print pulse rings, raised sticker-style logo, deep ink brand text with warm shimmer, subtle red loading dots. Dark Mode users see the unchanged cinematic dark splash.
+
+---
+Task ID: Phase 4.40.1
+Agent: Main Agent
+Task: Build failed with "The getter 'appConfig' isn't defined for the class '_CMMoviesAppState'" at lib/main.dart:731. Fix and re-push.
+
+Work Log:
+- Read the build error. The error was clear: `_buildSplashScreen()` was trying to access `appConfig.isDarkMode` directly, but `appConfig` is a local variable declared inside the parent `build()` method (line 640: `final appConfig = Provider.of<AppConfig>(context);`). It's not a class field, so child methods can't see it.
+- Confirmed by grepping main.dart: `appConfig` is referenced 9 times, all inside `build()` or methods that have their own `Provider.of<AppConfig>(context)` call. _buildSplashScreen() had neither.
+- Fix: changed `_buildSplashScreen()` to take `isDark` as a required parameter: `_buildSplashScreen({required bool isDark})`. Updated the call site at line 709 to pass `isDark: appConfig.isDarkMode` (where appConfig IS in scope). The body of _buildSplashScreen now uses the `isDark` parameter directly instead of trying to reach appConfig.
+- This matches how other helper methods in the same file work — they either take their dependencies as parameters or call Provider.of<AppConfig>(context) themselves.
+
+Stage Summary:
+- Commit: e4b78af on origin/main
+- Modified file: lib/main.dart (9 insertions, 7 deletions)
+- Build error is fixed. Bro can rebuild.
