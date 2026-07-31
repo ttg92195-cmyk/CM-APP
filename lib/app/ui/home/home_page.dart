@@ -97,19 +97,32 @@ class _HomePageState extends State<HomePage> {
             _resumeHomeBannerAutoScroll();
           }
 
-          // Trigger data refresh with skeleton loading when navigating via "More" button
-          // This ensures skeleton shows first, then fresh data loads
+          // Trigger data refresh with skeleton loading when navigating via "More" button.
+          //
+          // Phase 4.42 — call onTabSelected() SYNCHRONOUSLY (no addPostFrameCallback).
+          // Why: IndexedStack keeps MoviesPage/SeriesPage mounted at all times, so
+          // _moviesKey.currentState / _seriesKey.currentState are always available
+          // immediately — we don't need to wait for the tab to become visible.
+          // Calling onTabSelected() synchronously here means the setState inside
+          // _refreshData() (which clears _movies and sets _isLoading=true) batches
+          // with the setState(() => _currentIndex = index) above, so Flutter
+          // rebuilds both _HomePageState and MoviesPageState in the SAME frame.
+          // The user sees the skeleton the instant the Movies tab becomes visible.
+          //
+          // The previous implementation wrapped onTabSelected() in
+          // addPostFrameCallback, which caused a 1-frame delay between the tab
+          // becoming visible (showing STALE movies data) and the skeleton
+          // appearing. Bro reported this as "Skeleton Loading ပေါ်လာတာ မြန်ဆန်
+          // တာတောင်မဟုတ်" (skeleton doesn't appear fast enough when tapping More).
+          //
+          // This matches the pattern already used by onDestinationSelected
+          // (bottom nav tap) — see lines ~440-445.
           if (index == kMoviesTab) {
-            // Use addPostFrameCallback to ensure the tab is visible before refreshing
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              final state = _moviesKey.currentState;
-              if (state != null) (state as dynamic).onTabSelected();
-            });
+            final state = _moviesKey.currentState;
+            if (state != null) (state as dynamic).onTabSelected();
           } else if (index == kSeriesTab) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              final state = _seriesKey.currentState;
-              if (state != null) (state as dynamic).onTabSelected();
-            });
+            final state = _seriesKey.currentState;
+            if (state != null) (state as dynamic).onTabSelected();
           }
         },
       ),
