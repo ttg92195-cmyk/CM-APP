@@ -4520,3 +4520,48 @@ Stage Summary:
 - No new dependencies
 - Visual effect: picking "Animation" from All Genres dropdown now shows ALL Animation posts in the database (not just the 5 that happened to be in page 1). Same for All Years. A loading spinner shows briefly while the server-side query runs (~500-1500ms). Clearing the filter restores the paginated _allPosts view.
 - Side-effect-free: search path unchanged (still uses _isSearching + _globalSearchResults). Pagination path unchanged (still uses _allPosts + _loadMore). The two new state fields default to false/empty so the app starts in the same state as before.
+
+---
+Task ID: Phase 4.44
+Agent: Main Agent
+Task: Bro reported two UI issues on Admin Panel → Series Post Edit screen:
+  1. Tapping "Season 1" (after scrolling down to the seasons section) shows a colored border line around the tile — "အနီရောင် မျဉ်းကြောင်း ပေါ်လာတာကိုဖယ်ရှားပါမယ်"
+  2. The "Add Episode (Download)" and "Add Episode (Watch)" buttons appear on the same line — Bro wants them stacked vertically:
+       Add Episode (Download)
+       Add Episode (Watch)
+Commit to GitHub main.
+
+Work Log:
+- Searched for files containing "Add Episode" — found two:
+  * lib/app/ui/screens/add_series_page.dart (Add Series page)
+  * lib/app/ui/screens/edit_movie_page.dart (Edit Movie page — handles series editing too)
+- Both files use the same ExpansionTile + Row(TextButton.icon × 2) pattern. Bro mentioned "Series Post Edit" so I fixed BOTH files to keep behavior consistent.
+
+Issue 1 — Colored border line on ExpansionTile when expanded:
+- Root cause: Material 3's default ExpansionTile uses `shape: RoundedRectangleBorder` with a `BorderSide` based on the theme's divider color. The border is transparent when collapsed but becomes visible when expanded — this is what Bro saw as "အနီရောင် မျဉ်းကြောင်း" (red/colored line).
+- Fix: set both `shape` and `collapsedShape` to `const Border()` (empty border) — removes the line in both expanded and collapsed states. The Card wrapper still provides the elevation/outline for the tile, so the visual hierarchy is preserved.
+- Considered alternatives: setting `shape: RoundedRectangleBorder(side: BorderSide.none)` (more verbose, same effect), or removing the Card wrapper (would lose elevation). Empty `Border()` is the cleanest.
+
+Issue 2 — Add Episode buttons on same line:
+- Root cause: the two `TextButton.icon` widgets were inside a `Row`, so they shared horizontal space. On narrow screens or with long button labels, they would either wrap awkwardly or be cramped together — Bro reported "ကနေရာမဆံဘူထင်ရပါတယ်" (looks like they're not separated).
+- Fix: changed `Row` to `Column` with `crossAxisAlignment: CrossAxisAlignment.stretch` so each button gets its own full-width line, exactly matching Bro's requested layout:
+    Add Episode (Download)
+    Add Episode (Watch)
+- Removed the `SizedBox(width: 8)` between them since Column spacing is now handled by the buttons' default vertical padding.
+- `crossAxisAlignment: stretch` makes the buttons expand to full width — easier tap target on mobile.
+
+Verification:
+- Ran scripts/phase4_43_balance_check.py on both files: OK — balanced.
+  * add_series_page.dart: openers={'(': 750, '{': 99, '[': 68} closers match
+  * edit_movie_page.dart: openers={'(': 1346, '{': 156, '[': 121} closers match
+
+Stage Summary:
+- Commit: 783f607 on origin/main
+- Modified files (2):
+  * lib/app/ui/screens/add_series_page.dart (+20, -3)
+  * lib/app/ui/screens/edit_movie_page.dart (+19, -3)
+- No new files, no new dependencies
+- Visual effect:
+  * Tapping a Season card to expand it no longer shows a colored border line around the tile — clean Card elevation only.
+  * Add Episode (Download) and Add Episode (Watch) buttons now appear on separate lines, each full-width, exactly as Bro requested.
+- Both Add Series page and Edit Movie page updated for consistency — Bro can add/edit series from either entry point and see the same UI.
