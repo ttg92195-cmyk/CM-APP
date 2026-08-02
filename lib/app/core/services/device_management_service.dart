@@ -327,11 +327,26 @@ class DeviceManagementService {
           // registerDevice self-sufficient — it no longer depends on
           // signup having completed the doc creation.
           //
+          // Phase 4.48 — CRITICAL FIX: removed isAdmin/role/isVip/
+          // isBanned/forceLogout from this tx.set() payload. This
+          // transaction runs on EVERY login (login_page.dart:147). After
+          // an app update, the Firestore SQLite cache is wiped and
+          // tx.get() can transiently return "not exists" for an existing
+          // admin user (auth-state propagation delay). When that happens,
+          // the old code would tx.set({isAdmin: false, role: 'user',
+          // ...}, merge: true) which could overwrite the admin's
+          // isAdmin:true on the server (if rules are stale) OR at minimum
+          // pollute the doc with default admin fields. Writing ONLY safe
+          // non-admin fields means merge:true preserves any existing
+          // admin status server-side. For a genuine new signup where the
+          // doc truly doesn't exist, the admin fields stay absent (null)
+          // → isCurrentUserAdmin returns false → correct.
+          //
           // Note: tx.set() inside a transaction goes through the
           // /users/{userId} `create` rule (isOwner + safeSignupFields).
           // Both conditions are satisfied: the caller is the Auth user
-          // matching `uid`, and the payload sets all admin fields to
-          // safe non-elevated values (false / 'user').
+          // matching `uid`, and the payload no longer contains any
+          // admin fields (so safeSignupFields trivially passes).
           final now = DateTime.now();
           final regDate = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
           // Extract username/email from auth user if available, fall
@@ -350,11 +365,6 @@ class DeviceManagementService {
           tx.set(userDocRef, {
             'username': username,
             'email': email,
-            'isAdmin': false,
-            'role': 'user',
-            'isVip': false,
-            'isBanned': false,
-            'forceLogout': false,
             'registrationDate': regDate,
             'createdAt': FieldValue.serverTimestamp(),
             'logged_in_devices': newDevicesList,

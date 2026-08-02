@@ -683,14 +683,77 @@ class AppConfig extends ChangeNotifier {
             );
           }
 
-          _currentUser = {
-            'uid': uid,
-            'username': username,
-            'isAdmin': false,
-            'loginDate': now.toIso8601String(),
-            'registrationDate': regDate,
-            'email': email,
-          };
+          // Phase 4.48 — CRITICAL FIX: RE-FETCH the doc after the .set()
+          // attempt and populate _currentUser from the ACTUAL Firestore
+          // data — NOT from hardcoded isAdmin:false defaults.
+          //
+          // BEFORE: this block unconditionally set
+          // _currentUser = {... 'isAdmin': false ...} regardless of
+          // whether the .set() succeeded, failed, or was a no-op
+          // against an existing admin doc. This caused an in-memory
+          // admin→user downgrade for the rest of the session even when
+          // the server-side doc was correctly preserved by
+          // preservesAdminOnlyFields() rules.
+          //
+          // AFTER: we re-fetch the doc (Strategy 1 then Strategy 2
+          // fallback) and read isAdmin/role/isVip/etc. from the ACTUAL
+          // Firestore data. If the re-fetch succeeds, _currentUser
+          // reflects the true admin status. If the re-fetch STILL
+          // returns nothing (genuine new signup on a fresh account),
+          // we fall back to isAdmin:false — which is correct because a
+          // brand-new account has never been admin-promoted.
+          Map<String, dynamic>? refetchedDoc;
+          try {
+            final refetchSnap = await _firestore.collection('users').doc(uid).get();
+            if (refetchSnap.exists) {
+              refetchedDoc = refetchSnap.data();
+            } else {
+              // Strategy 2 fallback — same as the original read above.
+              // Uses the public list rule to bypass any auth-propagation
+              // delay that might still be affecting Strategy 1.
+              final fallbackSnap = await _firestore
+                  .collection('users')
+                  .where(FieldPath.documentId, isEqualTo: uid)
+                  .get();
+              if (fallbackSnap.docs.isNotEmpty) {
+                refetchedDoc = fallbackSnap.docs.first.data();
+              }
+            }
+          } catch (refetchErr) {
+            // Non-fatal: if the re-fetch fails (network glitch, etc.),
+            // we still set _currentUser with the safe defaults below.
+            // The next login attempt will re-read the doc correctly.
+            debugPrint('_loadUserProfile: post-set refetch failed (non-fatal): $refetchErr');
+          }
+
+          if (refetchedDoc != null) {
+            // Use the ACTUAL Firestore data — preserves admin status.
+            _currentUser = {
+              'uid': uid,
+              'username': refetchedDoc['username'] ?? username,
+              'isAdmin': refetchedDoc['isAdmin'] == true,
+              'role': refetchedDoc['role'],
+              'isVip': refetchedDoc['isVip'] == true,
+              'isBanned': refetchedDoc['isBanned'] == true,
+              'forceLogout': refetchedDoc['forceLogout'] == true,
+              'loginDate': now.toIso8601String(),
+              'registrationDate': refetchedDoc['registrationDate'] ?? regDate,
+              'email': refetchedDoc['email'] ?? email,
+            };
+            debugPrint('_loadUserProfile: post-set refetch OK, isAdmin=${refetchedDoc['isAdmin'] == true}');
+          } else {
+            // Genuine new signup — doc truly doesn't exist (or re-fetch
+            // failed). Safe defaults are correct here because a brand-
+            // new account has never been admin-promoted.
+            _currentUser = {
+              'uid': uid,
+              'username': username,
+              'isAdmin': false,
+              'loginDate': now.toIso8601String(),
+              'registrationDate': regDate,
+              'email': email,
+            };
+          }
         }
       }
     } catch (e) {
@@ -909,20 +972,38 @@ class AppConfig extends ChangeNotifier {
       }
 
       try {
+        // Phase 4.48 — CRITICAL FIX: removed isAdmin/role/isVip/isBanned/
+        // forceLogout from this .set() payload.
+        //
+        // BEFORE: this wrote {isAdmin: false, role: 'user', isVip: false,
+        // isBanned: false, forceLogout: false, ...} with merge:true. On a
+        // genuine new signup that's fine. BUT after an APP UPDATE, the
+        // Firestore SQLite cache gets wiped, and Strategy 1's
+        // .doc(uid).get() can transiently return "not found" for an
+        // existing admin user (auth-state propagation delay). When that
+        // happens, this else-branch fires and the .set(merge:true) goes
+        // through. If the deployed Firestore rules lack
+        // preservesAdminOnlyFields() (or if rules are stale), the write
+        // SUCCEEDS and overwrites isAdmin:true → false + role:'admin' →
+        // 'user' on the server. Bro then has to manually re-promote in
+        // Firebase Console.
+        //
+        // EVEN IF rules block the server-side write, the local
+        // _currentUser['isAdmin'] was being set to false unconditionally
+        // (see line 686 below) → UI showed the admin as a regular user
+        // for the rest of the session.
+        //
+        // FIX: write ONLY the safe non-admin fields. merge:true means
+        // existing admin fields (isAdmin:true, role:'admin') are
+        // PRESERVED on the server. The preservesAdminOnlyFields() rule
+        // passes because request.resource.data.get('isAdmin', null)
+        // (post-merge = existing value) == resource.data.get('isAdmin',
+        // null) (pre-write = existing value). For a genuine new signup
+        // where the doc truly doesn't exist, the admin fields stay
+        // absent (null) → isCurrentUserAdmin returns false → correct.
         await _firestore.collection('users').doc(uid).set({
           'username': username,
           'email': email,
-          'isAdmin': false,
-          // Phase 3.21 — Explicitly set all role/status fields that
-          // _loadUserProfile and the Firestore rules reference. While
-          // the rules' safeSignupFields() check passes for missing
-          // fields (null != true), explicitly setting them makes the
-          // doc more robust and matches what _loadUserProfile expects
-          // to read (avoiding null-coalesce fallbacks).
-          'role': 'user',
-          'isVip': false,
-          'isBanned': false,
-          'forceLogout': false,
           'registrationDate': regDate,
           'createdAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
@@ -1060,10 +1141,16 @@ class AppConfig extends ChangeNotifier {
         }
 
         try {
+          // Phase 4.48 — CRITICAL FIX: removed isAdmin from this .set()
+          // payload. See _tryCreateUserDocBlocking above for full
+          // rationale. Short version: writing isAdmin:false with
+          // merge:true can overwrite an existing admin's isAdmin:true
+          // when the else-branch fires due to transient "doc not found"
+          // after an app update. Writing only safe non-admin fields
+          // preserves any existing admin status server-side.
           await _firestore.collection('users').doc(uid).set({
             'username': username,
             'email': email,
-            'isAdmin': false,
             'registrationDate': regDate,
             'createdAt': FieldValue.serverTimestamp(),
           }, SetOptions(merge: true));
