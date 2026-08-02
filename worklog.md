@@ -4936,3 +4936,72 @@ Stage Summary:
 - Genuine new signups still work: the doc gets created with safe non-admin fields, and isAdmin stays absent (null) → isCurrentUserAdmin returns false → correct for a brand-new account.
 - The deployed firestore.rules already has preservesAdminOnlyFields() (lines 41-50). Bro should still run 'firebase deploy --only firestore:rules' to ensure the latest rules are live. But even with stale rules, this client-side fix prevents the .set() from ever including isAdmin/role in the payload, so the server-side doc is safe regardless of deployed rule version.
 - 3 files modified: lib/more_libs/setting/app_config.dart (2 .set() payloads cleaned + _currentUser re-fetch logic), lib/app/core/services/device_management_service.dart (1 tx.set payload cleaned).
+
+---
+Task ID: 1
+Agent: Explore agent
+Task: Locate the Download tab/icon in Movie/Series detail screens, find how to navigate to the global Downloads tab in Home, and figure out the Back-return behavior.
+
+Work Log:
+- Read last ~80 lines of worklog.md to see prior agent context (Phase 4.48 admin-downgrade fix — unrelated to this task).
+- Listed lib/app/ui/ to identify candidate files: movie_detail_screen.dart, series_detail_screen.dart, home/home_page.dart, home/home_screen.dart, home/library_page.dart, download_page.dart, movie_download_screen.dart, series_download_screen.dart.
+- Grepped movie_detail_screen.dart and series_detail_screen.dart for "download" — found the Download button code in both.
+- Read the surrounding ACTION BUTTONS section in both detail screens (movie lines 760-886, series lines 615-739) to confirm widget type, shape, and onPressed.
+- Read home_page.dart in chunks (lines 1-120, 243-367, 369-543, 540-699) to map out: 4-tab bottom nav, drawer with Downloads item, _pushRouteWithBannerPause helper, floating DownloadMiniIndicator.
+- Grepped home_screen.dart for navigation callbacks — found onNavigateToTab callback (only used to switch between bottom-nav tabs Home/Movies/Series).
+- Grepped download_page.dart for class structure and any WillPopScope/PopScope/leading/BackButton handling — none exist; relies on default AppBar back arrow + system back.
+- Grepped lib-wide for _pushRouteWithBannerPause, onTabSelected, onNavigateToTab, navigateToDownloads, switchToTab, goToTab to find existing programmatic tab-switch patterns.
+- Read MovieDownloadScreen and SeriesDownloadScreen headers + their existing "View" SnackBar action (which already pushes DownloadPage) to confirm those are intermediate per-post pages, separate from the global DownloadPage.
+- Grepped detail screens for all Icons.download / IconButton / BoxShape.circle / StadiumBorder occurrences to confirm the only Download icon is inside the ElevatedButton.icon (no other download affordance in the detail screen).
+- Confirmed DownloadPage imports already exist in movie_download_screen.dart and series_download_screen.dart (they use it for the "View" SnackBar action) but NOT in movie_detail_screen.dart or series_detail_screen.dart (those import the per-post download screens instead).
+
+Stage Summary:
+- Movie detail Download tab/icon: `lib/app/ui/screens/movie_detail_screen.dart:826-886` (button block; Row starts at :791). Widget = `ElevatedButton.icon` inside `Expanded` (left half of Row; "Watch Now" is the right half at :794-823). Icon = `Icon(appConfig.isDownloadAllowedForUser ? Icons.download : Icons.lock_outline, size: 20)` (:859-864). Label = `Text('Download')` (:865). Current shape = `RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))` (:881-883) — boxy rectangle, NOT a circle. Current onPressed (:830-858): if `detail.downloadLinks.isEmpty` → disabled (null); else if non-VIP/non-Admin → SnackBar + push `VipPage`; else → `Navigator.push(MaterialPageRoute(builder: (_) => MovieDownloadScreen(movieDetail: detail)))`. NOT a tab in a TabBar — it's a single full-width split action button.
+- Series detail Download tab/icon: `lib/app/ui/screens/series_detail_screen.dart:685-739` (button block; Row starts at :657). Widget = `ElevatedButton.icon` inside `Expanded` (left half; "Watch Now" right half at :659-683). Icon = `Icon(appConfig.isDownloadAllowedForUser ? Icons.download : Icons.lock_outline, size: 20)` (:718-723). Label = `Text('Download')` (:724). Current shape = `RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))` (:736). Current onPressed (:689-717): if `!hasDownloadLinks` (hasDownloadLinks computed at :340) → disabled; else if non-VIP → SnackBar + push `VipPage`; else → `Navigator.push(MaterialPageRoute(builder: (_) => SeriesDownloadScreen(seriesDetail: detail)))`.
+- Home Downloads tab: `lib/app/ui/home/home_page.dart`. Bottom nav has only 4 tabs — `kHomeTab=0, kMoviesTab=1, kSeriesTab=2, kSettingsTab=3` (:25-28); there is NO "Downloads" tab in the bottom nav. The "Downloads" entry is a DRAWER item at `home_page.dart:590-630` (`_buildDrawerItem` with `Icons.download_outlined`/`Icons.download` and label `appConfig.translate('downloads')`). Its onTap (:596-629) does: `Navigator.pop(context)` (close drawer) → on Android check `DownloadManagerService.instance.hasRuntimePermission()` → request if missing → SnackBar if denied → `_pushRouteWithBannerPause((_) => const DownloadPage())` (:628). To switch programmatically from anywhere in the app, just call `Navigator.push(context, MaterialPageRoute(builder: (_) => const DownloadPage()))` — same pattern used by the floating `DownloadMiniIndicator` at home_page.dart:336-360 (pushes DownloadPage at :357). The bottom-nav tab-switch callback `onNavigateToTab(int)` (home_screen.dart:16-18, wired at home_page.dart:67, called from HomeScreen at :691/:704) only handles the 4 bottom-nav tabs and CANNOT be used to open Downloads.
+- Downloads screen: `lib/app/ui/screens/download_page.dart`. `class DownloadPage extends StatefulWidget` (:11), state `_DownloadPageState` (:18). Build returns a `Scaffold` with `AppBar(title: Text(appConfig.translate('download_manager')), actions:[settings, clear-completed])` (:60-83) and a body Column with `DownloadNotificationBanner` + Android storage-permission banner + download toggle + stats + task list. Reached via `Navigator.push(MaterialPageRoute(builder: (_) => const DownloadPage()))` from 4 places: `home_page.dart:357` (floating indicator), `home_page.dart:628` (drawer item), `movie_download_screen.dart:143-146` ("View" SnackBar action after starting a download), `series_download_screen.dart:139-141` (same). Back handling: NO `WillPopScope` / `PopScope` wrapper, NO explicit `leading` in AppBar → `automaticallyImplyLeading` defaults to true → AppBar shows back arrow, Android system back pops the route. So tapping Back from DownloadPage returns to whatever route pushed it — if pushed from Movie/Series detail screen, returns to that detail screen automatically (no extra wiring needed).
+- Existing navigation helpers:
+  * `onNavigateToTab(int index)` — callback on `HomeScreen` (home_screen.dart:16-18), wired at home_page.dart:67. Only switches bottom-nav tabs (0..3). Cannot navigate to Downloads.
+  * `onTabSelected()` — method on `MoviesPageState` (movies_page.dart:49) and `SeriesPageState` (series_page.dart:48). Called from `_HomePageState` at home_page.dart:122/125/455/458 to trigger data refresh when switching to Movies/Series tab. Not relevant to Downloads.
+  * `_pushRouteWithBannerPause<T>(WidgetBuilder builder, {bool refreshOnReturn = false})` — private helper in `_HomePageState` (home_page.dart:243-258). Wraps `Navigator.push(MaterialPageRoute(builder: builder))` with Home banner auto-scroll pause/resume. Cannot be called from detail screens (private + Home-only context).
+  * No global `navigateToDownloads` / `switchToTab` / `goToTab` / `selectTab` helper exists. Every site that needs to open DownloadPage uses `Navigator.push(context, MaterialPageRoute(builder: (_) => const DownloadPage()))` inline.
+- Recommended approach for Phase 4.49:
+  1. In `movie_detail_screen.dart` lines 826-886 (Download `ElevatedButton.icon`):
+     - Change shape from `RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))` to `StadiumBorder()` (or `RoundedRectangleBorder(borderRadius: BorderRadius.circular(30))`) for a pill/circular look. Apply the same to the sibling "Watch Now" button (:794-823) for visual consistency.
+     - Replace the onPressed "push MovieDownloadScreen" branch (:852-857) with `Navigator.push(context, MaterialPageRoute(builder: (_) => const DownloadPage()))`. Keep the VIP-gate SnackBar+VipPage branch (:833-851) intact.
+     - Add `import 'package:cm_movies/app/ui/screens/download_page.dart';` at top of file. (The existing `movie_download_screen.dart` import can be left in place if still used elsewhere, or removed if the only use was this button — verify before removing.)
+  2. Same edits in `series_detail_screen.dart` lines 685-739 — replace `SeriesDownloadScreen` push with `DownloadPage` push, change shape to `StadiumBorder()`, add the `download_page.dart` import.
+  3. Back-return to the detail screen is automatic — DownloadPage is pushed onto the Navigator stack on top of the detail screen, so Android system Back + AppBar back arrow pop it and return to the detail screen. No PopScope/WillPopScope wiring needed.
+  4. Optional: replicate the Android storage-permission pre-check from `home_page.dart:600-625` before pushing DownloadPage, OR rely on DownloadPage's own `_buildPermissionBanner` (download_page.dart:96) which already handles the missing-permission case. The latter is simpler and consistent with how `movie_download_screen.dart` already handles it.
+  5. If Bro wants the button to literally be a small circle (icon-only, not a wide pill), replace the `ElevatedButton.icon` with a circular `IconButton` wrapped in a `Container(decoration: BoxDecoration(shape: BoxShape.circle, color: accentColor))` — but that loses the "Download" text label, which is currently useful UX. Confirm with Bro whether "circle" means pill-shape (keep text) or true circle (icon-only).
+
+---
+Task ID: 4.49
+Agent: Main Agent
+Task: Make the Download button in Movie/Series detail screens CIRCULAR (instead of square/ugly) and have it jump straight to the global Downloads tab when tapped. Back from Downloads returns to the detail screen.
+
+Work Log:
+- Delegated research to Explore agent (Task 1): found Download button is ElevatedButton.icon with RoundedRectangleBorder(borderRadius: 10) taking half the row width (Expanded) in both movie_detail_screen.dart:826-886 and series_detail_screen.dart:685-739. Watch Now is the sibling Expanded button. The global Downloads is NOT a bottom-nav tab — it's a drawer entry that pushes DownloadPage via Navigator.push. Back from DownloadPage automatically pops to whatever pushed it (no PopScope needed).
+- Decision: keep Watch Now as the wide Expanded primary action (Bro only complained about Download's shape). Make Download a 56×56 circular icon-only IconButton next to Watch Now — Netflix-style pattern (wide play button + circular download button).
+- movie_detail_screen.dart:
+  - Added import 'package:cm_movies/app/ui/screens/download_page.dart';.
+  - Removed unused import 'package:cm_movies/app/ui/screens/movie_download_screen.dart'; (no longer referenced after the onTap change).
+  - Replaced Expanded(ElevatedButton.icon(shape: RoundedRectangleBorder(10))) with SizedBox(56×56, IconButton(shape: CircleBorder())).
+  - Changed onPressed from pushing MovieDownloadScreen to pushing DownloadPage (the global Downloads tab).
+  - Preserved: VIP/Admin gate (non-VIP → orange SnackBar + VipPage push), disabled state when no download links, lock icon for non-VIP, download icon for VIP/Admin, accentColor background when allowed / grey when not.
+  - Added tooltip: 'Download' for accessibility.
+- series_detail_screen.dart:
+  - Same changes: added download_page.dart import, removed unused series_download_screen.dart import.
+  - Replaced Expanded(ElevatedButton.icon) with SizedBox(56×56, IconButton).
+  - Changed onPressed from pushing SeriesDownloadScreen to pushing DownloadPage.
+  - All existing behavior preserved.
+- Back-return is automatic: DownloadPage is pushed on top of the detail screen via Navigator.push, so system Back + AppBar back arrow pop it and return to the detail screen. No PopScope / WillPopScope wiring needed.
+- Bracket balance check passed (stack-based) on both modified files.
+- Committed and pushed to origin/main (commit 62487fe).
+
+Stage Summary:
+- Download button is now a true 56×56 circle (CircleBorder) instead of a square with 10px rounded corners. Visually modern, matches Netflix-style pattern.
+- Tapping the Download icon jumps straight to the global Downloads tab (DownloadPage) where the user can see all their active/completed downloads in one place.
+- Back from the Downloads tab returns to the Movie/Series detail screen automatically (Navigator.push + pop).
+- VIP/Admin gate, disabled state, lock icon, and accentColor background all preserved — no security or UX regression.
+- MovieDownloadScreen and SeriesDownloadScreen are still used elsewhere in the app (e.g. from DownloadPage itself when starting a fresh download), so they were NOT deleted — just no longer imported from the detail screens.
