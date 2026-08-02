@@ -4821,3 +4821,118 @@ Stage Summary:
 - 3 sites with undersized tap targets (28-40px) now use the default 48×48 (a11y compliant).
 - Visual styles preserved everywhere (black tint, red borders, icon sizes, colors) — only the ripple shape and tap-target size changed.
 - Shared AppIconButton component created for future use cases needing a circular background tint in addition to the ripple.
+
+---
+Task ID: 1
+Agent: Explore agent
+Task: Investigate why Admin user gets downgraded to regular User after an app update — find role READ path, role WRITE path, login flow sequence, and any caching.
+
+Work Log:
+- Read tail of worklog.md (last ~80 lines) for prior-agent context. Most recent commit was Phase 4.47 (IconButton ripple). No prior work on the admin-downgrade bug.
+- Located the auth/role state machine: `lib/more_libs/setting/app_config.dart` (1961 lines). This file owns `_currentUser` (in-memory Map), `loginUser`, `registerUser`, `_loadUserProfile`, `_tryCreateUserDocBlocking`, `_createUserDocInBackground`, `_initAuth` (authStateChanges listener), and the `isCurrentUserAdmin` getter.
+- Searched `lib/` for `isAdmin|userRole|adminRole|userType|'role'|"role"|role == 'admin'` → 9 hits. The only meaningful admin-role getter is `app_config.dart:178  bool get isCurrentUserAdmin => _currentUser?['isAdmin'] == true;`. UI consumers: `home_page.dart:633,780,828` (drawer Admin Panel item + VIP card), `profile_page.dart`, `admin_users_page.dart`, `device_management_service.dart:257` (admin→999 device limit). No `role == 'admin'` string-comparison check anywhere in the live app — `role` is written but only read by the (dead-code) `firebase_service.loginAsAdmin` and by Firestore rules.
+- Confirmed `firebase_service.dart` (loginWithEmail / loginAsAdmin / registerWithEmail / _createUserProfile at line 162-181 with a non-merge `.set()`) is DEAD CODE — grep for `FirebaseService()` / `loginWithEmail(` / `loginAsAdmin(` / `registerWithEmail(` shows zero external callers. The live login path is `login_page.dart:135 → appConfig.loginUser(...)`. So `firebase_service.dart` is not the culprit, but it's a landmine if anyone ever wires it up.
+- Searched `lib/` for SharedPreferences admin/role keys (`is_admin`, `user_role`, `admin_role`, `prefs.setBool(... admin)`, `prefs.setString(... role)`, etc.) → ZERO matches. The admin role is NOT cached in SharedPreferences. It lives only in the in-memory `_currentUser` Map (declared at `app_config.dart:126`), populated from Firestore on each login / cold-start. The Map is wiped on logout (`app_config.dart:1777`). So there is NO local role cache to invalidate — the "caching" hypothesis from the prompt is ruled out.
+- Read `firestore.rules` (485 lines). The `/users/{userId}` rule (line 318-378) has:
+    allow read: if true;                                  // line 369 — public read (incl. list + get)
+    allow create: if isOwner(userId) && safeSignupFields();   // line 372
+    allow update: if isOwner(userId) && preservesAdminOnlyFields() || isAdmin();  // line 377
+  `preservesAdminOnlyFields()` (line 41-50) requires `request.resource.data.get('isAdmin', null) == resource.data.get('isAdmin', null)` AND same for `role`, `isVip`, `vipExpiry`, `vipGrantedAt`, `isBanned`, `forceLogout`, `forceLogoutAt`. So in theory a `.set({isAdmin: false, role: 'user'}, merge: true)` on an existing admin doc should be DENIED. **However**: the bug Bro reports (admin doc literally losing isAdmin:true in Firebase Console) can only happen if either (a) the deployed rules are STALE (older than this file), or (b) the write somehow lands on the `create` path (e.g. the doc was deleted out from under the user — unlikely), or (c) a path bypasses merge (none found). The most likely real-world scenario: the deployed rules don't yet have `preservesAdminOnlyFields()` (or have an older version of it), so the .set() succeeds and overwrites isAdmin. **Action item: Bro should run `firebase deploy --only firestore:rules` to make sure the file at `/home/z/my-project/firestore.rules` is live.**
+- Identified ALL writes to `/users/{uid}`:
+    1. `app_config.dart:202`  — `_autoExpireVip` `.update({isVip:false, vipExpiry:''})` — does NOT touch isAdmin/role. SAFE.
+    2. `app_config.dart:912-928` — `_tryCreateUserDocBlocking` `.set({username, email, isAdmin:false, role:'user', isVip:false, isBanned:false, forceLogout:false, registrationDate, createdAt}, SetOptions(merge:true))` — **SUSPECT #1**. Triggered from `_loadUserProfile` else-branch (line 662) whenever the profile read returns "doc not found".
+    3. `app_config.dart:1063-1069` — `_createUserDocInBackground` `.set({username, email, isAdmin:false, registrationDate, createdAt}, SetOptions(merge:true))` — **SUSPECT #2**. Triggered as fallback when #1 fails (line 677), AND from the authStateChanges listener (line 417-423) on cold-start when a pending signup is sitting in SharedPreferences.
+    4. `device_management_service.dart:350-369` — `registerDevice` transaction `tx.set(userDocRef, {username, email, isAdmin:false, role:'user', isVip:false, isBanned:false, forceLogout:false, registrationDate, createdAt, logged_in_devices:[...]})` — **SUSPECT #3 (race)**. Guarded by `if (!userDoc.exists)` at line 318, BUT the tx.get() inside the transaction can return "not exists" if the Firestore SDK auth state hasn't propagated (exactly the post-app-update scenario). Triggered on every login (`login_page.dart:147`) and every signup (`login_page.dart:462`) and self-heal on Profile tab (`profile_page.dart:83`).
+    5. `admin_users_page.dart:99,134,171,317,378` — admin-only `.update()` for ban/forceLogout/changeRole/revokeVip/grantVip. The `_changeRole` at line 171-174 writes both `isAdmin` and `role`. Admin-only by rules — only a real admin can call this. NOT a suspect (a malicious admin could downgrade, but that's by design).
+    6. `fcm_notification_service.dart:135` — `_savePlayerIdToFirestore` `.set({oneSignalPlayerId, oneSignalUpdatedAt}, merge:true)` — does NOT touch isAdmin/role. SAFE (preservesAdminOnlyFields passes because the merged request.resource.data preserves the existing isAdmin:true).
+    7. `firebase_service.dart:53,168,195,277` — DEAD CODE (no callers). `_createUserProfile` at line 168 uses `.set()` WITHOUT merge:true — would clobber the entire doc including isAdmin if it were ever called. Landmine.
+- Traced the LOGIN flow sequence (app_config.dart:1566-1761):
+    1. `_isLoginInProgress = true` (line 1573) — guards authStateChanges listener.
+    2. `_usernameToEmail(username)` (line 1575) — may query `/users/` by username (case-insensitive) to resolve email.
+    3. `_auth.signInWithEmailAndPassword(email, password)` (line 1578).
+    4. `user.getIdToken(true)` (line 1594) — force token refresh.
+    5. `await Future.delayed(400ms)` (line 1607).
+    6. Retry loop ×3 (line 1626-1669):
+       a. On retry: `user.reload()` + `user.getIdToken(true)` (line 1631-1633).
+       b. `_loadUserProfile(user.uid)` (line 1639):
+          - Strategy 1: `_firestore.collection('users').doc(uid).get()` (line 515).
+          - If Strategy 1 throws: Strategy 2: `.where(FieldPath.documentId, isEqualTo: uid).limit(1).get()` (line 528-532) — uses the public `allow read: if true` list rule.
+          - If exists → set `_currentUser = {uid, username, isAdmin: _isTruthy(data['isAdmin']), isVip, vipExpiry, loginDate, registrationDate, email}` (line 546-556). GOOD — reads the actual admin value.
+          - If NOT exists (else-branch, line 589):
+            * Read pending signup from SharedPreferences (line 632).
+            * `_tryCreateUserDocBlocking(...)` → `.set({isAdmin:false, role:'user', ...}, merge:true)` (line 912-928). **This is the write that downgrades the admin doc if rules don't block it.**
+            * If that fails: `_createUserDocInBackground(...)` → `.set({isAdmin:false, ...}, merge:true)` (line 1063-1069). **Same problem, runs up to 6 min in background.**
+            * Set `_currentUser = {uid, username, isAdmin: false, ...}` (line 686-693) — **LOCAL DOWNGRADE happens here unconditionally, regardless of whether the .set() succeeded.** This is the "slight delay then treated as regular User" symptom Bro sees.
+       c. If `_currentUser != null` after _loadUserProfile → break (success).
+       d. If retryable error (unavailable / network-* / permission-denied) → backoff (400ms × attempt) and retry.
+    7. If `_currentUser == null` after all 3 attempts → return false with diagnostic.
+    8. `finally`: `_isLoginInProgress = false` (line 1759).
+    9. After loginUser returns true → `login_page.dart:147  deviceService.registerDevice(user.uid)` runs — this is yet another tx.get() → potential tx.set({isAdmin:false, role:'user'}) if the doc "doesn't exist" inside the transaction (SUSPECT #3 race).
+- Traced the APP-STARTUP / cold-start flow (`_initAuth` at line 367-444):
+    - `AppConfig()` constructor → `_initAuth()` → `_loadLocalConfig()` (loads theme/lang/download flags from SharedPreferences — NO role) → `_auth.authStateChanges().listen(...)`.
+    - On cold-start with a persisted Auth user (user != null && _currentUser == null, line 384):
+        1. `_loadUserProfile(user.uid)` (line 387) — same dual-strategy + else-branch auto-create pattern. **If the Firestore SDK hasn't propagated auth state yet (very likely right after an app update when the local SQLite cache may be wiped), Strategy 1 fails with permission-denied AND Strategy 2 may also fail or return no docs → else-branch fires → .set({isAdmin:false, role:'user'}) attempted → local _currentUser['isAdmin'] = false.**
+        2. Read pending signup from SharedPreferences (line 412).
+        3. If pending signup matches the user's email → fire `_createUserDocInBackground({isAdmin:false, ...})` (line 417-423). For an admin who registered long ago, there should be NO pending signup, so this path shouldn't fire. But if a prior registration on the device left a stale pending signup that happens to match the admin's email, this WILL fire and attempt the .set() with isAdmin:false.
+- Verified App Check is DISABLED (commented out at `main.dart:159-235`). So App Check isn't blocking the reads.
+- Verified Firestore offline persistence is ENABLED with unlimited cache (`main.dart:113-116`). On app update, the Firestore SDK's local SQLite cache is normally preserved, BUT the SDK version bundled into the new APK may use a different cache schema → cache is wiped on first launch of the new version. This is the "post-app-update" trigger: the first login after the update has a cold cache + delayed auth-state propagation, which is exactly when `_loadUserProfile`'s else-branch misfires.
+
+Stage Summary:
+- Role field name + Firestore path: TWO fields coexist on `/users/{uid}` — `isAdmin` (bool, read by `isCurrentUserAdmin` getter at `app_config.dart:178`) and `role` (string 'admin'|'user', read by `firebase_service.loginAsAdmin` and by Firestore rules `isAdmin()` helper at `firestore.rules:6-10`). The live app code only consults `isAdmin`; `role` is write-only from the client's perspective (read by rules only).
+- Role READ location(s):
+  * `app_config.dart:515` — Strategy 1 `.doc(uid).get()` → `data['isAdmin']` (line 550).
+  * `app_config.dart:528-532` — Strategy 2 `.where(FieldPath.documentId).get()` → `data['isAdmin']` (line 550).
+  * `app_config.dart:178` — `isCurrentUserAdmin` getter (in-memory cache).
+  * `device_management_service.dart:257,374` — for device-limit calc.
+  * `admin_users_page.dart:46` — for admin user list rendering.
+  * `firebase_service.dart:89-90` — DEAD CODE.
+- Role WRITE location(s) — listed most-dangerous first:
+  * `app_config.dart:912-928` (_tryCreateUserDocBlocking) — `.set({isAdmin:false, role:'user', ...}, SetOptions(merge:true))`. merge:true OVERWRITES existing isAdmin/role if rules allow. Triggered from _loadUserProfile else-branch (line 662).
+  * `app_config.dart:1063-1069` (_createUserDocInBackground) — `.set({isAdmin:false, ...}, SetOptions(merge:true))`. Triggered as fallback (line 677) and from authStateChanges cold-start path (line 417) when a pending signup is in SharedPreferences.
+  * `device_management_service.dart:350-369` (registerDevice tx.set) — NO merge option, but only runs when tx.get() reports the doc as missing. Race-prone: tx.get() inside the transaction can see "not exists" due to Firestore SDK auth-state propagation delay right after an app update, even when the doc really exists. Triggered on every login (`login_page.dart:147`).
+  * `admin_users_page.dart:171-174` (_changeRole) — admin-only `.update({isAdmin, role})`. By-design admin action, not the bug.
+  * `firebase_service.dart:168` (_createUserProfile) — DEAD CODE, `.set()` WITHOUT merge:true. Would clobber the whole doc. Landmine if ever wired up.
+  * `fcm_notification_service.dart:135` — merge set that ONLY touches oneSignalPlayerId/oneSignalUpdatedAt. SAFE.
+- Login flow sequence (ordered):
+  1. loginUser sets `_isLoginInProgress=true`.
+  2. `_usernameToEmail(username)` — may list-query /users/ by username.
+  3. `_auth.signInWithEmailAndPassword(email, password)`.
+  4. `user.getIdToken(true)`.
+  5. wait 400ms.
+  6. retry loop ×3: `user.reload()` + `getIdToken(true)` (on retry) → `_loadUserProfile(uid)`.
+  7. _loadUserProfile: Strategy 1 `.doc(uid).get()` → on throw, Strategy 2 `.where(FieldPath.documentId).get()`.
+  8. If doc exists → `_currentUser` populated with REAL isAdmin value (GOOD).
+  9. If doc missing (else-branch) → `_tryCreateUserDocBlocking.set({isAdmin:false, role:'user', ...}, merge:true)` → on fail, `_createUserDocInBackground.set({isAdmin:false, ...}, merge:true)` → **`_currentUser` set locally with `isAdmin:false` REGARDLESS of .set() success/failure** (line 686-693). **THIS IS THE DOWNGRADE.**
+  10. After loginUser returns true → `login_page.dart:147 registerDevice(uid)` → tx.get → if "missing", tx.set({isAdmin:false, role:'user', ...}) (SUSPECT #3 race).
+  11. authStateChanges listener is suppressed during steps 1-10 via `_isLoginInProgress` flag; fires on next cold-start.
+- Caching: NO SharedPreferences caching of admin role. Role lives only in the in-memory `_currentUser` Map, repopulated from Firestore on every login / cold-start. Wiped on logout. So the "cache invalidation" hypothesis is ruled out — the symptom is purely a READ-MISS + UNCONDITIONAL-LOCAL-DOWNGRADE problem, not a stale-cache problem.
+- Most likely root cause: After an app update, the Firestore SDK's local SQLite cache is wiped (cache schema change between SDK versions). On the first login, Strategy 1's `.doc(uid).get()` goes to network with a not-yet-propagated auth state → permission-denied. Strategy 2 (`.where(FieldPath.documentId)`) SHOULD succeed (public list rule), but on a cold cache + slow network it can also return 0 docs transiently. _loadUserProfile then enters the else-branch and (a) attempts `.set({isAdmin:false, role:'user', ...}, merge:true)` — which, IF the deployed Firestore rules lack `preservesAdminOnlyFields()` (or have an older version), SUCCEEDS and overwrites the admin's `isAdmin:true` → `false` and `role:'admin'` → `'user'` in Firestore; (b) unconditionally sets the local `_currentUser['isAdmin'] = false` (line 686-693), so even if the .set() is blocked by rules, the app UI treats the user as non-admin for the current session. Both match Bro's symptom ("slight delay then treated as User"). The reason it ONLY happens after an app update is that the cache-wipe + auth-state-propagation-delay window only occurs on the first cold-start of a new app version.
+- Recommended fix (research-only — no code changed):
+  1. **Deploy current firestore.rules**: `firebase deploy --only firestore:rules`. The `preservesAdminOnlyFields()` check at `firestore.rules:41-50` SHOULD block the .set() overwrite. If the deployed rules are old, the .set() succeeds and clobbers isAdmin in Firebase — matching Bro's "manually re-promote in Firebase" symptom.
+  2. **Stop unconditionally setting `_currentUser['isAdmin'] = false`** at `app_config.dart:686-693`. After the .set() attempt (whether it succeeded, was blocked by rules, or failed), RE-FETCH the doc and read the actual isAdmin value. If the .set() was blocked by `preservesAdminOnlyFields()`, the existing `isAdmin:true` will come back and the user stays admin in the UI.
+  3. **Remove `isAdmin` and `role` from the .set() payloads** at `app_config.dart:912-928` and `:1063-1069`. These fields should only be written by `registerUser` (true signup) — not by every "doc-not-found" fallback path. For the fallback, write only `{username, email, registrationDate, createdAt}` with merge:true. preservesAdminOnlyFields will pass (no isAdmin/role in payload → request.resource.data.get('isAdmin', null) == resource.data.get('isAdmin', null) both null in the request side because merge doesn't include them... actually for merge:true the post-write doc DOES retain existing field values, so request.resource.data.isAdmin would equal the existing isAdmin:true and the check passes).
+  4. **Guard the else-branch** at `app_config.dart:589` so it only fires for genuine signup (when `_isLoginInProgress` was set by `registerUser`, or when a pending signup exists in SharedPreferences). For a plain loginUser call, if the doc genuinely doesn't exist after both strategies, surface a "profile not found, please contact support" error instead of auto-creating with isAdmin:false defaults.
+  5. **In `registerDevice` (device_management_service.dart:318-369)**, don't tx.set the full default payload with isAdmin:false/role:'user' if the doc doesn't exist inside the transaction. Either skip the auto-create (return allowed=true with empty devices — the original Phase 4.2 behavior) OR re-check via a non-transactional `.get()` before the transaction to confirm the doc truly doesn't exist (not just a stale tx.get()).
+  6. **In the authStateChanges cold-start path** at `app_config.dart:412-424`, only re-fire `_createUserDocInBackground` if the user explicitly has a pending signup from a recent registration. For an existing admin user, this path should be a no-op.
+
+---
+Task ID: 4.48
+Agent: Main Agent
+Task: CRITICAL FIX — stop Admin user from being auto-downgraded to regular User after every app update. Bro had to manually re-promote in Firebase Console each time.
+
+Work Log:
+- Delegated research to Explore agent (Task 1): found root cause across 3 layers. (1) After app update, Firestore SQLite cache is wiped → Strategy 1 .doc(uid).get() transiently returns "doc not found" for existing admin user (auth-state propagation delay) → _loadUserProfile else-branch fires. (2) _tryCreateUserDocBlocking / _createUserDocInBackground / registerDevice all did .set({isAdmin: false, role: 'user', ...}, merge: true) → if deployed rules lack preservesAdminOnlyFields() OR are stale, the write SUCCEEDS and overwrites isAdmin:true → false on the server. (3) EVEN IF rules block the server-side write, the local code at app_config.dart:686-693 unconditionally set _currentUser['isAdmin'] = false → UI showed admin as regular user for the rest of the session. Confirmed NO SharedPreferences caching of admin role (rules out cache-invalidation hypothesis).
+- Fix Layer 1 (app_config.dart _tryCreateUserDocBlocking, line ~912): removed isAdmin/role/isVip/isBanned/forceLogout from the .set() payload. Now writes ONLY {username, email, registrationDate, createdAt} with merge: true. Existing admin fields are PRESERVED on the server (merge:true + absent admin fields in payload → preservesAdminOnlyFields passes trivially).
+- Fix Layer 1 (app_config.dart _createUserDocInBackground, line ~1063): same fix — removed isAdmin from the .set() payload.
+- Fix Layer 1 (device_management_service.dart registerDevice tx.set, line ~350): same fix — removed isAdmin/role/isVip/isBanned/forceLogout from the tx.set() payload. This transaction runs on EVERY login (login_page.dart:147), so it was a major culprit.
+- Fix Layer 2 (app_config.dart _loadUserProfile else-branch, line ~686): replaced the unconditional _currentUser = {'isAdmin': false, ...} with a RE-FETCH of the doc after the .set() attempt. Re-fetch tries Strategy 1 (.doc(uid).get()) then Strategy 2 (.where(FieldPath.documentId, isEqualTo: uid).get()) fallback. If re-fetch succeeds, _currentUser is populated from the ACTUAL Firestore data (isAdmin, role, isVip, isBanned, forceLogout, registrationDate, email). If re-fetch STILL returns nothing (genuine new signup), falls back to isAdmin: false — correct for a brand-new account. Re-fetch is wrapped in try/catch so a network glitch doesn't break the login flow.
+- Verified FieldPath is already imported via 'package:cloud_firestore/cloud_firestore.dart' (line 6) — no new import needed.
+- Bracket balance check passed (stack-based) on both modified files.
+- Committed and pushed to origin/main (commit 27bea49).
+
+Stage Summary:
+- Server-side: admin fields (isAdmin:true, role:'admin') are NEVER touched by the auto-create fallback. Even if the else-branch fires due to a transient "doc not found" post-app-update, merge:true + absent admin fields in the payload means existing admin status is preserved.
+- Client-side: _currentUser is populated from the ACTUAL Firestore data after the .set() attempt, so even if Strategy 1 transiently failed, the re-fetch picks up the true admin status.
+- Genuine new signups still work: the doc gets created with safe non-admin fields, and isAdmin stays absent (null) → isCurrentUserAdmin returns false → correct for a brand-new account.
+- The deployed firestore.rules already has preservesAdminOnlyFields() (lines 41-50). Bro should still run 'firebase deploy --only firestore:rules' to ensure the latest rules are live. But even with stale rules, this client-side fix prevents the .set() from ever including isAdmin/role in the payload, so the server-side doc is safe regardless of deployed rule version.
+- 3 files modified: lib/more_libs/setting/app_config.dart (2 .set() payloads cleaned + _currentUser re-fetch logic), lib/app/core/services/device_management_service.dart (1 tx.set payload cleaned).
