@@ -909,6 +909,18 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
           foregroundColor: kNetflixRed,
         ),
       ),
+      // Phase 4.47 — Make every IconButton's ripple + (optional) background
+      // a true CIRCLE instead of the Material 3 default stadium (pill).
+      // This applies app-wide so AppBar back-buttons, AppBar action icons,
+      // suffixIcon toggles, list-row edit/delete buttons, video-player
+      // controls — ALL get the same circular ripple shape without any
+      // call-site changes. Background tint (when set via styleFrom) also
+      // becomes circular.
+      iconButtonTheme: IconButtonThemeData(
+        style: IconButton.styleFrom(
+          shape: const CircleBorder(),
+        ),
+      ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: const Color(0xFF1A1A2E),
@@ -1076,6 +1088,13 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
           foregroundColor: kNetflixRed,
+        ),
+      ),
+      // Phase 4.47 — Same circular ripple for IconButtons in Light Mode.
+      // See the dark theme block above for full rationale.
+      iconButtonTheme: IconButtonThemeData(
+        style: IconButton.styleFrom(
+          shape: const CircleBorder(),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(

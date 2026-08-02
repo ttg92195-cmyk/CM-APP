@@ -1800,34 +1800,43 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
     //
     // The icon is sized + styled to match the trash icon on the right
     // for visual symmetry.
-    return GestureDetector(
-      onTap: isSyncing ? null : () => _syncSinglePost(movie),
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.7),
-          shape: BoxShape.circle,
-          border: Border.all(
-            color: isSyncing
-                ? Colors.white24
-                : const Color(0xFFE50914), // brand red
-            width: 1.5,
-          ),
+    // Phase 4.47 — Replaced bare GestureDetector+Container+Icon (no ripple)
+    // with Material+InkWell so a circular ripple shows on tap. Visual
+    // style (black tint + brand-red border + white sync/spinner icon)
+    // is preserved. Disabled state (isSyncing=true) keeps the grayed-out
+    // border + spinner, and onTap is null so no ripple fires then.
+    return Material(
+      color: Colors.transparent,
+      shape: CircleBorder(
+        side: BorderSide(
+          color: isSyncing
+              ? Colors.white24
+              : const Color(0xFFE50914), // brand red
+          width: 1.5,
         ),
-        padding: const EdgeInsets.all(6),
-        child: isSyncing
-            ? const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: isSyncing ? null : () => _syncSinglePost(movie),
+        radius: 14,
+        child: Container(
+          color: Colors.black.withOpacity(0.7),
+          padding: const EdgeInsets.all(6),
+          child: isSyncing
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : const Icon(
+                  Icons.sync,
                   color: Colors.white,
+                  size: 16,
                 ),
-              )
-            : const Icon(
-                Icons.sync,
-                color: Colors.white,
-                size: 16,
-              ),
+        ),
       ),
     );
   }
@@ -2053,31 +2062,41 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
                               // Mirrors BatchPostsScreen styling exactly.
                               // Disabled (grayed out + no onTap) while a
                               // sync is in flight for the same card.
+                              //
+                              // Phase 4.47 — Replaced bare GestureDetector+
+                              // Container+Icon (no ripple) with Material+
+                              // InkWell so a circular ripple shows on tap.
+                              // Visual style (black tint + red border +
+                              // white trash icon) is preserved.
                               Positioned(
                                 top: 4,
                                 right: 4,
-                                child: GestureDetector(
-                                  onTap: isSyncing
-                                      ? null
-                                      : () => _deleteMyPost(movie),
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      color: Colors.black.withOpacity(0.7),
-                                      shape: BoxShape.circle,
-                                      border: Border.all(
-                                        color: isSyncing
-                                            ? Colors.white24
-                                            : Colors.red.shade300,
-                                        width: 1.5,
-                                      ),
-                                    ),
-                                    padding: const EdgeInsets.all(6),
-                                    child: Icon(
-                                      Icons.delete_outline,
+                                child: Material(
+                                  color: Colors.transparent,
+                                  shape: CircleBorder(
+                                    side: BorderSide(
                                       color: isSyncing
                                           ? Colors.white24
-                                          : Colors.white,
-                                      size: 16,
+                                          : Colors.red.shade300,
+                                      width: 1.5,
+                                    ),
+                                  ),
+                                  clipBehavior: Clip.antiAlias,
+                                  child: InkWell(
+                                    onTap: isSyncing
+                                        ? null
+                                        : () => _deleteMyPost(movie),
+                                    radius: 14,
+                                    child: Container(
+                                      color: Colors.black.withOpacity(0.7),
+                                      padding: const EdgeInsets.all(6),
+                                      child: Icon(
+                                        Icons.delete_outline,
+                                        color: isSyncing
+                                            ? Colors.white24
+                                            : Colors.white,
+                                        size: 16,
+                                      ),
                                     ),
                                   ),
                                 ),

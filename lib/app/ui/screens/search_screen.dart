@@ -969,11 +969,14 @@ class _SearchScreenState extends State<SearchScreen>
               child: Row(
                 children: [
                   // Back button
+                  //
+                  // Phase 4.47 — Removed custom padding/constraints that
+                  // shrunk the tap target to 40×40. Default IconButton
+                  // (48×48) + global iconButtonTheme's CircleBorder now
+                  // applies, matching the AppBar back buttons elsewhere.
                   IconButton(
                     icon: Icon(Icons.arrow_back, color: theme.colorScheme.onSurface),
                     onPressed: () => Navigator.pop(context),
-                    padding: const EdgeInsets.all(8),
-                    constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
                   ),
                   const SizedBox(width: 4),
                   // Search field
@@ -1428,16 +1431,27 @@ class _SearchScreenState extends State<SearchScreen>
               ),
               const SizedBox(width: 8),
               // Single-item delete button (X on the right)
-              InkWell(
-                onTap: () => _onDeleteHistory(query),
-                borderRadius: BorderRadius.circular(20),
-                child: Padding(
-                  padding: const EdgeInsets.all(6),
-                  child: Icon(
-                    Icons.close,
-                    size: 16,
-                    color: isDark ? Colors.white54 : Colors.black45,
-                  ),
+              //
+              // Phase 4.47 — Was an InkWell with borderRadius: 20 (which
+              // gives a near-circular but technically rounded-RECT ripple).
+              // Switched to IconButton with explicit CircleBorder so the
+              // ripple is a true circle, matching the rest of the app's
+              // small icon buttons. 28×28 tap target matches the original
+              // visual size (6 padding + 16 icon).
+              IconButton(
+                onPressed: () => _onDeleteHistory(query),
+                icon: Icon(
+                  Icons.close,
+                  size: 16,
+                  color: isDark ? Colors.white54 : Colors.black45,
+                ),
+                iconSize: 16,
+                style: IconButton.styleFrom(
+                  shape: const CircleBorder(),
+                  minimumSize: const Size(28, 28),
+                  maximumSize: const Size(28, 28),
+                  padding: EdgeInsets.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
               ),
             ],

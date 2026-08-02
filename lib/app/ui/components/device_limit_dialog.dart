@@ -200,11 +200,13 @@ class _DeviceLimitDialogState extends State<DeviceLimitDialog> {
                                   // (Concurrency UI Bug ကာကွယ်ရန် - မဟုတ်ရင် parallel Firestore
                                   // transactions + spinner glitch ဖြစ်သွားမယ်)
                                   onPressed: _isRemoving ? null : () => _removeDevice(device.deviceId),
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(
-                                    minWidth: 32,
-                                    minHeight: 32,
-                                  ),
+                                  // Phase 4.47 — Removed custom padding/constraints
+                                  // that shrunk the tap target to 32×32 (below
+                                  // the 48×48 a11y minimum). The default
+                                  // IconButton size + the global
+                                  // iconButtonTheme's CircleBorder now apply,
+                                  // giving a proper 48×48 circular ripple.
+                                  // iconSize is bound to the icon's 20 above.
                                   tooltip: 'Remove device',
                                 ),
                         ],

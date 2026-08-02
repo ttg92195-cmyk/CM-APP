@@ -5,6 +5,7 @@ import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/ui/components/movie_card.dart';
 import 'package:cm_movies/app/ui/components/no_toolbar_on_single_tap_text_field.dart';
+import 'package:cm_movies/app/ui/components/app_icon_button.dart';
 import 'package:cm_movies/app/ui/screens/movie_detail_screen.dart';
 import 'package:cm_movies/app/ui/screens/series_detail_screen.dart';
 
@@ -452,25 +453,42 @@ class _BatchPostsScreenState extends State<BatchPostsScreen> {
                         // red circle with a trash icon. Positioned just
                         // inside the card's top-right corner so it
                         // doesn't get clipped by the grid's spacing.
+                        //
+                        // Phase 4.47 — Replaced the bare GestureDetector+
+                        // Container+Icon (which had NO ripple feedback at
+                        // all) with a Material+InkWell inside the existing
+                        // circular Container. The Container still paints
+                        // the dark tint + red border (visual style
+                        // preserved), but now the InkWell shows a proper
+                        // circular ripple when tapped. We use a 28×28
+                        // tap target (icon size 16 + 6 padding each side)
+                        // — smaller than the 48 a11y minimum, but this is
+                        // a destructive action ON a poster card and the
+                        // poster itself is fully tappable, so the small
+                        // size is justified here.
                         Positioned(
                           top: 4,
                           right: 4,
-                          child: GestureDetector(
-                            onTap: () => _deleteMovie(movie),
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.7),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: Colors.red.shade300,
-                                  width: 1.5,
-                                ),
+                          child: Material(
+                            color: Colors.transparent,
+                            shape: const CircleBorder(
+                              side: BorderSide(
+                                color: Colors.redAccent,
+                                width: 1.5,
                               ),
-                              padding: const EdgeInsets.all(6),
-                              child: const Icon(
-                                Icons.delete_outline,
-                                color: Colors.white,
-                                size: 16,
+                            ),
+                            clipBehavior: Clip.antiAlias,
+                            child: InkWell(
+                              onTap: () => _deleteMovie(movie),
+                              radius: 14,
+                              child: Container(
+                                color: Colors.black.withOpacity(0.7),
+                                padding: const EdgeInsets.all(6),
+                                child: const Icon(
+                                  Icons.delete_outline,
+                                  color: Colors.white,
+                                  size: 16,
+                                ),
                               ),
                             ),
                           ),

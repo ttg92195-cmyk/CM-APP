@@ -249,11 +249,16 @@ class _WatchlistScreenState extends State<WatchlistScreen> {
                   ),
                 ),
                 // Remove button
+                //
+                // Phase 4.47 — Removed custom padding/constraints that
+                // shrunk the tap target to ~28×28 (4 padding + 20 icon).
+                // Default IconButton (48×48) + global iconButtonTheme's
+                // CircleBorder now applies. The 48×48 tap target is fine
+                // here because the watchlist row has plenty of horizontal
+                // space.
                 IconButton(
                   icon: Icon(Icons.close, size: 20, color: metaTextColor),
                   onPressed: () => _removeFromWatchlist(movie),
-                  padding: const EdgeInsets.all(4),
-                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                 ),
               ],
             ),

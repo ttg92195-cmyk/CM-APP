@@ -1964,6 +1964,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               onPressed: _exitPlayer,
               style: IconButton.styleFrom(
                 backgroundColor: Colors.black45,
+                // Phase 4.47 — add explicit circular shape so the black
+                // background AND the ripple are true circles, not the
+                // M3 default stadium (pill).
+                shape: const CircleBorder(),
                 padding: const EdgeInsets.all(8),
               ),
             ),
@@ -1992,6 +1996,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               onPressed: _toggleVideoFit,
               style: IconButton.styleFrom(
                   backgroundColor: Colors.black45,
+                  // Phase 4.47 — circular shape for ripple + background.
+                  shape: const CircleBorder(),
                   padding: const EdgeInsets.all(8)),
               tooltip: _videoFit == BoxFit.contain ? 'Zoom In' : 'Zoom Out',
             ),
@@ -2019,6 +2025,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               onPressed: _showAudioTrackSheet,
               style: IconButton.styleFrom(
                   backgroundColor: Colors.black45,
+                  // Phase 4.47 — circular shape for ripple + background.
+                  shape: const CircleBorder(),
                   padding: const EdgeInsets.all(8)),
             ),
             const SizedBox(width: 4),
@@ -2029,6 +2037,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               onPressed: _showSubtitleTrackSheet,
               style: IconButton.styleFrom(
                   backgroundColor: Colors.black45,
+                  // Phase 4.47 — circular shape for ripple + background.
+                  shape: const CircleBorder(),
                   padding: const EdgeInsets.all(8)),
             ),
             const SizedBox(width: 4),
@@ -2063,6 +2073,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               },
               style: IconButton.styleFrom(
                   backgroundColor: Colors.black45,
+                  // Phase 4.47 — circular shape for ripple + background.
+                  shape: const CircleBorder(),
                   padding: const EdgeInsets.all(8)),
             ),
           ],
@@ -2234,8 +2246,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        GestureDetector(
-          onTap: () {
+        // Phase 4.47 — Replaced bare GestureDetector+Icon (no ripple, no
+        // background) with an IconButton styled with a circular black-tint
+        // background. Now there's a proper circular ripple on tap AND a
+        // visible hit-area (the original was just a bare icon floating
+        // next to the slider). 40×40 tap target — below the 48 a11y
+        // minimum but the video-player bottom bar is space-constrained.
+        IconButton(
+          onPressed: () {
             if (_currentVolume == 0) {
               _player.setVolume(_normalVolume);
               setState(() {
@@ -2250,8 +2268,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
               });
             }
           },
-          child: Icon(_getVolumeIcon(_currentVolume),
+          icon: Icon(_getVolumeIcon(_currentVolume),
               color: _getVolumeColor(_currentVolume), size: 22),
+          iconSize: 22,
+          style: IconButton.styleFrom(
+            backgroundColor: Colors.black45,
+            shape: const CircleBorder(),
+            minimumSize: const Size(40, 40),
+            maximumSize: const Size(40, 40),
+            padding: EdgeInsets.zero,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
         ),
         const SizedBox(width: 4),
         SizedBox(
