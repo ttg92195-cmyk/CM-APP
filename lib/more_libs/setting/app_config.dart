@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' show timeDilation;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:onesignal_flutter/onesignal_flutter.dart';
+import 'dart:async';
 import 'package:cm_movies/app/core/services/recent_service.dart';
 import 'package:cm_movies/app/core/services/bookmark_service.dart';
 import 'package:cm_movies/app/core/services/watchlist_service.dart';
@@ -88,6 +90,28 @@ class AppConfig extends ChangeNotifier {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   ThemeMode _themeMode = ThemeMode.light; // Default to Light Mode
+  // Phase 4.46 — Fast, OS-independent theme transition.
+  //
+  // MaterialApp uses Flutter's built-in AnimatedTheme (~200ms default), and
+  // ALL Flutter animations are scaled by `timeDilation` (a global multiplier
+  // from package:flutter/scheduler.dart). On Android, the user's Developer
+  // Options → "Animator duration scale" can crank timeDilation way up (e.g.
+  // 10x for testing); on iOS, accessibility "Reduce Motion" can do the same.
+  // Bro wanted the Light↔Dark switch to be SNAPPY and NOT depend on the
+  // phone's system animation speed.
+  //
+  // Fix: while a theme transition is in flight, we override timeDilation to
+  // a fast fixed value (0.4 → ~2.5x faster than default, i.e. ~80ms actual).
+  // We restore the original value after a short grace window so other
+  // animations (cards, hero transitions, etc.) are not affected long-term.
+  //
+  // _originalTimeDilation is `null` when no theme transition is in flight,
+  // and non-null while one is. The Timer cancels & reschedules on each new
+  // toggle so rapid back-and-forth toggling won't restore prematurely.
+  double? _originalTimeDilation;
+  Timer? _themeTransitionRestoreTimer;
+  static const Duration _themeTransitionGraceWindow = Duration(milliseconds: 450);
+  static const double _fastThemeTimeDilation = 0.4;
   String _languageCode = 'en';
   // Task 32: _translations field removed — LocalizationService is now the
   // single source of truth. AppConfig.translate() delegates to it.
@@ -1109,7 +1133,41 @@ class AppConfig extends ChangeNotifier {
   // background. The write still completes before the user could possibly
   // notice any state desync — SharedPreferences is process-local and
   // the next _loadLocalConfig() re-reads whatever landed.
+  //
+  // Phase 4.46 — Fast, OS-independent transition.
+  // Bro reported the Light↔Dark switch felt slow and was affected by the
+  // phone's system animation speed (Developer Options scale / iOS Reduce
+  // Motion). All Flutter animations are multiplied by `timeDilation`, so
+  // we temporarily force it to a fast fixed value while the AnimatedTheme
+  // built into MaterialApp runs. See _originalTimeDilation field doc for
+  // the re-entrancy-safe restore logic.
   Future<void> setThemeMode(ThemeMode mode) async {
+    if (_themeMode == mode) return; // no-op, no animation needed
+
+    // Step 1: Snapshot the ORIGINAL timeDilation (only if we're not already
+    // mid-transition — otherwise we'd capture our own fast value as the
+    // "original" and never restore the real user setting).
+    if (_originalTimeDilation == null) {
+      _originalTimeDilation = timeDilation;
+    }
+    // Step 2: Apply the fast dilation immediately. MUST happen BEFORE
+    // notifyListeners() so that when MaterialApp rebuilds and its internal
+    // AnimatedTheme starts the next-frame ticker, the ticker already sees
+    // the fast dilation.
+    timeDilation = _fastThemeTimeDilation;
+
+    // Step 3: (Re)schedule the restore. If the user toggles again within
+    // the grace window, we cancel the pending restore and start a new one —
+    // this keeps the fast dilation active across rapid toggles.
+    _themeTransitionRestoreTimer?.cancel();
+    _themeTransitionRestoreTimer = Timer(_themeTransitionGraceWindow, () {
+      if (_originalTimeDilation != null) {
+        timeDilation = _originalTimeDilation!;
+        _originalTimeDilation = null;
+      }
+      _themeTransitionRestoreTimer = null;
+    });
+
     _themeMode = mode;
     notifyListeners(); // Trigger UI rebuild FIRST (instant theme switch)
     // Persist to disk in the background (non-blocking for the UI).
@@ -1881,6 +1939,22 @@ class AppConfig extends ChangeNotifier {
 
   void toggleTheme() {
     setThemeMode(isDarkMode ? ThemeMode.light : ThemeMode.dark);
+  }
+
+  // Phase 4.46 — Clean up the theme transition restore timer so we don't
+  // leave a pending Timer dangling if the AppConfig instance is ever
+  // disposed (mainly relevant in tests; in production AppConfig is
+  // app-lifetime scoped). Also restores the original timeDilation in case
+  // disposal happens mid-transition.
+  @override
+  void dispose() {
+    _themeTransitionRestoreTimer?.cancel();
+    _themeTransitionRestoreTimer = null;
+    if (_originalTimeDilation != null) {
+      timeDilation = _originalTimeDilation!;
+      _originalTimeDilation = null;
+    }
+    super.dispose();
   }
 
 }
