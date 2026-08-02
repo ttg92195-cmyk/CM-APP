@@ -13,7 +13,7 @@ import 'package:cm_movies/app/ui/screens/category_page.dart';
 import 'package:cm_movies/app/ui/components/age_rating_gate.dart';
 import 'package:cm_movies/app/ui/screens/actor_movies_screen.dart';
 import 'package:cm_movies/app/ui/screens/movie_watch_screen.dart';
-import 'package:cm_movies/app/ui/screens/movie_download_screen.dart';
+import 'package:cm_movies/app/ui/screens/download_page.dart';
 import 'package:cm_movies/app/ui/screens/vip_page.dart';
 
 class MovieDetailScreen extends StatefulWidget {
@@ -786,11 +786,35 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                 const SizedBox(height: 20),
 
                 // ===== 3. ACTION BUTTONS =====
+                //
+                // Phase 4.49 — Download button changed from a square
+                // ElevatedButton.icon (RoundedRectangleBorder with 10px
+                // corners, taking half the row width) to a CIRCULAR
+                // icon-only button on the right. Bro's exact words:
+                //   "Download Icon ပုံစံက လေးထောင့်တို့မဟုလန်းတယ်ပုံစံမိုက်တယ်"
+                // (the square Download icon shape is ugly).
+                //
+                // Watch Now stays as the wide primary action (Expanded).
+                // Download is now a 56×56 circle next to it — a common
+                // modern pattern (think Netflix: play button is wide,
+                // download/save is a circular icon button).
+                //
+                // Tapping Download now jumps STRAIGHT to the global
+                // Downloads tab (DownloadPage) instead of opening the
+                // movie-specific MovieDownloadScreen. Bro's request:
+                //   "Download Icon ကိုနိုပ်ရုံနဲ့ Downloads Tab နေရာထဲကိုသွားရပြီး
+                //    အလွယ်တကူကြည့်ရှုရပြီးသွားရ"
+                // (just tap the Download icon to go to the Downloads tab
+                // and easily view everything).
+                //
+                // Back-return is automatic: DownloadPage is pushed on
+                // top of this detail screen, so system Back + AppBar
+                // back arrow pop it and return here. No PopScope needed.
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Row(
                     children: [
-                      // Watch Now Button
+                      // Watch Now Button — wide primary action.
                       Expanded(
                         child: ElevatedButton.icon(
                           onPressed: detail.watchLinks.isNotEmpty
@@ -823,10 +847,14 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                         ),
                       ),
                       const SizedBox(width: 12),
-                      // Download Button — VIP/Admin only.
-                      // Non-VIP: button is greyed; tapping prompts VIP upgrade.
-                      Expanded(
-                        child: ElevatedButton.icon(
+                      // Download Button — circular icon-only.
+                      // VIP/Admin only. Non-VIP: tapping prompts VIP upgrade.
+                      // Disabled (greyed, no onTap) when there are no
+                      // download links for this movie.
+                      SizedBox(
+                        width: 56,
+                        height: 56,
+                        child: IconButton(
                           onPressed: detail.downloadLinks.isEmpty
                               ? null
                               : () {
@@ -849,10 +877,13 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                                     );
                                     return;
                                   }
+                                  // Phase 4.49 — jump straight to the
+                                  // global Downloads tab. Back returns
+                                  // here automatically.
                                   Navigator.push(
                                     context,
                                     MaterialPageRoute(
-                                      builder: (_) => MovieDownloadScreen(movieDetail: detail),
+                                      builder: (_) => const DownloadPage(),
                                     ),
                                   );
                                 },
@@ -860,11 +891,10 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                             appConfig.isDownloadAllowedForUser
                                 ? Icons.download
                                 : Icons.lock_outline,
-                            size: 20,
+                            size: 26,
                           ),
-                          label: const Text('Download',
-                              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                          style: ElevatedButton.styleFrom(
+                          tooltip: 'Download',
+                          style: IconButton.styleFrom(
                             backgroundColor: appConfig.isDownloadAllowedForUser
                                 ? accentColor
                                 : (isDark ? Colors.white12 : Colors.grey.shade400),
@@ -877,10 +907,13 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                             disabledForegroundColor: isDark
                                 ? Colors.white38
                                 : Colors.black38,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
+                            // True circle shape (Phase 4.47 global
+                            // iconButtonTheme also applies, but we set
+                            // it explicitly here so this button is
+                            // visually a solid filled circle regardless
+                            // of theme overrides).
+                            shape: const CircleBorder(),
+                            padding: EdgeInsets.zero,
                           ),
                         ),
                       ),
