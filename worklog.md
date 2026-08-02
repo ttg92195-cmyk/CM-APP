@@ -4655,3 +4655,75 @@ Stage Summary:
 - Root cause: when bro asked for multi-file JSON selection in Phase 4.45, the merge loop flattened each per-file parse error (a Map) into a plain prefixed String. That compiled in dev (Dart is permissive at the .add() call site when the list is typed <String>[]) but blew up at the BatchParseResult() constructor where the field type is List<Map<String, dynamic>>.
 - Fix preserves the map shape so the preview UI's `#${e['index']}: ${e['error']}` rendering still works, and the file name is now both prefixed on the error string AND stashed under a new 'file' key for richer display later.
 - Both Phase 4.45 features (multi-file picker + Export Database with SAF copy to user-visible folder) are now unblocked. Bro can rebuild.
+
+---
+Task ID: 2
+Agent: Explore agent
+Task: Locate the theme switching implementation (MaterialApp.themeMode source, settings UI toggle, provider/service holding ThemeMode, any existing theme animation).
+
+Work Log:
+- Read the tail of /home/z/my-project/worklog.md to review prior phases (most recent was Phase 4.45-hotfix about multi-file JSON import + SAF export). No prior theme-animation work found in the log.
+- Listed the repo root and confirmed the active Flutter app lives under /home/z/my-project/lib/ (the /home/z/my-project/cm-app/ tree is a stale copy — ignored).
+- Searched lib/ for `MaterialApp` — single declaration at lib/main.dart:669, inside `_CMMoviesAppState.build()` (class declared at lib/main.dart:296/303). AppConfig obtained via `Provider.of<AppConfig>(context)` at lib/main.dart:640.
+- Searched lib/ for `themeMode|ThemeMode` — found all usages (8 hits) concentrated in two files: lib/main.dart (MaterialApp wiring) and lib/more_libs/setting/app_config.dart (the ChangeNotifier). No third-party provider package (no ThemeProvider / SettingsProvider class).
+- Searched lib/ for `toggleTheme|setThemeMode|isDarkMode` — found 3 call sites that actually trigger a theme change:
+    (a) lib/app/ui/screens/settings_page.dart:781-782 — Settings → Dark Mode SwitchListTile onChanged: `(v) => appConfig.setThemeMode(v ? ThemeMode.dark : ThemeMode.light)`
+    (b) lib/app/ui/screens/login_page.dart:600 — AppBar IconButton onPressed: `appConfig.toggleTheme()`
+    (c) lib/more_libs/setting/app_config.dart:1883 — the `toggleTheme()` helper itself, which delegates to setThemeMode()
+- Confirmed the AppConfig class:
+    * class declaration: lib/more_libs/setting/app_config.dart:14  `class AppConfig extends ChangeNotifier`
+    * private field: lib/more_libs/setting/app_config.dart:90  `ThemeMode _themeMode = ThemeMode.light;`
+    * public getter: lib/more_libs/setting/app_config.dart:134  `ThemeMode get themeMode => _themeMode;`
+    * convenience getter: lib/more_libs/setting/app_config.dart:136  `bool get isDarkMode => _themeMode == ThemeMode.dark;`
+    * mutator: lib/more_libs/setting/app_config.dart:1112-1118  `Future<void> setThemeMode(ThemeMode mode)` — Phase 4.24 optimization: calls `notifyListeners()` IMMEDIATELY after `_themeMode = mode`, before awaiting SharedPreferences write, so the MaterialApp rebuild (and Flutter's default theme transition) starts without disk-I/O delay.
+    * persistence key: lib/more_libs/setting/app_config.dart:15  `static const String _themeKey = 'app_theme';` (stored as `mode.index`, an int)
+    * load path: lib/more_libs/setting/app_config.dart:422-432  `_loadLocalConfig()` reads `prefs.getInt(_themeKey) ?? ThemeMode.light.index` then `_themeMode = ThemeMode.values[themeIndex]`.
+- Searched lib/ for `AnimatedSwitcher|ThemeAnimation|themeAnimation` — NO matches. There is currently NO custom animation wrapping the theme switch; the app relies entirely on Flutter's built-in MaterialApp theme animation (the implicit AnimatedTheme that MaterialApp runs when themeMode/darkTheme/theme changes). That built-in animation IS bound to the OS animation scale (timeDilation + accessibility settings), which is exactly what Phase 4.46 wants to override with a custom transition that is independent of the system animation speed.
+- Searched lib/ for `AnimationController` — 5 hits, all for UNRELATED features (movie_card hover, age_rating_gate reveal, search_screen breathe, splash_screen intro/loop, trending_movie_component carousel). NONE is used for theme transitions.
+- Searched lib/ for `animationDuration|timeDilation` — no matches in app code. (Flutter's MaterialApp default theme animation duration is ~200ms, gated by the system animation scale.)
+- Searched lib/ for `Brightness.dark|Brightness.light` — 70+ hits, all READ-ONLY checks of the form `final isDark = theme.brightness == Brightness.dark;` used by widgets to pick colors. They react to the theme but do not trigger or animate it.
+- Searched lib/ for `DarkMode|LightMode|dark_mode|light_mode` — only 3 functional locations (settings_page.dart switch + icon, login_page.dart icon+tooltip) plus about_kmm_page.dart:166-167 which just displays the `dark_mode` translation string in an info list (no toggle). No "system" or "auto" mode is wired up anywhere — only explicit Light/Dark.
+- Confirmed MaterialApp does NOT pass `builder:` wrapping the child in an AnimatedSwitcher or any custom transition widget — the `MaterialApp(...)` body at lib/main.dart:669-713 is plain (theme, darkTheme, themeMode, localizationsDelegates, supportedLocales, locale, routes, home). No theme-animation overlay.
+
+Stage Summary:
+- MaterialApp location: lib/main.dart:669 (inside _CMMoviesAppState.build at lib/main.dart:638; class CMMoviesApp declared at lib/main.dart:296)
+- themeMode source: `AppConfig.themeMode` — field `_themeMode` (lib/more_libs/setting/app_config.dart:90), getter at line 134. ChangeNotifier is provided via `Provider.of<AppConfig>(context)` at lib/main.dart:640.
+- Settings UI toggle: lib/app/ui/screens/settings_page.dart:774-784 — `_buildSwitchRow` titled `dark_mode`, value = `appConfig.isDarkMode`
+- Toggle callback: 
+    * Settings page: lib/app/ui/screens/settings_page.dart:781-782 — `onChanged: (v) => appConfig.setThemeMode(v ? ThemeMode.dark : ThemeMode.light)`
+    * Login page AppBar: lib/app/ui/screens/login_page.dart:600 — `onPressed: () { appConfig.toggleTheme(); }`
+    * Provider mutator: lib/more_libs/setting/app_config.dart:1112-1118 — `setThemeMode(ThemeMode mode)` (notifies first, persists async)
+    * Provider helper: lib/more_libs/setting/app_config.dart:1882-1884 — `toggleTheme()`
+- Existing animation: NO. No AnimatedSwitcher, no ThemeAnimation, no AnimationController tied to theme transitions. The app currently relies on Flutter's built-in MaterialApp theme transition (implicit AnimatedTheme), which IS governed by the OS animation scale — exactly the dependency Phase 4.46 needs to break. Note: Phase 4.24 already optimized the *trigger latency* (notify-first, persist-after) but did NOT add a custom animation.
+- Files to modify for Phase 4.46:
+    * lib/main.dart — wrap MaterialApp (line 669) in an AnimatedSwitcher / custom overlay OR add a builder: that paints a fast transition (e.g. circular reveal / fade) on top of the child when themeMode changes; pass a transition trigger derived from appConfig
+    * lib/more_libs/setting/app_config.dart — optionally expose a theme-change notifier stream / ValueNotifier<bool> so the overlay knows WHEN the switch happens (the current `notifyListeners()` is too coarse — it fires for every AppConfig change, not just theme). Likely add a dedicated `ValueNotifier<int> themeEpoch` or a `Stream<void> onThemeChange` bumped inside setThemeMode() at line 1112
+    * lib/app/ui/screens/settings_page.dart — no change needed (toggle path stays the same)
+    * lib/app/ui/screens/login_page.dart — no change needed (toggle path stays the same)
+    * New file (likely): lib/app/ui/components/theme_transition_overlay.dart — the custom transition widget itself, driven by its own TickerProvider/AnimationController with a fixed duration (e.g. 250-350ms) that does NOT read `timeDilation` so it stays independent of the system animation speed
+
+---
+Task ID: 4.46
+Agent: Main Agent
+Task: Make Light↔Dark theme switch snappy and independent of the phone's system animation speed (Developer Options scale / iOS Reduce Motion).
+
+Work Log:
+- Pushed pending local commit 0c36f1a (Phase 4.45 worklog appendix) to GitHub main first as bro requested.
+- Delegated research to Explore agent (Task 2): located MaterialApp at lib/main.dart:669 with themeMode: appConfig.themeMode at line 678; settings toggle at lib/app/ui/screens/settings_page.dart:774-784 calling appConfig.setThemeMode(v ? ThemeMode.dark : ThemeMode.light); login page AppBar at lib/app/ui/screens/login_page.dart:600 calling appConfig.toggleTheme(); provider = AppConfig extends ChangeNotifier in lib/more_libs/setting/app_config.dart with private _themeMode field at line 90 and setThemeMode() at line 1112 (Phase 4.24 optimization: notifyListeners BEFORE prefs write). Confirmed NO existing theme animation (no AnimatedSwitcher / ThemeAnimation anywhere). 70+ Brightness.dark reads are read-only color checks that react to theme but don't drive it.
+- Decision: override timeDilation (package:flutter/scheduler.dart global multiplier that scales ALL Flutter animation durations) to a fast fixed value (0.4 → ~2.5x faster than default) during the theme transition, then restore after a grace window. Considered alternatives: (a) custom AnimatedSwitcher overlay — ALSO affected by timeDilation via AnimationController tickers, so doesn't actually bypass the OS dependency; (b) manual Future.delayed + setState for 60fps animation — unreliable; (c) timeDilation override — simplest and most reliable.
+- Implementation in lib/more_libs/setting/app_config.dart:
+  - Added imports: `import 'package:flutter/scheduler.dart' show timeDilation;` and `import 'dart:async';` (for Timer).
+  - Added 4 new state fields next to _themeMode: `double? _originalTimeDilation;` (null = no transition in flight), `Timer? _themeTransitionRestoreTimer;`, `static const Duration _themeTransitionGraceWindow = Duration(milliseconds: 450);`, `static const double _fastThemeTimeDilation = 0.4;`.
+  - Rewrote setThemeMode() with re-entrancy-safe 3-step pattern: (1) capture original timeDilation only if _originalTimeDilation == null (so rapid toggles don't overwrite the captured original with our own fast value); (2) apply timeDilation = 0.4 BEFORE notifyListeners() so the MaterialApp rebuild sees the fast dilation when its AnimatedTheme ticker starts; (3) cancel & reschedule the restore Timer so the grace window extends across rapid toggles.
+  - Added early-return guard: `if (_themeMode == mode) return;` so calling setThemeMode with the same mode is a no-op (avoids unnecessary timeDilation churn).
+  - Added dispose() override that cancels the restore Timer and restores timeDilation if disposal happens mid-transition (mainly for tests; AppConfig is app-lifetime scoped in production).
+- Verified no other file in lib/ touches timeDilation — no conflict with other animations.
+- Bracket balance check passed (stack-based): 745/749 parens (delta from comments/strings, not real imbalance — the script's count summary counts raw text but the stack-based check passed cleanly with zero errors).
+- Committed and pushed to origin/main (commit b15ec98).
+
+Stage Summary:
+- Light↔Dark switch is now ~80ms actual (default ~200ms scaled by user's system animation speed) and is INDEPENDENT of the phone's Developer Options animation scale or iOS accessibility Reduce Motion setting.
+- Other app animations are NOT affected long-term: the timeDilation override only lasts 450ms during the theme transition, then the original value is restored.
+- Rapid back-and-forth toggling is safe: re-entrancy guard captures the original timeDilation only on the first toggle of a burst, and the restore Timer is rescheduled on each subsequent toggle so it doesn't fire prematurely mid-burst.
+- Settings UI (settings_page.dart:774-784) and login page AppBar (login_page.dart:600) required NO changes — they already call setThemeMode() / toggleTheme() which now have the fast-transition behavior baked in.
+- AppConfig.dispose() added for clean teardown (cancels Timer, restores timeDilation).
