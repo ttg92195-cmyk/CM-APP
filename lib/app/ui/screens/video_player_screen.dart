@@ -75,8 +75,16 @@ class VideoPlayerScreen extends StatefulWidget {
 
 class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     with WidgetsBindingObserver {
+  // Phase 3 — Keep `late` so build() can access _player without null checks,
+  // but track creation state explicitly. Before _initializePlayer() reaches
+  // the `_player = Player(...)` assignment (line 777), any access to _player
+  // throws LateInitializationError. The _isPlayerCreated flag lets dispose(),
+  // _exitPlayer, didChangeAppLifecycleState, and the fallback handlers
+  // safely skip player teardown when the user pressed Back during the
+  // ~50-2000ms init window. This is the root cause of Crash 1.
   late Player _player;
   late VideoController _controller;
+  bool _isPlayerCreated = false; // Phase 3: true only after _player = Player(...) completes
   bool _isInitialized = false;
   String? _errorMessage;
   bool _isBuffering = false;
@@ -251,7 +259,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // CRITICAL: Guard against crashes when player is disposed or widget unmounted
-    if (_isDisposed || !mounted) return;
+    // Phase 3: also check _isPlayerCreated — if the user pulled down the
+    // notification shade during the ~50-2000ms init window (before
+    // `_player = Player(...)` ran), _player is still late-uninitialized
+    // and accessing _player.state would throw LateInitializationError.
+    if (_isDisposed || !mounted || !_isPlayerCreated) return;
 
     try {
       switch (state) {
@@ -265,7 +277,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         case AppLifecycleState.resumed:
           // Delay slightly to allow surface to recreate after background
           Future.delayed(const Duration(milliseconds: 300), () {
-            if (_isDisposed || !mounted) return;
+            // Phase 3: re-check _isPlayerCreated after the delay — the
+            // player may have been disposed while we were waiting.
+            if (_isDisposed || !mounted || !_isPlayerCreated) return;
             try {
               if (_wasPlayingBeforePause) {
                 _player.play();
@@ -311,7 +325,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       //    close) happens asynchronously. Without await, the route pops
       //    while libmpv is still holding decoder hardware, and the
       //    subsequent native callbacks crash the app.
-      if (!_isDisposed) {
+      //
+      // Phase 3: Guard with _isPlayerCreated — if the user pressed Back
+      // during the init window (before `_player = Player(...)` ran),
+      // _player is still late-uninitialized and calling .stop() would
+      // throw LateInitializationError. Skip teardown in that case —
+      // there's nothing to tear down.
+      if (!_isDisposed && _isPlayerCreated) {
         try {
           await _player.stop().timeout(
             const Duration(seconds: 2),
@@ -410,10 +430,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     // removal) that bypasses _exitPlayer.
     try { _saveWatchProgressSync(); } catch (e) { debugPrint('Save progress error on dispose: $e'); }
 
-    // Capture the player reference so the background cleanup doesn't read
-    // the field after super.dispose() has run.
-    final player = _player;
+    // Phase 3 — Capture the player reference so the background cleanup
+    // doesn't read the field after super.dispose() has run. CRITICAL:
+    // only do this if _isPlayerCreated is true — if the user pressed
+    // Back during the ~50-2000ms init window (before `_player = Player(...)`
+    // ran), _player is still late-uninitialized and `final player = _player;`
+    // would throw LateInitializationError SYNCHRONOUSLY inside dispose().
+    // Unhandled errors in dispose() propagate as FlutterError.onError fatal
+    // errors and, in release builds, kill the app — this was Crash 1's
+    // root cause. Skip the entire background cleanup if no player exists.
+    final player = _isPlayerCreated ? _player : null;
     Future<void> _backgroundCleanup() async {
+      if (player == null) return;
       try {
         await player.stop().timeout(
           const Duration(seconds: 2),
@@ -435,18 +463,19 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
     // Fire the cleanup as a top-level detached future so it isn't tied to
     // this widget's lifecycle. unawaited keeps the linter happy.
-    unawaited(_backgroundCleanup());
-
-    // Release the global lock after a longer delay to allow native cleanup.
-    // libmpv's native cleanup is async — it needs time to release decoder
-    // hardware (MediaCodec), GPU surfaces, and demuxer resources.
-    // Without this delay, re-entering the player and creating a new Player
-    // immediately can cause a native crash (SIGSEGV) that kills the app.
-    // Phase 4.32: increased from 500ms → 1000ms to give low-end devices
-    // (Oppo A16, Redmi 9) more headroom for the deferred cleanup future.
-    Future.delayed(const Duration(milliseconds: 1000), () {
+    //
+    // Phase 3 — Release the static lock in .whenComplete() instead of a
+    // fixed 1000ms Timer. The previous fixed-timer release was the root
+    // cause of Crash 2's rapid-reentry race: player.dispose() can take
+    // up to 3s (per its own timeout), but the lock was released after
+    // just 1s — so between 1s and 3s after dispose, a new Player could
+    // be created while the old one's native libmpv handle was STILL
+    // tearing down. On Oppo A16 / Redmi 9 this caused the "white screen
+    // → app exits → re-enter shows black" pattern. Now the lock is held
+    // until _backgroundCleanup actually finishes (success or timeout).
+    unawaited(_backgroundCleanup().whenComplete(() {
       _isPlayerDisposing = false;
-    });
+    }));
 
     // Reset brightness to system default
     try { ScreenBrightness().resetScreenBrightness(); } catch (_) {}
@@ -501,7 +530,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   // Async save — reads from player directly (for timer & background)
   Future<void> _saveWatchProgress() async {
-    if (_isDisposed || _isExiting) return;
+    // Phase 3 — Guard: if player doesn't exist, can't read state.
+    if (_isDisposed || _isExiting || !_isPlayerCreated) return;
     try {
       if (_videoCompleted) {
         final prefs = await SharedPreferences.getInstance();
@@ -509,6 +539,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         await prefs.remove(_durationKey);
         return;
       }
+      // Phase 3 — Re-check after the await (player may have been disposed).
+      if (_isDisposed || !_isPlayerCreated) return;
       final position = _player.state.position;
       final duration = _player.state.duration;
       if (position.inSeconds > 0 && duration.inSeconds > 0) {
@@ -581,7 +613,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
-              _player.seek(savedPosition);
+              // Phase 3 — Guard: player may have been torn down while
+              // the dialog was open (e.g. user pressed Back and the
+              // route disposed the player before tapping Continue).
+              if (_isPlayerCreated && !_isDisposed && mounted) {
+                _player.seek(savedPosition);
+              }
               _hasResumed = true;
             },
             style: ElevatedButton.styleFrom(
@@ -685,8 +722,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       // the old one's native libmpv resources are still being released, the native engine
       // will crash (SIGSEGV), killing the entire app.
       // The lock is set in dispose() and released after 500ms delay.
+      //
+      // Phase 3 — Increased poll max from 2s (20×100ms) to 5s (50×100ms).
+      // The previous 2s was too short for low-end devices where libmpv's
+      // native dispose takes 1-3s. If the lock wasn't released in time,
+      // the poll loop would exit and create a new Player anyway — racing
+      // the old one's teardown. Now we wait up to 5s, which comfortably
+      // covers the 3s dispose timeout.
       int waitCount = 0;
-      while (_isPlayerDisposing && waitCount < 20) {
+      while (_isPlayerDisposing && waitCount < 50) {
         await Future.delayed(const Duration(milliseconds: 100));
         waitCount++;
         if (_isDisposed) return; // Widget was disposed while waiting
@@ -781,6 +825,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
           logLevel: MPVLogLevel.error,
         ),
       );
+      // Phase 3 — Mark player as created IMMEDIATELY after assignment so
+      // dispose() / _exitPlayer / didChangeAppLifecycleState can safely
+      // tear it down. Without this flag, LateInitializationError would
+      // be thrown if the user pressed Back during the init window.
+      _isPlayerCreated = true;
 
       _controller = VideoController(
         _player,
@@ -862,7 +911,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       );
 
       await _player.open(Media(widget.videoUrl));
+      // Phase 3 — Check after open: user may have pressed Back during
+      // the open() call (which can take 500ms-3s for network streams).
+      // If so, skip play() — dispose() will handle teardown.
+      if (_isDisposed || !mounted) return;
       await _player.play();
+      if (_isDisposed || !mounted) return;
 
       // CRITICAL: Apply performance tuning AFTER open/play.
       _applyPerformanceTuningNonBlocking();
@@ -913,7 +967,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     try {
       // Always check — use URL hash as fallback if videoId is null
       final savedPos = await _loadSavedPosition();
-      if (savedPos != null && mounted && !_isDisposed) {
+      // Phase 3 — Re-check _isPlayerCreated after the await. The player
+      // may have been torn down by a fallback or by dispose while we
+      // were loading the saved position from SharedPreferences.
+      if (savedPos != null && mounted && !_isDisposed && _isPlayerCreated) {
         // Pause while showing dialog so user can decide
         _player.pause();
         _showResumeDialog(savedPos);
@@ -987,11 +1044,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   ///   - Slightly reduced demuxer buffer to save RAM
   Future<void> _applyPerformanceTuning() async {
     try {
-      if (_isDisposed) return;
+      // Phase 3 — Guard: skip entirely if player doesn't exist or was torn down.
+      if (_isDisposed || !_isPlayerCreated) return;
 
       // Brief wait for video parameters — shorter than before for faster startup
       await Future.delayed(const Duration(milliseconds: 200));
-      if (_isDisposed) return;
+      // Phase 3 — Re-check after the delay (user may have pressed Back).
+      if (_isDisposed || !_isPlayerCreated) return;
 
       final bool isEco = _ecoMode;
       final bool is4K = _isHighResVideo;
@@ -1006,29 +1065,47 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
 
       // Network caching: 5 seconds buffer for smooth streaming
       // This prevents stuttering when network is slow or fluctuating
+      //
+      // Phase 3 — Each await _setMpvProperty() can take 100-500ms on
+      // low-end devices. Re-check _isDisposed/_isPlayerCreated before
+      // each call so we don't keep poking a disposed NativePlayer.
+      // The microtask runs for ~1-2s total; if the user presses Back
+      // mid-sequence, subsequent setProperty calls would hit a
+      // half-destroyed NativePlayer and could trigger native crashes.
+      if (_isDisposed || !_isPlayerCreated) return;
       await _setMpvProperty('demuxer-max-bytes', (50 * 1024 * 1024).toString()); // 50MB forward buffer
+      if (_isDisposed || !_isPlayerCreated) return;
       await _setMpvProperty('demuxer-max-back-bytes', (25 * 1024 * 1024).toString()); // 25MB back buffer
+      if (_isDisposed || !_isPlayerCreated) return;
       await _setMpvProperty('cache', 'yes');
+      if (_isDisposed || !_isPlayerCreated) return;
       await _setMpvProperty('cache-secs', '5'); // 5 seconds cache
+      if (_isDisposed || !_isPlayerCreated) return;
       await _setMpvProperty('cache-pause', 'yes'); // Auto-pause when cache runs low
+      if (_isDisposed || !_isPlayerCreated) return;
       await _setMpvProperty('cache-pause-wait', '3'); // Wait up to 3s for cache to fill
+      if (_isDisposed || !_isPlayerCreated) return;
       await _setMpvProperty('cache-pause-initial', 'yes'); // Pause at start until cache fills
 
       // Display-level frame drop: when the GPU can't keep up,
       // drop late frames at the display stage. This is the least
       // aggressive frame drop — invisible to the user, saves CPU.
+      if (_isDisposed || !_isPlayerCreated) return;
       await _setMpvProperty('framedrop', 'vo');
 
       // VSync off — eliminates vsync-induced micro-stutter.
       // Tearing is invisible on mobile displays.
+      if (_isDisposed || !_isPlayerCreated) return;
       await _setMpvProperty('opengl-swapinterval', '0');
 
       // Pixel Buffer Objects — faster GPU texture uploads.
       // Zero quality impact, just faster rendering.
+      if (_isDisposed || !_isPlayerCreated) return;
       await _setMpvProperty('opengl-pbo', 'yes');
 
       // Tolerate slight A/V desync rather than stuttering.
       // audio-desync = resample audio to match video timing.
+      if (_isDisposed || !_isPlayerCreated) return;
       await _setMpvProperty('video-sync', 'audio-desync');
 
       // =============================================================
@@ -1041,14 +1118,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       //   - reduced buffer to save RAM on very low-end devices
       // =============================================================
       if (isEco) {
+        if (_isDisposed || !_isPlayerCreated) return;
         // Frame drop at both display AND decoder level when behind
         // Only drops frames when actually lagging — doesn't skip proactively
         await _setMpvProperty('framedrop', 'decoder+vo');
 
+        if (_isDisposed || !_isPlayerCreated) return;
         // Decoder-level frame drop: 'nonref' = only drop non-reference frames
         // This is safe — non-reference frames aren't needed for future decoding
         await _setMpvProperty('vd-lavc-framedrop', 'nonref');
 
+        if (_isDisposed || !_isPlayerCreated) return;
         // Skip HEVC loop filter for NON-REFERENCE frames only.
         // NOT 'all' — 'all' causes visible blocking artifacts (pixelation).
         // 'nonref' saves ~20% HEVC CPU with barely visible quality impact.
@@ -1056,9 +1136,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         // good balance between CPU savings and quality.
         await _setMpvProperty('vd-lavc-skiploopfilter', is4K ? 'bidir' : 'nonref');
 
+        if (_isDisposed || !_isPlayerCreated) return;
         // Faster seeking — don't require exact keyframe alignment
         await _setMpvProperty('hr-seek', 'no');
 
+        if (_isDisposed || !_isPlayerCreated) return;
         // Reasonable demuxer buffer — smaller to save RAM on low-end
         // Still large enough for smooth playback
         final backBytes = _perfTier <= 1
@@ -1066,6 +1148,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             : (8 * 1024 * 1024).toString();     // 8MB back-buffer
         await _setMpvProperty('demuxer-max-back-bytes', backBytes);
 
+        if (_isDisposed || !_isPlayerCreated) return;
         final maxBytes = _perfTier <= 1
             ? (16 * 1024 * 1024).toString()     // 16MB forward buffer
             : (24 * 1024 * 1024).toString();     // 24MB forward buffer
@@ -1091,6 +1174,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
   /// or when GPU rendering fails. Modes: 0=GPU native → 1=GPU downscale → 2=SW
   void _tryVideoOutputFallback() {
     if (_isDisposed || !mounted) return;
+    // Phase 3 — Guard: if the user pressed Back during init, _player may
+    // not exist yet. Also skip if we've already torn the player down.
+    if (!_isPlayerCreated) return;
     if (_videoOutputMode >= 2) return; // Already at SW mode, no more fallbacks
 
     _blackScreenFallbackAttempted = true;
@@ -1101,15 +1187,34 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     }
     _streamSubscriptions.clear();
 
-    try { _player.stop(); } catch (_) {}
-    try { _player.pause(); } catch (_) {}
-    try { _player.dispose(); } catch (_) {}
-    // NOTE: Phase 4.32 — these fire-and-forget calls are still potentially
-    // racy, but _tryVideoOutputFallback is followed by a 300ms delay
-    // before re-init which gives libmpv time to clean up. Crashes here
-    // are rare in practice (black-screen fallback is uncommon). The main
-    // crash pattern reported by Bro was on user-initiated Back exit,
-    // which is now fixed via the awaited _exitPlayer() path.
+    // Phase 3 — Set the static lock BEFORE disposing so a rapid re-init
+    // (via _initializePlayer's poll loop) won't create a new Player
+    // while the old one is still tearing down. The lock is released
+    // inside the cleanup's .whenComplete(). Previously this path did
+    // fire-and-forget dispose with NO lock, racing the 300ms-delayed
+    // _initializePlayer() call below.
+    _isPlayerDisposing = true;
+    final oldPlayer = _player;
+    unawaited(() async {
+      try {
+        await oldPlayer.stop().timeout(
+          const Duration(seconds: 2),
+          onTimeout: () => debugPrint('fallback: stop() timed out'),
+        );
+      } catch (_) {}
+      try { await oldPlayer.pause(); } catch (_) {}
+      try {
+        await oldPlayer.dispose().timeout(
+          const Duration(seconds: 3),
+          onTimeout: () => debugPrint('fallback: dispose() timed out'),
+        );
+      } catch (_) {}
+    }().whenComplete(() {
+      _isPlayerDisposing = false;
+    }));
+    // Mark player as torn down so _exitPlayer / dispose won't try to
+    // access the disposed instance.
+    _isPlayerCreated = false;
 
     // Move to next video output mode
     _videoOutputMode++;
@@ -1123,8 +1228,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
     debugPrint('Video output fallback: switching to mode $_videoOutputMode '
         '(${_videoOutputMode == 0 ? 'GPU native' : _videoOutputMode == 1 ? 'GPU downscale' : 'SW'})');
 
-    // Delay before re-initializing to allow native cleanup
-    Future.delayed(const Duration(milliseconds: 300), () {
+    // Delay before re-initializing to allow native cleanup.
+    // Phase 3 — increased from 300ms to 800ms. The previous 300ms was
+    // far too short for low-end devices (Oppo A16, Redmi 9) where
+    // libmpv's native dispose takes 1-3s. Combined with the lock above,
+    // this ensures the new Player is created only after the old one's
+    // native resources are fully released.
+    Future.delayed(const Duration(milliseconds: 800), () {
       if (mounted && !_isDisposed) {
         _initializePlayer();
       }
@@ -1159,6 +1269,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         error.contains('renderer');
 
     if ((isCodecError || isRenderError) && _retryCount < _maxRetries) {
+      // Phase 3 — Guard: if the player was already torn down (e.g. by a
+      // concurrent fallback or by dispose), don't try to dispose it again.
+      if (!_isPlayerCreated) return;
       _retryCount++;
 
       // Cancel all stream subscriptions BEFORE disposing the player.
@@ -1173,6 +1286,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
       // 300ms later. Previously these were fire-and-forget — the new
       // Player was created while the old one was still tearing down,
       // causing native SIGSEGV crashes on low-end devices.
+      //
+      // Phase 3 — Set the static lock BEFORE disposing and release it
+      // in .whenComplete(). Previously this path did NOT set the lock,
+      // so the 300ms-delayed _initializePlayer() could create a new
+      // Player while the old one was still tearing down. Increased the
+      // delay from 300ms to 800ms to match _tryVideoOutputFallback and
+      // give low-end devices enough time for native cleanup.
+      _isPlayerDisposing = true;
       final oldPlayer = _player;
       unawaited(() async {
         try {
@@ -1188,7 +1309,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
             onTimeout: () => debugPrint('error-handler: dispose() timed out'),
           );
         } catch (_) {}
-      }());
+      }().whenComplete(() {
+        _isPlayerDisposing = false;
+      }));
+      // Mark player as torn down so _exitPlayer / dispose won't try to
+      // access the disposed instance.
+      _isPlayerCreated = false;
 
       _hasVideoOutput = false;
 
@@ -1206,8 +1332,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen>
         }
       }
 
-      // Delay before re-initializing to allow native cleanup
-      Future.delayed(const Duration(milliseconds: 300), () {
+      // Delay before re-initializing to allow native cleanup.
+      // Phase 3 — increased from 300ms to 800ms (same as
+      // _tryVideoOutputFallback) to give low-end devices enough time
+      // for native libmpv teardown before creating a new Player.
+      Future.delayed(const Duration(milliseconds: 800), () {
         if (mounted && !_isDisposed) {
           _initializePlayer();
         }

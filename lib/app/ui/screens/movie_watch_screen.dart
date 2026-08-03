@@ -12,6 +12,42 @@ class MovieWatchScreen extends StatefulWidget {
 }
 
 class _MovieWatchScreenState extends State<MovieWatchScreen> {
+  // Phase 3 — Debounce lock: prevents rapid taps on Watch buttons from
+  // pushing multiple VideoPlayerScreen instances onto the Navigator stack.
+  // Each VideoPlayerScreen creates its own libmpv Player (native MediaCodec
+  // hardware decoder + GPU surface + audio track). On low-end devices
+  // (Oppo A16, 2GB RAM), 2-3 concurrent players exhaust decoder/GPU
+  // resources → white/black screen → native SIGSEGV → app exits.
+  // The lock is released when the pushed route returns (Back from player).
+  bool _isNavigating = false;
+
+  void _openVideoPlayer(MovieWatchLink link) {
+    if (_isNavigating) return;
+    _isNavigating = true;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => VideoPlayerScreen(
+          videoUrl: link.url,
+          title: widget.movieDetail.title,
+          videoId: widget.movieDetail.id,
+        ),
+      ),
+    ).then((_) {
+      // Release the lock when the player route is popped.
+      // Use a microtask to ensure the lock is released AFTER the
+      // Navigator has finished its pop animation, preventing an
+      // immediate re-tap from racing the pop.
+      Future.microtask(() {
+        if (mounted) {
+          setState(() => _isNavigating = false);
+        } else {
+          _isNavigating = false;
+        }
+      });
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -188,18 +224,7 @@ class _MovieWatchScreenState extends State<MovieWatchScreen> {
                 height: 32,
                 child: ElevatedButton.icon(
                   onPressed: link.url.isNotEmpty
-                      ? () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => VideoPlayerScreen(
-                                videoUrl: link.url,
-                                title: widget.movieDetail.title,
-                                videoId: widget.movieDetail.id,
-                              ),
-                            ),
-                          );
-                        }
+                      ? () => _openVideoPlayer(link)
                       : null,
                   icon: const Icon(Icons.play_arrow, size: 14),
                   label: const Text('Watch', style: TextStyle(fontSize: 11)),
