@@ -5005,3 +5005,29 @@ Stage Summary:
 - Back from the Downloads tab returns to the Movie/Series detail screen automatically (Navigator.push + pop).
 - VIP/Admin gate, disabled state, lock icon, and accentColor background all preserved — no security or UX regression.
 - MovieDownloadScreen and SeriesDownloadScreen are still used elsewhere in the app (e.g. from DownloadPage itself when starting a fresh download), so they were NOT deleted — just no longer imported from the detail screens.
+
+
+---
+Task ID: 1 (Phase 1)
+Agent: Main Agent
+Task: REVERT Phase 4.49 (misunderstood intent) and add a Floating Action Button (FAB) on the per-post Download Options Screen (Server 1 / Server 2 / 4K / 1080p / 720p quality picker) that jumps to the global Downloads tab. Back from Downloads returns to the Download Options Screen.
+
+Work Log:
+- Re-read Bro's new message: Phase 4.49 was a MISUNDERSTANDING. Bro wanted the Download Options Screen (MovieDownloadScreen / SeriesDownloadScreen — the per-post screen showing Server 1 / Server 2 / 4K / 1080p / 720p quality picker) to have a FAB that jumps to the global Downloads tab. NOT for the detail screen's Download button to skip the options screen entirely. Bro's exact words: 'လုပ်ချင်တယ်အတိုင်မဟုပါ အထင်မှားနေပါတတ်' (it's not what I wanted, you misunderstood).
+- REVERT Step: ran `git checkout c04e2b9 -- lib/app/ui/screens/movie_detail_screen.dart lib/app/ui/screens/series_detail_screen.dart` to restore both detail screens to their pre-Phase 4.49 state (commit c04e2b9 was the worklog-only commit just before the Phase 4.49 code commit 62487fe). Verified the restored state: detail screen's Download button is back to the original square ElevatedButton.icon (RoundedRectangleBorder with 10px corners) inside Expanded, and onPressed pushes MovieDownloadScreen / SeriesDownloadScreen as before. Imports restored (movie_download_screen.dart / series_download_screen.dart re-imported; download_page.dart import removed from detail screens).
+- EXPLORE Step: read movie_download_screen.dart and series_download_screen.dart to map out the Scaffold structure. Both are StatefulWidgets with a Scaffold(appBar, body) — Scaffold ends at movie_download_screen.dart:261 and series_download_screen.dart:314. Both files ALREADY import download_page.dart (was used for the "View" SnackBar action after starting a download). accentColor is defined as `Theme.of(context).colorScheme.primary` (red/accent) in both files' build methods. appConfig was previously only declared inside _startInAppDownload — needed to add it to build for the FAB tooltip.
+- IMPLEMENT Step (movie_download_screen.dart):
+  - Added `final appConfig = Provider.of<AppConfig>(context, listen: false);` to build method (line 164).
+  - Added `floatingActionButton: FloatingActionButton(...)` to the Scaffold, placed AFTER the body's ternary (line 280). FAB config: heroTag 'movieDownloadScreenFab' (unique, avoids Hero animation collisions when both Movie + Series download screens are in the nav stack), onPressed pushes `const DownloadPage()`, backgroundColor = accentColor (red), foregroundColor = Colors.white, elevation 4, tooltip = appConfig.translate('downloads') (localized — 'Downloads' in en.json line 75, exists in my.json too), child = Icon(Icons.folder_open, size: 26).
+- IMPLEMENT Step (series_download_screen.dart):
+  - Same changes: added appConfig local to build (line 158), added floatingActionButton to Scaffold (line 333). heroTag 'seriesDownloadScreenFab' (different from movie's to avoid Hero collision).
+- BACK-RETURN: DownloadPage is pushed on top of the Download Options Screen via Navigator.push, so Android system Back + AppBar back arrow pop it and return to the Download Options Screen automatically. No PopScope / WillPopScope wiring needed.
+- VIP GATE: The FAB has NO VIP gate. Reasoning: the Download Options Screen itself is only reachable by VIP/Admin users — the detail screen's Download button gates on `appConfig.isDownloadAllowedForUser` before pushing MovieDownloadScreen / SeriesDownloadScreen. So anyone who can SEE the Download Options Screen can use the FAB. No security regression.
+- Bracket balance check PASSED (stack-based) on all 4 modified files: movie_download_screen.dart (166/31/6), series_download_screen.dart (199/36/8), movie_detail_screen.dart (536/78/33), series_detail_screen.dart (516/71/33).
+- Committed as 61e2900 and pushed to origin/main.
+
+Stage Summary:
+- REVERTED Phase 4.49: detail screens are back to original square Download button → pushes MovieDownloadScreen / SeriesDownloadScreen (the per-post Download Options Screen showing Server 1 / Server 2 / 4K / 1080p / 720p).
+- ADDED Phase 1 FAB: both MovieDownloadScreen and SeriesDownloadScreen now have a FloatingActionButton at the bottom-right corner. Tapping it jumps straight to the global Downloads tab (DownloadPage, reachable via Home → Menu → Downloads). Icon = folder_open (represents the Downloads folder). Color = accent red, matches the app's Accent color system. Tooltip is localized.
+- BACK-RETURN: Back from the Downloads tab returns to the Download Options Screen automatically (Navigator.push + pop).
+- 4 files modified: movie_detail_screen.dart (reverted), series_detail_screen.dart (reverted), movie_download_screen.dart (added FAB + appConfig local), series_download_screen.dart (added FAB + appConfig local).
