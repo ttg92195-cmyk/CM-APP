@@ -1063,8 +1063,17 @@ class _SearchScreenState extends State<SearchScreen>
                           // _isLoadingFilters) so they're fully usable
                           // the instant the sheet opens.
                           onPressed: _showFilterBottomSheet,
-                          padding: const EdgeInsets.all(10),
-                          constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                          // Phase 2 — Ripple consistency: removed custom
+                          // `padding: EdgeInsets.all(10)` and
+                          // `constraints: BoxConstraints(minWidth: 44, minHeight: 44)`
+                          // that were shrinking the tap target to 44×44
+                          // (smaller than the global iconButtonTheme's
+                          // default 48×48). This made the Filter icon's
+                          // ripple circle visibly smaller than the Menu
+                          // and Search icons on Home's AppBar. Now it
+                          // relies on the global theme (48×48 + CircleBorder)
+                          // for consistency.
+                          tooltip: appConfig.translate('filters'),
                         ),
                       ),
                       if (_hasActiveFilters)

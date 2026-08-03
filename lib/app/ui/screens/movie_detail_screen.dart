@@ -394,7 +394,13 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
           SliverAppBar(
             pinned: true,
             floating: false,
-            leadingWidth: 46,
+            // Phase 2 — Restored default leadingWidth (56). Was 46,
+            // which clipped the back-button IconButton's 48×48 circular
+            // ripple to 46 wide. The global iconButtonTheme now locks
+            // the IconButton to 48×48, so the slot needs to be at least
+            // 48 wide — using the Material default (56) gives the
+            // standard AppBar back-button spacing.
+            leadingWidth: 56,
             backgroundColor: isDark ? const Color(0xFF121212) : bgColor,
             scrolledUnderElevation: 0,
             surfaceTintColor: Colors.transparent,

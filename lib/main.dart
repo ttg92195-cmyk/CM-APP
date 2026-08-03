@@ -919,6 +919,17 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
       iconButtonTheme: IconButtonThemeData(
         style: IconButton.styleFrom(
           shape: const CircleBorder(),
+          // Phase 2 — Lock the default tap target to the a11y minimum
+          // (48×48) so call-sites can no longer accidentally shrink
+          // the ripple by setting only `padding` without also setting
+          // `constraints`. Before this hardening, the global theme
+          // only locked the SHAPE — leaving the SIZE free to shrink
+          // to whatever a call-site's padding produced (e.g. the
+          // Filter icon in SearchScreen shrank to 44×44). Now every
+          // default IconButton gets a 48×48 circular ripple, matching
+          // the Menu / Search icons on Home's AppBar exactly.
+          minimumSize: const Size(48, 48),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
@@ -1095,6 +1106,10 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
       iconButtonTheme: IconButtonThemeData(
         style: IconButton.styleFrom(
           shape: const CircleBorder(),
+          // Phase 2 — Same 48×48 lock as dark theme. See comment
+          // in the dark theme block above for full rationale.
+          minimumSize: const Size(48, 48),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
