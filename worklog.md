@@ -5031,3 +5031,27 @@ Stage Summary:
 - ADDED Phase 1 FAB: both MovieDownloadScreen and SeriesDownloadScreen now have a FloatingActionButton at the bottom-right corner. Tapping it jumps straight to the global Downloads tab (DownloadPage, reachable via Home → Menu → Downloads). Icon = folder_open (represents the Downloads folder). Color = accent red, matches the app's Accent color system. Tooltip is localized.
 - BACK-RETURN: Back from the Downloads tab returns to the Download Options Screen automatically (Navigator.push + pop).
 - 4 files modified: movie_detail_screen.dart (reverted), series_detail_screen.dart (reverted), movie_download_screen.dart (added FAB + appConfig local), series_download_screen.dart (added FAB + appConfig local).
+
+
+---
+Task ID: 2 (Phase 2)
+Agent: Main Agent
+Task: Fix the Ripple Effect / Splash Effect on Home Screen header icons (Menu, Search, Filter, etc.) to be CONSISTENT and PROPER size — currently too small or inconsistent across icons.
+
+Work Log:
+- Delegated research to Explore agent (Phase2-Explore): found the global iconButtonTheme (Phase 4.47) only locked SHAPE (CircleBorder) but NOT SIZE. SearchScreen's Filter IconButton had `padding: EdgeInsets.all(10)` + `constraints: BoxConstraints(minWidth: 44, minHeight: 44)` → shrunk its tap target to 44×44 (smaller than the 48×48 default used by Home's Menu/Search icons) → Bro's "inconsistent ripple" complaint. Also flagged: movie/series detail SliverAppBars had `leadingWidth: 46` which clipped the back-button ripple to 46 wide.
+- FIX Layer 1 (search_screen.dart:1066-1076): removed the 2 lines (`padding: EdgeInsets.all(10)` + `constraints: BoxConstraints(minWidth: 44, minHeight: 44)`) from the Filter IconButton. Now relies on the global iconButtonTheme for 48×48 + CircleBorder. Added `tooltip: appConfig.translate('filters')` for a11y parity. Verified `appConfig` is in scope (declared at line 378 in build()) and 'filters' key exists in en.json (line 89: "Filters") and my.json.
+- FIX Layer 2 (main.dart dark theme lines 919-934 + light theme lines 1106-1114): hardened the global iconButtonTheme to also lock the SIZE — added `minimumSize: const Size(48, 48)` and `tapTargetSize: MaterialTapTargetSize.shrinkWrap`. This prevents future call-sites from accidentally shrinking the ripple by setting only `padding` without also setting `constraints`. Call-sites that explicitly set their own `minimumSize` (e.g. the 28×28 search-history delete button at search_screen.dart:1460) still override correctly because styleFrom at the call-site wins over theme.
+- FIX Layer 3 (movie_detail_screen.dart:397 + series_detail_screen.dart:350): changed `leadingWidth: 46` → `leadingWidth: 56` (Material default). The 46-wide slot was clipping the back-button IconButton's 48-diameter circular ripple. Now full-size and unclipped.
+- NO REGRESSIONS verified:
+  * Search-history delete IconButton (search_screen.dart:1458-1464) explicitly sets minimumSize: Size(28, 28) → still wins over the global 48.
+  * Video player control IconButtons (video_player_screen.dart:1965+) use `style: IconButton.styleFrom(shape: CircleBorder(), padding: EdgeInsets.all(8))` with NO minimumSize → they now inherit the global 48×48 (a UX IMPROVEMENT — bigger tap targets on video controls).
+  * Phase 1 FAB on MovieDownloadScreen / SeriesDownloadScreen uses FloatingActionButton (not IconButton) → unaffected.
+- Bracket balance check PASSED (stack-based) on all 4 modified files: main.dart (470/87/30), search_screen.dart (687/116/51), movie_detail_screen.dart (538/78/33), series_detail_screen.dart (518/71/33).
+- Committed as 42009c4 and pushed to origin/main.
+
+Stage Summary:
+- SearchScreen Filter icon's ripple is now the same 48-diameter circle as Home's Menu and Search icons — no more visible size difference.
+- Global iconButtonTheme now hard-locks 48×48 as the default tap target for ALL IconButtons app-wide. Future code can no longer accidentally shrink the ripple by setting only padding.
+- Movie/Series detail screen back-buttons no longer have their ripple clipped by a too-narrow 46-wide leading slot — restored to Material default 56.
+- 4 files modified: main.dart (theme hardened), search_screen.dart (Filter IconButton cleaned), movie_detail_screen.dart + series_detail_screen.dart (leadingWidth 46 → 56).
