@@ -160,6 +160,8 @@ class _MovieDownloadScreenState extends State<MovieDownloadScreen> {
     final cardBgColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
     final metaTextColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
     final bodyTextColor = isDark ? Colors.white70 : Colors.black87;
+    // Phase 1 (FAB) — needed for the localized tooltip on the FAB.
+    final appConfig = Provider.of<AppConfig>(context, listen: false);
 
     // Group download links by server name
     final Map<String, List<MovieDownloadLink>> serverGroups = {};
@@ -258,6 +260,37 @@ class _MovieDownloadScreenState extends State<MovieDownloadScreen> {
                 }),
               ],
             ),
+      // ===== Phase 1: Floating Action Button — jump to global Downloads tab =====
+      //
+      // Bro's request: while on the Download Options Screen (Server 1 /
+      // Server 2 / 4K / 1080p / 720p), the user should be able to tap a
+      // floating button at the bottom-right corner to jump STRAIGHT to
+      // the global Downloads tab (Home → Menu → Downloads), where they
+      // can see all their active/completed downloads in one place.
+      //
+      // Back from the Downloads tab returns to this Download Options
+      // Screen automatically (DownloadPage is pushed on top of this
+      // route via Navigator.push, so system Back + AppBar back arrow
+      // pop it and return here).
+      //
+      // Design: accent-red background + white folder icon — matches the
+      // app's Dark Theme + Accent color system used everywhere else
+      // (same accentColor variable used by the per-row Download buttons
+      // and the server-group leading icons on this screen).
+      floatingActionButton: FloatingActionButton(
+        heroTag: 'movieDownloadScreenFab',
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const DownloadPage()),
+          );
+        },
+        backgroundColor: accentColor,
+        foregroundColor: Colors.white,
+        elevation: 4,
+        tooltip: appConfig.translate('downloads'),
+        child: const Icon(Icons.folder_open, size: 26),
+      ),
     );
   }
 
