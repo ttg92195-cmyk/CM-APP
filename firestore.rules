@@ -238,6 +238,45 @@ service cloud.firestore {
             || request.resource.data.appVersion is string);
     }
 
+    // Helper: Validate a Reel document (Phase 4 Step A).
+    // Reels live in a SEPARATE collection from Movies — they are
+    // short-form vertical-video posts for the new "Reels" tab.
+    // Required on CREATE: title (non-empty string), videoUrl (non-empty
+    // string). The client also writes title_lowercase (string), but the
+    // rules don't enforce its presence because it's a derived field.
+    // On UPDATE: only validate fields that are PRESENT in the request.
+    // Optional fields (validated when present):
+    //   - description/slug/posterUrl: must be string (empty allowed for slug/description/posterUrl)
+    //   - episodes: must be list (each item's structure is enforced by the
+    //     client ReelEpisode.fromMap + a separate per-item check below)
+    //   - downloadLinks: must be list of strings
+    //   - likeCount: must be int >= 0
+    //   - isTrending: must be bool
+    function isValidReel() {
+      return (!request.resource.data.keys().hasAny(['title'])
+            || (request.resource.data.title is string
+                && request.resource.data.title.size() > 0))
+        && (!request.resource.data.keys().hasAny(['videoUrl'])
+            || (request.resource.data.videoUrl is string
+                && request.resource.data.videoUrl.size() > 0))
+        && (!request.resource.data.keys().hasAny(['slug'])
+            || request.resource.data.slug is string)
+        && (!request.resource.data.keys().hasAny(['description'])
+            || request.resource.data.description is string)
+        && (!request.resource.data.keys().hasAny(['posterUrl'])
+            || request.resource.data.posterUrl is string)
+        && (!request.resource.data.keys().hasAny(['episodes'])
+            || (request.resource.data.episodes is list
+                && request.resource.data.episodes.size() <= 100))
+        && (!request.resource.data.keys().hasAny(['downloadLinks'])
+            || request.resource.data.downloadLinks is list)
+        && (!request.resource.data.keys().hasAny(['likeCount'])
+            || (request.resource.data.likeCount is int
+                && request.resource.data.likeCount >= 0))
+        && (!request.resource.data.keys().hasAny(['isTrending'])
+            || request.resource.data.isTrending is bool);
+    }
+
     // CONFIG: Admin email mappings - restrict admin_emails to admin-only read
     // to prevent reconnaissance of admin account emails.
     // Other config docs remain readable by authenticated users.
@@ -284,6 +323,19 @@ service cloud.firestore {
       allow read: if request.auth != null;
       allow create: if isAdmin() && isValidGenreOrTagOrCollection();
       allow update: if isAdmin() && isValidGenreOrTagOrCollection();
+      allow delete: if isAdmin();
+    }
+
+    // REELS: Short-form vertical-video posts for the "Reels" tab in the
+    // bottom navigation. Authenticated users can read; only admins can
+    // write. Phase 4 Step A: create + update require isValidReel() schema
+    // check (title + videoUrl non-empty strings, episodes/downloadLinks
+    // optional lists when present, likeCount optional int, isTrending
+    // optional bool).
+    match /reels/{reelId} {
+      allow read: if request.auth != null;
+      allow create: if isAdmin() && isValidReel();
+      allow update: if isAdmin() && isValidReel();
       allow delete: if isAdmin();
     }
 

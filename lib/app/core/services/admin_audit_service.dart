@@ -78,6 +78,11 @@ class AdminAuditAction {
   static const userRoleChange = 'user.role_change';
   static const userVipGrant = 'user.vip_grant';
   static const userVipRevoke = 'user.vip_revoke';
+
+  // Reels (Phase 4)
+  static const reelCreate = 'reel.create';
+  static const reelUpdate = 'reel.update';
+  static const reelDelete = 'reel.delete';
 }
 
 /// Standard collection names for the `collection` field.
@@ -92,6 +97,7 @@ class AdminAuditCollection {
   static const notifications = 'notifications';
   static const batchImports = 'batch_imports';
   static const users = 'users';
+  static const reels = 'reels';
 }
 
 /// Singleton service that writes audit entries to `admin_audit/{autoId}`.

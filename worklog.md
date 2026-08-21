@@ -5079,3 +5079,44 @@ Stage Summary:
 - Crash 2 (rapid server switch → white/black → crash) ELIMINATED: (a) _isNavigating lock on Watch buttons prevents stacking multiple VideoPlayerScreen instances. (b) Static lock released in .whenComplete() instead of fixed 1000ms Timer — holds until native cleanup actually finishes. (c) Poll-loop max increased to 5s. (d) Fallback paths now set the lock. (e) Performance tuning microtask guarded between every await.
 - 3 files modified: video_player_screen.dart (major lifecycle hardening), movie_watch_screen.dart + series_watch_screen.dart (debounce lock).
 - Bro should still check Firebase Crashlytics (filter by app_version=2.0.0+16 or newer) for native libmpv.so / libffmpeg.so crashes to confirm the SIGSEGV theory is resolved. If crashes persist, the next layer would be RouteAware to pause the bottom player when a new route is pushed on top (Issue #9 from the Explore report — not implemented in this pass because the debounce lock should prevent the multi-player scenario entirely).
+
+---
+Task ID: Phase 4-A
+Agent: Main Agent
+Task: Phase 4 Step A — Reels Data Model. Create Firestore `reels` collection schema, Reel model class, ReelsService singleton, and localization keys. Foundation for all subsequent Phase 4 steps (Admin Panel UI, bottom-nav tab, video player, episodes modal, details modal).
+
+Work Log:
+- Read existing Movie.dart (268 lines) and FirestoreContentService.dart (3100 lines) to understand the established patterns: defensive parsing helpers, _requireAdmin() pattern, audit-logging via AdminAuditService.instance.record(), serverTimestamp-based createdAt/updatedAt fields, and toMap/fromMap factory pattern.
+- Created `lib/app/core/models/reel.dart` (305 lines) with:
+  - `ReelEpisode` class: {title, videoUrl, thumbnailUrl} — represents a single episode within a multi-episode Reel.
+  - `Reel` class: full schema (id, title, titleLowercase, slug, description, posterUrl, videoUrl, episodes, downloadLinks, likeCount, isTrending, createdAt, updatedAt).
+  - Helper methods: `hasEpisodes` (bool), `episodeCount` (int, min 1), `videoUrlForEpisode(index)` (String?), `episodeTitleForIndex(index)` (String), `timeAgo` (String), `copyWith(...)`.
+  - Defensive parsing helpers duplicated from Movie.dart (so Reel model is self-contained with no implicit dependency): `_parseDateTime`, `_parseString`, `_parseNullableString`, `_parseInt`, `_parseBool`, `_parseStringList`, `_parseEpisodeList`.
+- Added `reels/{reelId}` Firestore Security Rule to `firestore.rules`:
+  - `allow read: if request.auth != null` — any authenticated user can browse Reels.
+  - `allow create/update: if isAdmin() && isValidReel()` — admin-only writes with schema validation.
+  - `allow delete: if isAdmin()`.
+  - New `isValidReel()` schema-validation helper: requires title + videoUrl to be non-empty strings when present; validates episodes is list with ≤100 items; likeCount is int ≥ 0; isTrending is bool; slug/description/posterUrl are strings; downloadLinks is list.
+- Added 3 new audit-log action constants to `admin_audit_service.dart`:
+  - `AdminAuditAction.reelCreate = 'reel.create'`
+  - `AdminAuditAction.reelUpdate = 'reel.update'`
+  - `AdminAuditAction.reelDelete = 'reel.delete'`
+  - `AdminAuditCollection.reels = 'reels'`
+- Created `lib/app/core/services/reels_service.dart` (270 lines) — ReelsService singleton with:
+  - `isCurrentUserAdmin()` + `verifyAdmin()` — mirror FirestoreContentService pattern.
+  - READ: `getReels({limit, startAfter})` (3-tier fallback: orderBy updatedAt → orderBy createdAt → no orderBy), `getTrendingReels({limit})`, `getReelById(id)`, `searchReels(query, {limit})` (prefix-match via title_lowercase).
+  - ADMIN CRUD: `addReel(Reel)` (sets createdAt+updatedAt=serverTimestamp, likeCount=0; audit logs), `updateReel(id, data)` (auto-updates title_lowercase + slug when title changes; audit logs), `deleteReel(id)` (reads title before delete for audit log).
+  - USER: `incrementLikeCount(reelId, {unlike})` (transactional FieldValue.increment — deferred to Step E).
+  - `_generateSlug(title)` — same algorithm as FirestoreContentService.
+- Added 11 new localization keys to both `en.json` and `my.json` (alphabetically positioned):
+  - `bookmark`, `details`, `episode`, `episodes`, `like`, `like_count`, `reel`, `reel_details`, `reel_episodes`, `reels`, `reels_empty`, `reels_loading`.
+- Created `scripts/phase4_step_a_reel_test.dart` — pure-Dart round-trip test for the Reel model with 6 test cases (full round-trip, multi-episode helpers, single-video Reel, defensive parsing on corrupted map, timeAgo, copyWith). Cannot be executed on this server (no Dart SDK) — Bro can run locally with `dart run scripts/phase4_step_a_reel_test.dart`.
+- All 4 modified/created Dart files pass stack-based bracket balance check.
+- en.json + my.json both pass `json.load` and have 0 key-parity mismatches.
+
+Stage Summary:
+- Reels data layer is complete: model + service + security rules + localization + audit-log plumbing.
+- No UI changes in this step — Bro won't see anything different in the app yet. This is the foundation for Step B (Admin Panel → Reels tab) onward.
+- The Reel schema intentionally mirrors Movie's slug/title_lowercase/createdAt/updatedAt/likeCount patterns so the existing Admin UI patterns (search, audit, etc.) can be reused with minimal adaptation in Step B.
+- Like counts are denormalized as `likeCount` field on the Reel doc; per-user like state (subcollection `users/{uid}/reel_likes/{reelId}`) is deferred to Step E (Reels Video Player) when the Like button actually exists.
+- Next step (B): Admin Panel → Reels Tab UI for CRUD. Will reuse the layout patterns from `add_movie_page.dart` + `edit_movie_page.dart` adapted for the simpler Reel schema.
