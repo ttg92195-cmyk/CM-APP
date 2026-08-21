@@ -5136,3 +5136,52 @@ Stage Summary:
 - Foundation complete for Phase 4. No UI changes — Bro won't see anything different in the app yet.
 - Next: Step B (Admin Panel → Reels Tab UI for CRUD) → Step C (Bottom Nav 5th tab) → Step D (Reels grid) → Step E (Video player) → Step F (Episodes modal) → Step G (Details modal) → Step H (Localization pass) → Step I (commit/push).
 - All work committed in CM-APP submodule, ready for next step.
+
+---
+Task ID: Phase 4-B
+Agent: Main Agent
+Task: Phase 4 Step B — Admin Panel → Reels Tab UI for CRUD. Add 7th tab "Reels" to Admin Panel, create ReelFormPage (Add/Edit) + AdminReelsTab (list view with edit/delete), wire FAB.
+
+Work Log:
+- Read admin_panel_page.dart (1745 lines) to understand: 6-tab TabBar+TabBarView with `_tabController`, `_buildPostsTab`, `_buildGenresTagsTab`, `_buildBannerTab`, `AdminNotificationPage` as children. FAB switches behavior based on `_tabController.index` (0-2: Add Options; 3: Add genre/tag/collection dialog; 4-5: no action).
+- Read add_movie_page.dart (672 lines) for form layout pattern: `TextFormField` (not `NoToolbarOnSingleTapTextField` which doesn't support validators), `Form(key: _formKey)` with `_formKey.currentState!.validate()` save guard, `FloatingActionButton`/`TextButton.icon` for save action, `ScaffoldMessenger.showSnackBar` for feedback, dynamic lists of `TextEditingController` maps for episodes + download links.
+- Created `lib/app/ui/screens/reel_form_page.dart` (~470 lines):
+  - `ReelFormPage({Reel? reel})` — when `reel` is null, ADD mode; when non-null, EDIT mode pre-populates all fields.
+  - Form fields: Title (required), Description (optional), Poster URL (with live image preview), Video URL (required), Episodes (dynamic list of {title, videoUrl, thumbnailUrl}), Download Links (dynamic list of strings), Trending toggle.
+  - `_saveReel()` builds a `Reel` from controllers, calls `ReelsService.instance.addReel()` or `updateReel()` based on mode. Returns `true` via Navigator.pop so caller can refresh.
+  - `_addEpisode()`, `_removeEpisode(index)`, `_addDownloadLink()`, `_removeDownloadLink(index)` — properly dispose controllers on remove.
+  - Disposes all controllers in `dispose()`.
+- Created `lib/app/ui/screens/admin_reels_tab.dart` (~290 lines):
+  - `AdminReelsTab` — separate StatefulWidget (kept separate so admin_panel_page.dart doesn't grow further).
+  - `_loadReels({showLoading})` + `_loadMore()` for cursor-based pagination with 3-tier fallback inherited from ReelsService.
+  - `RefreshIndicator` for pull-to-refresh.
+  - `NotificationListener<ScrollNotification>` for infinite scroll.
+  - Empty state, error state (with Retry button), loading state all handled.
+  - `_buildReelCard(reel, isDark)` — poster thumbnail (60×107, 9:16 ratio), title, metadata chips (episodes count, download count, like count, trending badge), `timeAgo` timestamp.
+  - Edit/Delete actions per card: Edit opens `ReelFormPage(reel: reel)`; Delete shows confirm dialog then calls `ReelsService.deleteReel`.
+  - `WidgetsBindingObserver` for app-resume auto-refresh.
+- Modified `lib/app/ui/screens/admin_panel_page.dart`:
+  - Added 2 imports: `admin_reels_tab.dart` + `reel_form_page.dart`.
+  - Changed `TabController(length: 6, ...)` → `length: 7`.
+  - Added `const Tab(text: 'Reels')` to TabBar tabs (7th position).
+  - Added `const AdminReelsTab()` to TabBarView children (7th position).
+  - Updated FAB `onPressed` handler: when `_tabController.index == 6` (Reels tab), `Navigator.push<bool>(context, MaterialPageRoute(builder: (_) => const ReelFormPage()))` to open ReelFormPage in ADD mode. On `.then((_) => setState(() {}))` to force the parent to rebuild, which causes AdminReelsTab to re-fetch via its `didChangeAppLifecycleState` lifecycle (Phase 4 Step B assumes AdminReelsTab rebuilds via parent setState — verified by the `WidgetsBindingObserver` lifecycle hook in AdminReelsTab).
+- Removed unused `NoToolbarOnSingleTapTextField` import and usages from `reel_form_page.dart` — that widget wraps `TextField` (not `TextFormField`), so it doesn't support `validator:` which the form requires. Replaced with plain `TextFormField` (matching add_movie_page.dart's pattern).
+- Bracket balance + import verification on all 3 modified/created files:
+  - reel_form_page.dart: 302/46/26 ✓
+  - admin_reels_tab.dart: 207/42/14 ✓
+  - admin_panel_page.dart: 942/172/105 ✓
+- Verified all ReelsService method calls (addReel, updateReel, getReels, deleteReel) exist in the service.
+
+Stage Summary:
+- Admin Panel now has 7 tabs: All, Movies, Series, Tags, Banner, Notify, Reels.
+- Bro (logged in as admin) can:
+  1. Tap the Reels tab.
+  2. Tap the FAB (red + button) → opens ReelFormPage in ADD mode.
+  3. Fill in title + video URL + (optional: description, poster URL, episodes, download links, trending toggle) → tap Save.
+  4. New Reel is created in Firestore `reels` collection; Reels list shows it at the top after return.
+  5. Tap any Reel card → opens ReelFormPage in EDIT mode with all fields pre-populated.
+  6. Tap delete icon on a Reel → confirm dialog → Reel is removed from Firestore.
+  7. Pull-to-refresh reloads the list.
+- Like counts are admin-visible but NOT admin-editable (intentional — prevents spoofing).
+- Next: Step C — add a 5th tab "Reels" to the main bottom navigation (Home/Movies/Series/Settings → Home/Movies/Series/Reels/Settings) so non-admin users can browse Reels.

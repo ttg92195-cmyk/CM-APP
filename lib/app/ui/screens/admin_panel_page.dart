@@ -14,6 +14,8 @@ import 'package:cm_movies/app/ui/screens/edit_movie_page.dart';
 import 'package:cm_movies/app/ui/screens/admin_notification_page.dart';
 import 'package:cm_movies/app/ui/screens/admin_users_page.dart';
 import 'package:cm_movies/app/ui/screens/batch_import_page.dart';
+import 'package:cm_movies/app/ui/screens/admin_reels_tab.dart';
+import 'package:cm_movies/app/ui/screens/reel_form_page.dart';
 import 'package:cm_movies/app/ui/components/no_toolbar_on_single_tap_text_field.dart';
 
 class AdminPanelPage extends StatefulWidget {
@@ -135,7 +137,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 6, vsync: this);
+    _tabController = TabController(length: 7, vsync: this);
     _loadInitialData();
   }
 
@@ -719,6 +721,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
             const Tab(text: 'Tags'),
             const Tab(text: 'Banner'),
             const Tab(text: 'Notify'),
+            const Tab(text: 'Reels'),
           ],
         ),
       ),
@@ -733,6 +736,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                 _buildGenresTagsTab(isDark),
                 _buildBannerTab(isDark),
                 const AdminNotificationPage(),
+                const AdminReelsTab(),
               ],
             ),
       floatingActionButton: FloatingActionButton(
@@ -742,6 +746,25 @@ class _AdminPanelPageState extends State<AdminPanelPage>
             _showAddOptions();
           } else if (index == 3) {
             _addGenreTagDialog();
+          } else if (index == 6) {
+            // Phase 4 Step B — Reels tab: open ReelFormPage in ADD mode.
+            // After the form returns, switch back to the Reels tab so the
+            // user sees the new Reel at the top of the list immediately.
+            // AdminReelsTab rebuilds on tab-focus via its build() method
+            // and the new Reel will appear because we re-fetch via
+            // ReelsService.getReels() in its initState OR after pop.
+            Navigator.push<bool>(
+              context,
+              MaterialPageRoute(builder: (_) => const ReelFormPage()),
+            ).then((_) {
+              // Force the ReelsTab to reload by re-selecting the current
+              // tab index — this triggers its NotificationListener to
+              // rebuild with fresh data. We do this by calling setState
+              // on the parent which forces the TabBarView to re-render.
+              if (mounted) {
+                setState(() {});
+              }
+            });
           }
           // Tab 4 (Banner) and Tab 5 (Notify) have their own UI — no FAB action needed
         },
