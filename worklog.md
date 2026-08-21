@@ -5185,3 +5185,18 @@ Stage Summary:
   7. Pull-to-refresh reloads the list.
 - Like counts are admin-visible but NOT admin-editable (intentional — prevents spoofing).
 - Next: Step C — add a 5th tab "Reels" to the main bottom navigation (Home/Movies/Series/Settings → Home/Movies/Series/Reels/Settings) so non-admin users can browse Reels.
+Task: Phase 4 Step B — Admin Panel → Reels Tab UI. Add 7th tab "Reels" to Admin Panel with full CRUD (Add/Edit/Delete) UI. Foundation for non-admin users to browse Reels (Step C onward).
+
+Work Log:
+- All detail work in CM-APP submodule (see CM-APP/worklog.md Phase 4-B entry).
+- Created lib/app/ui/screens/reel_form_page.dart — ReelFormPage (Add/Edit mode) with: title, description, poster URL (live preview), video URL, dynamic episodes list, dynamic download links, trending toggle. Save → ReelsService.addReel/updateReel.
+- Created lib/app/ui/screens/admin_reels_tab.dart — AdminReelsTab (separate StatefulWidget), pull-to-refresh + infinite scroll + cursor pagination, _buildReelCard with poster thumbnail + metadata chips + edit/delete actions. WidgetsBindingObserver for app-resume auto-refresh.
+- Modified lib/app/ui/screens/admin_panel_page.dart: TabController length 6→7, added `Tab(text: 'Reels')` + `const AdminReelsTab()` to TabBar/TabBarView, FAB handler routes to ReelFormPage when on Reels tab.
+- Removed unused NoToolbarOnSingleTapTextField from reel_form_page.dart (doesn't support validator).
+- All 3 modified/created files pass bracket balance + lint checks. All ReelsService method calls verified to exist.
+
+Stage Summary:
+- Admin Panel now has 7 tabs (All/Movies/Series/Tags/Banner/Notify/Reels).
+- Admin can create/edit/delete Reels with full episode + download link management.
+- Like counts are admin-visible but NOT admin-editable (prevents spoofing).
+- Next: Step C — bottom navigation 5th tab (4→5 tabs: Home/Movies/Series/Settings → Home/Movies/Series/Reels/Settings) so non-admin users can browse Reels. Then Step D (3-col grid UI) onward.
