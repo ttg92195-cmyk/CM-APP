@@ -5120,3 +5120,19 @@ Stage Summary:
 - The Reel schema intentionally mirrors Movie's slug/title_lowercase/createdAt/updatedAt/likeCount patterns so the existing Admin UI patterns (search, audit, etc.) can be reused with minimal adaptation in Step B.
 - Like counts are denormalized as `likeCount` field on the Reel doc; per-user like state (subcollection `users/{uid}/reel_likes/{reelId}`) is deferred to Step E (Reels Video Player) when the Like button actually exists.
 - Next step (B): Admin Panel → Reels Tab UI for CRUD. Will reuse the layout patterns from `add_movie_page.dart` + `edit_movie_page.dart` adapted for the simpler Reel schema.
+Task: Phase 4 Step A — Reels Data Model. Foundation for the new Reels feature: Firestore `reels` collection, Reel model class, ReelsService singleton, security rules, and localization keys. No UI in this step.
+
+Work Log:
+- Delegated all detail work to a single Phase 4-A sub-task in the CM-APP submodule (see CM-APP/worklog.md for the complete entry).
+- Created `lib/app/core/models/reel.dart` — Reel + ReelEpisode classes with defensive parsing helpers (mirroring Movie.dart's pattern), helpers for episodes (hasEpisodes, episodeCount, videoUrlForEpisode, episodeTitleForIndex), timeAgo, copyWith.
+- Created `lib/app/core/services/reels_service.dart` — ReelsService singleton with admin verification (verifyAdmin/isCurrentUserAdmin), paginated getReels() with 3-tier fallback, getTrendingReels(), getReelById(), searchReels() (prefix match on title_lowercase), addReel/updateReel/deleteReel (admin-only, audit-logged), incrementLikeCount() (transactional, for Step E's Like button).
+- Added `reels/{reelId}` match block + `isValidReel()` helper to firestore.rules (read: auth required; create/update: admin + schema; delete: admin).
+- Added 3 audit action constants (reelCreate/reelUpdate/reelDelete) + 1 collection constant (reels) to admin_audit_service.dart.
+- Added 11 new localization keys to en.json + my.json (bookmark, details, episode, episodes, like, like_count, reel, reel_details, reel_episodes, reels, reels_empty, reels_loading).
+- Created scripts/phase4_step_a_reel_test.dart — pure-Dart round-trip test (6 cases) for the Reel model. Cannot execute here (no Dart SDK); Bro can run locally.
+- Bracket balance + JSON syntax verified on all modified/created files.
+
+Stage Summary:
+- Foundation complete for Phase 4. No UI changes — Bro won't see anything different in the app yet.
+- Next: Step B (Admin Panel → Reels Tab UI for CRUD) → Step C (Bottom Nav 5th tab) → Step D (Reels grid) → Step E (Video player) → Step F (Episodes modal) → Step G (Details modal) → Step H (Localization pass) → Step I (commit/push).
+- All work committed in CM-APP submodule, ready for next step.
