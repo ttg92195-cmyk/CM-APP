@@ -5340,3 +5340,22 @@ Stage Summary:
 - Bottom-left overlay: title + description + trending pill.
 - Step F will replace the Episodes SnackBar with a real modal. Step G will replace the Details SnackBar with a real modal. Step H will persist bookmark state.
 - Next: Step F — Episodes Modal. Bottom-sheet listing Episode 1, 2, 3... Selecting shows CircularProgressIndicator on the video player + switches the active video + auto-plays.
+
+---
+Task ID: Phase 4-E-hotfix
+Agent: Main Agent
+Task: Fix build error after Phase 4 Step E — `const Duration.zero` doesn't compile in Flutter 3.24.5 / Dart 2.x.
+
+Work Log:
+- Build error: `lib/app/ui/screens/reels_video_player_screen.dart:360:41: Error: Expected '(' after this. _player.seek(const Duration.zero);` + `Error: Couldn't find constructor 'Duration.zero'`.
+- Root cause: `Duration.zero` is a static constant field on the Duration class, NOT a constructor. The `const` prefix tries to invoke it as a const constructor (which doesn't exist), hence the compile error. The correct form is just `Duration.zero` (without `const`).
+- Verified against existing `video_player_screen.dart` line 163: `Duration _lastKnownPosition = Duration.zero;` — no `const` prefix.
+- Fix: replaced `_player.seek(const Duration.zero);` with `_player.seek(Duration.zero);` at line 360.
+- Bracket balance verified: 320/87/29 ✓
+- Comprehensive pattern scan: no other bad patterns (no `Colors.black05`, no `VideoColors(`, no `fillColors:`, no `snap.data()?[`, no other `const X.zero` constructs).
+
+Stage Summary:
+- 1 build error fixed. Ready for re-build.
+- Root cause: confusion between static const field and const constructor in Dart.
+- Bro should re-run: `flutter build apk --release --no-tree-shake-icons`.
+- After build success: continue to Phase 4 Step F (Episodes Modal).

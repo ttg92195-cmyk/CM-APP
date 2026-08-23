@@ -357,7 +357,7 @@ class _ReelPageState extends State<_ReelPage> {
       _streamSubs.add(
         _player.stream.completed.listen((completed) {
           if (completed && mounted && !_hasError) {
-            _player.seek(const Duration.zero);
+            _player.seek(Duration.zero);
             _player.play();
           }
         }),
