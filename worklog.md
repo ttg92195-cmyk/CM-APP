@@ -5252,3 +5252,43 @@ Stage Summary:
 - The empty-state has a RefreshIndicator + "Grid UI coming in Step D" hint badge so Bro knows what to expect next.
 - No regression in the existing 4-tab navigation (kHomeTab/kMoviesTab/kSeriesTab unchanged; kSettingsTab moved from 3→4 but no persisted state references it).
 - Next: Step D — replace the Reels page placeholder body with a 3-column grid view of Reel posts (poster thumbnails + title overlay, like TikTok/IG Reels thumbnail).
+
+---
+Task ID: Phase 4-D
+Agent: Main Agent
+Task: Phase 4 Step D — Reels Tab Grid UI. Replace the Step C placeholder body in ReelsPage with a 3-column 9:16 vertical-video thumbnail grid (TikTok/IG Reels style). Pull-to-refresh + infinite scroll + 3-tier fallback from ReelsService. Tap on a Reel shows a placeholder SnackBar (Step E will replace with the video player).
+
+Work Log:
+- Read lib/app/ui/screens/movies_page.dart (254 lines) and lib/app/ui/components/movie_card.dart (680 lines) to learn the established grid pattern: SliverGrid + crossAxisCount:3 + SliverPadding + NotificationListener infinite scroll + CachedNetworkImage with retry + boxShadow lift in dark mode. The movie posters use childAspectRatio 0.53 (2:3 portrait); for Reels I tightened this to 0.5625 (9:16 vertical-video aspect).
+- Rewrote lib/app/ui/screens/reels_page.dart (~470 lines, was ~115):
+  - State: `_reels`, `_isLoading`, `_isLoadingMore`, `_hasMore`, `_lastDoc`, `_errorMessage` — mirrors admin_reels_tab.dart pattern.
+  - `_loadReels({showLoading})` + `_loadMore()` for cursor-based pagination through ReelsService.getReels() with 3-tier fallback (updatedAt desc → createdAt desc → no orderBy).
+  - Pull-to-refresh via RefreshIndicator + AlwaysScrollableScrollPhysics.
+  - NotificationListener<ScrollNotification> triggers _loadMore near the bottom.
+  - Header sliver with Reels icon + translated "Reels" title.
+  - 3-column SliverGrid with 9:16 aspect ratio per cell.
+  - Skeleton loading state (12 shimmer placeholders) for initial load.
+  - Error state with Retry button.
+  - Empty state with friendly icon + message.
+  - `_onReelTap(reel)` shows a 1-second SnackBar with the Reel title — placeholder for Step E's video player.
+- Extracted `_ReelGridCell` as a separate StatefulWidget (stateful so retry can bump _posterRetryCount and trigger CachedNetworkImage refetch):
+  - 9:16 poster image with CachedNetworkImage (placeholder shimmer, error widget with tap-to-retry).
+  - Bottom gradient overlay (transparent → black 0.85 at bottom) for text legibility.
+  - Trending badge (top-left): red pill with trending_up icon + "TRENDING" text — only when reel.isTrending is true.
+  - Like count badge (top-right): dark pill with heart icon + formatted count (1.2K, 3.4M) — only when likeCount > 0.
+  - Episode count badge (bottom-left, above title): dark pill with video_library icon + "N eps" — only when reel.hasEpisodes.
+  - Title (bottom): max 2 lines + ellipsis + drop shadow for readability over busy poster.
+- Verification:
+  - Bracket balance: 261/43/21 ✓
+  - Imports: 6 (flutter, provider, cached_network_image, app_config, reel model, reels_service) ✓
+  - ReelsService.getReels call verified to exist ✓
+  - All Reel model getters used (posterUrl, title, isTrending, likeCount, hasEpisodes, episodeCount) verified to exist ✓
+  - No bad patterns (Colors.black05, isNotEmpty == true) ✓
+
+Stage Summary:
+- Tapping the Reels tab now shows a 3-column grid of vertical-video thumbnails (9:16 ratio each).
+- Each cell shows poster + title overlay + trending badge + like count badge + episode count badge.
+- Pull-to-refresh reloads; infinite scroll fetches more pages; 3-tier fallback handles missing Firestore indexes.
+- Tap on a cell shows a 1-second SnackBar with the Reel title (placeholder — Step E will replace with the vertical-swipe full-screen video player).
+- The grid reuses CachedNetworkImage's URL-keyed in-memory cache so posters load instantly on scroll-back.
+- Next: Step E — the vertical-swipe full-screen video player with PageView (TikTok-style), auto-play+loop, mute/unmute toggle, Like/Bookmark/Episodes/Details icons overlay. This is the biggest step in Phase 4 — it's where Bro's Reels vision actually comes alive.
