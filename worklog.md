@@ -5217,3 +5217,38 @@ Stage Summary:
 - 4 build errors all fixed. Ready for re-build.
 - Root cause: 2 typos (Colors.black05 doesn't exist), 1 null-safety oversight (chained ?. returns nullable), 1 cloud_firestore generic-type change (Transaction.get returns DocumentSnapshot<Object?> when collection is untyped, not DocumentSnapshot<Map<String, dynamic>>).
 - Next: Bro re-runs `flutter build apk --release --no-tree-shake-icons`. If build succeeds, continue to Phase 4 Step C (bottom navigation 5th Reels tab for end users).
+
+---
+Task ID: Phase 4-C
+Agent: Main Agent
+Task: Phase 4 Step C — Bottom Navigation 5th "Reels" tab. Add Reels tab to bottom nav between Series and Settings; Settings tab index shifts from 3 to 4. Create placeholder ReelsPage (Step D will fill the 3-column grid UI).
+
+Work Log:
+- Read lib/app/ui/home/home_page.dart (~932 lines) to understand the bottom-nav structure: 4 NavigationDestination entries in a `NavigationBar`, page list `_bottomNavPages` of 4 Widgets wrapped in `IndexedStack`, tab constants `kHomeTab=0, kMoviesTab=1, kSeriesTab=2, kSettingsTab=3`.
+- Verified `kHomeTab/kMoviesTab/kSeriesTab/kSettingsTab` constants are only used in `home_page.dart` itself plus `home_screen.dart:691,704` (the "More" buttons call onNavigateToTab with `kMoviesTab` or `kSeriesTab` — no usage of `kSettingsTab` outside home_page.dart).
+- Created `lib/app/ui/screens/reels_page.dart` (~115 lines):
+  - `ReelsPage` StatefulWidget (will hold state in Step D for: reels list, loading, pagination, error).
+  - Step C body: friendly empty-state with Reels icon + "Reels coming soon" message + hint badge pointing to Step D.
+  - `RefreshIndicator` wrapper with a 500ms no-op delay so pull-to-refresh doesn't feel broken.
+  - No AppBar (Reels tab is a full-bleed visual tab like TikTok/IG; Step D will overlay a custom header).
+  - Theme-aware colors (dark/light).
+- Modified `lib/app/ui/home/home_page.dart`:
+  - Added import: `reels_page.dart`.
+  - Tab constants: added `kReelsTab = 3` between `kSeriesTab` (2) and `kSettingsTab`. Shifted `kSettingsTab` from 3 → 4.
+  - `_bottomNavPages`: added `const ReelsPage()` between `SeriesPage` and `SettingsPage` so IndexedStack renders the correct page for index 3.
+  - `destinations`: added 5th `NavigationDestination` with `Icons.video_collection_outlined` (default) → `Icons.video_collection` (selected) and `appConfig.translate('reels')` as label, between Series and Settings.
+  - Documented the index shift risk in a comment: persisted tab state would break, but we don't persist tab state to disk anywhere.
+- Verified `home_screen.dart` "More" button callbacks (line 691 calls `kMoviesTab`, line 704 calls `kSeriesTab`) — both still correct under the new index scheme because Series stayed at index 2 and Movies stayed at 1.
+- Bracket balance + tab count consistency verified:
+  - reels_page.dart: 46/5/3 ✓
+  - home_page.dart: 447/77/18 ✓
+  - NavigationDestination count: 5 ✓
+  - Tab constants: kHomeTab=0, kMoviesTab=1, kSeriesTab=2, kReelsTab=3, kSettingsTab=4 ✓
+  - `_bottomNavPages` list contains ReelsPage at index 3 ✓
+
+Stage Summary:
+- Bottom navigation now has 5 tabs: Home, Movies, Series, Reels, Settings.
+- Tapping the Reels tab shows a friendly "Reels coming soon" empty state with the Reels icon.
+- The empty-state has a RefreshIndicator + "Grid UI coming in Step D" hint badge so Bro knows what to expect next.
+- No regression in the existing 4-tab navigation (kHomeTab/kMoviesTab/kSeriesTab unchanged; kSettingsTab moved from 3→4 but no persisted state references it).
+- Next: Step D — replace the Reels page placeholder body with a 3-column grid view of Reel posts (poster thumbnails + title overlay, like TikTok/IG Reels thumbnail).

@@ -15,17 +15,23 @@ import 'package:cm_movies/app/ui/screens/login_page.dart';
 import 'package:cm_movies/app/ui/screens/profile_page.dart';
 import 'package:cm_movies/app/ui/screens/search_screen.dart';
 import 'package:cm_movies/app/ui/screens/admin_panel_page.dart';
+import 'package:cm_movies/app/ui/screens/reels_page.dart';
 import 'package:cm_movies/app/core/services/download_manager_service.dart';
 import 'package:cm_movies/app/ui/screens/tmdb_generator_page.dart';
 import 'package:cm_movies/app/ui/screens/vip_page.dart';
 import 'package:cm_movies/app/ui/components/download_notification_banner.dart';
 import 'package:cm_movies/app/ui/components/premium_snackbar.dart';
 
-// Bottom nav tab indices (4 tabs)
+// Bottom nav tab indices (5 tabs).
+// Phase 4 Step C — added kReelsTab between Series and Settings. The
+// index shift (Settings moved from 3 → 4) is a breaking change for any
+// persisted tab index, but we don't persist tab state to disk anywhere,
+// so the change is safe.
 const int kHomeTab = 0;
 const int kMoviesTab = 1;
 const int kSeriesTab = 2;
-const int kSettingsTab = 3;
+const int kReelsTab = 3;
+const int kSettingsTab = 4;
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -128,6 +134,8 @@ class _HomePageState extends State<HomePage> {
       ),
       MoviesPage(key: _moviesKey),
       SeriesPage(key: _seriesKey),
+      // Phase 4 Step C — Reels tab (placeholder page; grid UI comes in Step D).
+      const ReelsPage(),
       const SettingsPage(),
     ];
   }
@@ -477,6 +485,12 @@ class _HomePageState extends State<HomePage> {
             icon: const Icon(Icons.tv_outlined),
             selectedIcon: const Icon(Icons.tv),
             label: appConfig.translate('series'),
+          ),
+          // Phase 4 Step C — Reels 5th tab between Series and Settings.
+          NavigationDestination(
+            icon: const Icon(Icons.video_collection_outlined),
+            selectedIcon: const Icon(Icons.video_collection),
+            label: appConfig.translate('reels'),
           ),
           NavigationDestination(
             icon: const Icon(Icons.settings_outlined),
