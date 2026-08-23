@@ -311,7 +311,11 @@ class ReelsService {
       await _firestore.runTransaction((tx) async {
         final snap = await tx.get(docRef);
         if (!snap.exists) return;
-        final current = (snap.data()?['likeCount'] as int?) ?? 0;
+        // Cast snap.data() to Map<String, dynamic> explicitly because
+        // Transaction.get() returns DocumentSnapshot<Object?> in newer
+        // cloud_firestore versions — the `[]` operator needs a Map cast.
+        final data = snap.data() as Map<String, dynamic>?;
+        final current = (data?['likeCount'] as int?) ?? 0;
         final next = unlike
             ? (current > 0 ? current - 1 : 0)
             : current + 1;
@@ -319,7 +323,8 @@ class ReelsService {
       });
       // Read back the latest count for the caller.
       final fresh = await docRef.get();
-      return (fresh.data()?['likeCount'] as int?) ?? 0;
+      final freshData = fresh.data() as Map<String, dynamic>?;
+      return (freshData?['likeCount'] as int?) ?? 0;
     } catch (e) {
       debugPrint('ReelsService.incrementLikeCount failed: $e');
       return null;

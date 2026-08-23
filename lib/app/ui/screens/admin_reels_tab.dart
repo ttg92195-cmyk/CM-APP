@@ -305,7 +305,7 @@ class _AdminReelsTabState extends State<AdminReelsTab>
                           imageUrl: reel.posterUrl!,
                           fit: BoxFit.cover,
                           placeholder: (_, __) => Container(
-                            color: isDark ? Colors.white10 : Colors.black05,
+                            color: isDark ? Colors.white10 : Colors.black12,
                           ),
                           errorWidget: (_, __, ___) => Container(
                             color: Colors.red.withOpacity(0.1),
@@ -313,7 +313,7 @@ class _AdminReelsTabState extends State<AdminReelsTab>
                           ),
                         )
                       : Container(
-                          color: isDark ? Colors.white10 : Colors.black05,
+                          color: isDark ? Colors.white10 : Colors.black12,
                           child: const Icon(Icons.video_library, size: 24),
                         ),
                 ),

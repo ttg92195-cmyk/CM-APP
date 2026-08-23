@@ -5200,3 +5200,20 @@ Stage Summary:
 - Admin can create/edit/delete Reels with full episode + download link management.
 - Like counts are admin-visible but NOT admin-editable (prevents spoofing).
 - Next: Step C — bottom navigation 5th tab (4→5 tabs: Home/Movies/Series/Settings → Home/Movies/Series/Reels/Settings) so non-admin users can browse Reels. Then Step D (3-col grid UI) onward.
+
+---
+Task ID: Phase 4-B-hotfix
+Agent: Main Agent
+Task: Fix 4 build errors reported by Bro after Phase 4 Step B commit.
+
+Work Log:
+- Error 1+2 (admin_reels_tab.dart lines 308 & 316): `Colors.black05` does NOT exist in Flutter's Material Colors palette — only `black12`, `black26`, `black38`, `black45`, `black54`, `black87`, `black89` (and `black` / `white10`). Fixed both occurrences: `Colors.black05` → `Colors.black12`.
+- Error 3 (reel_form_page.dart line 151): `(m['thumbnailUrl']?.text.trim()).isNotEmpty` — `m['thumbnailUrl']?.text.trim()` returns `String?` (nullable) because the entire chain is null-aware. Calling `.isNotEmpty` on `String?` is a compile error. Fixed by adding `?? ''` to coerce to non-null String: `(m['thumbnailUrl']?.text.trim() ?? '').isNotEmpty`.
+- Error 4 (reels_service.dart lines 314 & 322): `snap.data()?['likeCount']` and `fresh.data()?['likeCount']` — `Transaction.get()` and `DocumentReference.get()` return `DocumentSnapshot<Object?>` in the untyped collection case (`_reelsRef` is `CollectionReference` without a generic). The `Object?` return from `.data()` doesn't have a `[]` operator. Fixed by casting to `Map<String, dynamic>?` first: `final data = snap.data() as Map<String, dynamic>?; ... data?['likeCount']`. Same pattern verified against firestore_content_service.dart line 599 (`final data = doc.data() as Map<String, dynamic>?;`).
+- Verified all 4 error patterns are completely gone via grep scan.
+- All 3 modified files still pass bracket balance check.
+
+Stage Summary:
+- 4 build errors all fixed. Ready for re-build.
+- Root cause: 2 typos (Colors.black05 doesn't exist), 1 null-safety oversight (chained ?. returns nullable), 1 cloud_firestore generic-type change (Transaction.get returns DocumentSnapshot<Object?> when collection is untyped, not DocumentSnapshot<Map<String, dynamic>>).
+- Next: Bro re-runs `flutter build apk --release --no-tree-shake-icons`. If build succeeds, continue to Phase 4 Step C (bottom navigation 5th Reels tab for end users).

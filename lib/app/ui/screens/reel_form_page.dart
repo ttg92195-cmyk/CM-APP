@@ -148,7 +148,7 @@ class _ReelFormPageState extends State<ReelFormPage> {
         episodes.add(ReelEpisode(
           title: epTitle.isEmpty ? 'Episode ${episodes.length + 1}' : epTitle,
           videoUrl: epUrl,
-          thumbnailUrl: (m['thumbnailUrl']?.text.trim()).isNotEmpty == true
+          thumbnailUrl: (m['thumbnailUrl']?.text.trim() ?? '').isNotEmpty
               ? m['thumbnailUrl']!.text.trim()
               : null,
         ));
