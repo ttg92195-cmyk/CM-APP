@@ -31,6 +31,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/models/reel.dart';
 import 'package:cm_movies/app/core/services/reels_service.dart';
+import 'package:cm_movies/app/ui/screens/reels_video_player_screen.dart';
 
 class ReelsPage extends StatefulWidget {
   const ReelsPage({super.key});
@@ -119,14 +120,17 @@ class _ReelsPageState extends State<ReelsPage> {
   }
 
   void _onReelTap(Reel reel) {
-    // Phase 4 Step D — placeholder. Step E will replace this with
-    // Navigator.push to the vertical-swipe full-screen video player.
-    final appConfig = Provider.of<AppConfig>(context, listen: false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${appConfig.translate('reel')}: ${reel.title}'),
-        duration: const Duration(seconds: 1),
-        behavior: SnackBarBehavior.floating,
+    // Phase 4 Step E — push the full-screen vertical-swipe video player.
+    // Pass the FULL _reels list so the user can swipe forward/backward
+    // through the batch without leaving the player.
+    final index = _reels.indexOf(reel);
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ReelsVideoPlayerScreen(
+          reels: _reels,
+          initialIndex: index < 0 ? 0 : index,
+        ),
       ),
     );
   }

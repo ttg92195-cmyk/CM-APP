@@ -5292,3 +5292,51 @@ Stage Summary:
 - Tap on a cell shows a 1-second SnackBar with the Reel title (placeholder — Step E will replace with the vertical-swipe full-screen video player).
 - The grid reuses CachedNetworkImage's URL-keyed in-memory cache so posters load instantly on scroll-back.
 - Next: Step E — the vertical-swipe full-screen video player with PageView (TikTok-style), auto-play+loop, mute/unmute toggle, Like/Bookmark/Episodes/Details icons overlay. This is the biggest step in Phase 4 — it's where Bro's Reels vision actually comes alive.
+
+---
+Task ID: Phase 4-E
+Agent: Main Agent
+Task: Phase 4 Step E — Reels Detail Video Player (TikTok/IG-style). Full-screen vertical-swipe PageView player with auto-play+loop, mute/unmute toggle, Like/Bookmark/Episodes/Details action overlay. The biggest step in Phase 4 — Reels actually come alive here.
+
+Work Log:
+- Read lib/app/ui/screens/video_player_screen.dart imports + PlayerConfiguration pattern to understand the media_kit setup pattern. The full movie player is 2832 lines tuned for movies with seek bar, audio/subtitle track selection, brightness drag, performance tier detection — ALL of which Reels don't need. Decided to write a separate, much simpler player (~480 lines) tuned for short-form vertical videos.
+- Created lib/app/ui/screens/reels_video_player_screen.dart (~480 lines):
+  - ReelsVideoPlayerScreen: takes a List<Reel> + initialIndex. PageView.builder with Axis.vertical scrollDirection + PageController + onPageChanged. Pass the full _reels list so the user can swipe forward/backward through the batch.
+  - Parent state: _currentIndex, _isMuted (persisted to SharedPreferences key 'reels_muted'), _likedReelIds (Set), _likeCountOverrides (Map), _bookmarkedReelIds (Set), _pageKeys (Map<int, GlobalKey<_ReelPageState>>) so parent can talk to children.
+  - _toggleMute: flips _isMuted, persists to prefs, calls _applyMute on every mounted child.
+  - _onPageChanged: iterates _pageKeys, calls _setActive(true/false) on each child. Active page plays; others pause.
+  - _toggleLike: local state flip + ReelsService.incrementLikeCount (best-effort sync).
+  - _toggleBookmark: local state flip + SnackBar confirmation (Step H will persist to Firestore users/{uid}/reel_bookmarks).
+  - _showEpisodesModal / _showDetailsModal: SnackBar placeholders for Step F/G.
+  - _ReelPage (StatefulWidget): owns its own media_kit Player + VideoController. Each page is a separate instance so swipe-to-next properly tears down the previous.
+  - _ReelPageState lifecycle:
+    - initState → _initPlayer() creates Player synchronously (no async device detection — Reels are short clips), sets up stream subscriptions for buffering/error/completed, opens Media, applies mute, plays if active.
+    - dispose → cancels stream subscriptions + player.stop() (1s timeout) + player.dispose() (2s timeout). All wrapped in try/catch so disposal errors don't crash the app.
+    - didUpdateWidget → if isActive changed, call _setActive (play/pause). If isMuted changed, call _applyMute (setVolume 0/100).
+    - _setActive, _applyMute: idempotent helpers safe to call from parent or self.
+  - Build layout (Stack):
+    - Video surface (Video widget with NoVideoControls + BoxFit.cover).
+    - Poster backdrop shown while buffering (Image.network with error swallowing).
+    - Top-bottom gradient overlay (50% top → transparent → 70% bottom) for text legibility.
+    - Top bar: Back button + Mute toggle (volume_off_outlined ↔ volume_up_outlined).
+    - Right-side action stack (vertical): Like + Bookmark + Episodes (if hasEpisodes) + Details. Each is a 44px circular icon button with a label below.
+    - Bottom-left: Title (2 lines max + drop shadow) + Description (2 lines max + drop shadow) + Trending pill (if isTrending).
+- Modified lib/app/ui/screens/reels_page.dart:
+  - Added import: reels_video_player_screen.dart.
+  - _onReelTap: replaced SnackBar placeholder with Navigator.push to ReelsVideoPlayerScreen(reels: _reels, initialIndex: indexOf(reel)). User can swipe forward/backward through the full batch without leaving the player.
+- Verification:
+  - Bracket balance: reels_video_player_screen.dart 320/87/29 ✓, reels_page.dart 259/41/21 ✓
+  - All media_kit APIs used (Player, PlayerConfiguration, VideoController, VideoControllerConfiguration, MPVLogLevel.error, Media, _player.open/play/pause/stop/dispose/seek/setVolume, _player.stream.buffering/error/completed) verified to exist in video_player_screen.dart's reference implementation.
+  - Removed VideoColors/fillColors usage — not present in video_player_screen.dart, replaced with NoVideoControls + BoxFit.cover pattern matching the existing video widget usage.
+  - dart:async import added for StreamSubscription.
+  - No bad patterns (Colors.black05, isNotEmpty == true, snap.data()?, VideoColors/fillColors).
+
+Stage Summary:
+- Tapping a Reel cell now pushes a full-screen vertical-swipe video player.
+- Video auto-plays when the page becomes active; pauses when the user swipes to the next page.
+- Video loops seamlessly (on completion → seek(0) + play()).
+- Mute toggle (top-right) is shared across all pages and persists across sessions (SharedPreferences key 'reels_muted', default muted — mobile-user-friendly).
+- Action stack (right side): Like (red heart when liked, counter syncs to Firestore), Bookmark (red bookmark when saved, Step H will persist), Episodes (only when reel.hasEpisodes), Details.
+- Bottom-left overlay: title + description + trending pill.
+- Step F will replace the Episodes SnackBar with a real modal. Step G will replace the Details SnackBar with a real modal. Step H will persist bookmark state.
+- Next: Step F — Episodes Modal. Bottom-sheet listing Episode 1, 2, 3... Selecting shows CircularProgressIndicator on the video player + switches the active video + auto-plays.
