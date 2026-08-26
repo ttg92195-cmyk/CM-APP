@@ -5407,3 +5407,22 @@ Stage Summary:
   7. _player.stop() → _player.open(newMedia) → _player.play() — episode 2 starts playing auto.
   8. User can switch back via the same modal — reopens with "Episode 2" highlighted, can pick "Episode 1".
 - Next: Step G — Details Modal. Replace the Step E SnackBar placeholder for the Details button with a real bottom-sheet showing post poster + description + download button.
+
+---
+Task ID: 4-E-fix
+Agent: Main Agent
+Task: Fix Flutter build error in reels_video_player_screen.dart (Future<void> ?? Future.value() pattern)
+
+Work Log:
+- Bro reported build failure: line 370 had `await pageKey.currentState?._openEpisode(newIndex) ?? Future.value();`
+- Dart 3.5 (Flutter 3.24.5) analyzer treats the `?.method()` returning `Future<void>` combined with `?? Future.value()` and `await` as type `void`, failing the kernel snapshot
+- Rewrote to explicit null checks: pull `currentState` to local, then `await state._openEpisode(newIndex)` inside nested `if (state != null)` block
+- Verified bracket balance via phase4_43_balance_check.py — OK (414/106/41 openers == 414/106/41 closers)
+- Checked other 2 `currentState?.` call sites (lines 140, 149) — they call void methods (`_applyMute`, `_setActive`) without `await`/`??`, no problem
+- Committed as `b167f7a` in CM-APP, parent pointer bump as `104b428`
+- Both pushed to origin/main
+
+Stage Summary:
+- Build-blocking compile error resolved with minimal change (4 insertions, 1 deletion)
+- No behavior change: same null-safety semantics, just written in a form Dart 3.5 accepts
+- Ready for Bro to re-run `flutter build apk --release --no-tree-shake-icons`
