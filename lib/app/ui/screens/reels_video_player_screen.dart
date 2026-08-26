@@ -367,7 +367,10 @@ class _ReelsVideoPlayerScreenState extends State<ReelsVideoPlayerScreen> {
     // Tell the active page to open the new episode's video URL.
     final pageKey = _pageKeys[_currentIndex];
     if (pageKey != null) {
-      await pageKey.currentState?._openEpisode(newIndex) ?? Future.value();
+      final state = pageKey.currentState;
+      if (state != null) {
+        await state._openEpisode(newIndex);
+      }
     }
 
     if (mounted) {
