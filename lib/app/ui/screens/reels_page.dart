@@ -1,5 +1,5 @@
 // =============================================================================
-// Phase 4 Step D — Reels Tab Grid UI
+// Phase 4 Steps D + H — Reels Tab Grid UI (localized + theme-aware)
 // =============================================================================
 // Replaces the Step C placeholder body with a 3-column vertical-video
 // thumbnail grid (9:16 ratio per cell, like TikTok/IG Reels thumbnails).
@@ -9,8 +9,8 @@
 //   - Gradient overlay at the bottom for text legibility
 //   - Title overlay (max 2 lines, ellipsis)
 //   - Like count badge (top-right, heart icon + count)
-//   - Trending badge (top-left, "🔥 Trending" pill) when isTrending=true
-//   - Episode count badge (bottom-left, "N episodes" pill) when episodes > 1
+//   - Trending badge (top-left, localized "TRENDING" pill) when isTrending=true
+//   - Episode count badge (bottom-left, localized "N eps" pill) when episodes > 1
 //
 // Page-level behavior:
 //   - Pull-to-refresh (RefreshIndicator + AlwaysScrollableScrollPhysics).
@@ -20,9 +20,16 @@
 //     primary orderBy('updatedAt') query fails for missing index, falls
 //     back to orderBy('createdAt') → no orderBy. The grid never appears
 //     empty just because an index isn't deployed.
-//   - Tap on a Reel cell → SnackBar saying "Coming in Step E" for now.
-//     Step E will replace this with the vertical-swipe full-screen
-//     video player.
+//   - Tap on a Reel cell → pushes the full-screen vertical-swipe player
+//     (Step E).
+//
+// Step H (Localisation + Theme):
+//   - All user-visible strings go through appConfig.translate() — badges
+//     (trending / episode count), error state (reels_load_failed), and the
+//     Retry button. toUpperCase()/toLowerCase() on translated text are
+//     no-ops for Burmese (which has no letter case).
+//   - Error state colors are theme-aware (dark/light).
+//   - Raw exception text never reaches the UI — only debugPrint logs.
 // =============================================================================
 
 import 'package:flutter/material.dart';
@@ -85,9 +92,12 @@ class _ReelsPageState extends State<ReelsPage> {
       });
     } catch (e) {
       if (!mounted) return;
+      // Keep the raw error for debugging; the UI shows a localized
+      // message (Step H) instead of the raw exception.
+      debugPrint('ReelsPage._loadReels failed: $e');
       setState(() {
         _isLoading = false;
-        _errorMessage = 'Failed to load reels: $e';
+        _errorMessage = e.toString();
       });
     }
   }
@@ -153,7 +163,7 @@ class _ReelsPageState extends State<ReelsPage> {
       body: _isLoading
           ? _buildSkeletonGrid(isDark)
           : _errorMessage != null
-              ? _buildErrorState(theme)
+              ? _buildErrorState(appConfig, theme)
               : _reels.isEmpty
                   ? _buildEmptyState(appConfig, theme)
                   : RefreshIndicator(
@@ -299,7 +309,8 @@ class _ReelsPageState extends State<ReelsPage> {
   // ============================================================
   // ERROR STATE
   // ============================================================
-  Widget _buildErrorState(ThemeData theme) {
+  Widget _buildErrorState(AppConfig appConfig, ThemeData theme) {
+    final isDark = theme.brightness == Brightness.dark;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -308,16 +319,19 @@ class _ReelsPageState extends State<ReelsPage> {
           children: [
             const Icon(Icons.error_outline, color: Colors.red, size: 48),
             const SizedBox(height: 12),
+            // Localized message (Step H) — raw exception is only in logs.
             Text(
-              _errorMessage!,
+              appConfig.translate('reels_load_failed'),
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.grey),
+              style: TextStyle(
+                color: isDark ? Colors.white54 : Colors.black54,
+              ),
             ),
             const SizedBox(height: 16),
             ElevatedButton.icon(
               onPressed: () => _loadReels(),
               icon: const Icon(Icons.refresh),
-              label: const Text('Retry'),
+              label: Text(appConfig.translate('retry')),
             ),
           ],
         ),
@@ -392,6 +406,7 @@ class _ReelGridCellState extends State<_ReelGridCell> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final appConfig = Provider.of<AppConfig>(context);
     final reel = widget.reel;
     final hasPoster = reel.posterUrl != null && reel.posterUrl!.isNotEmpty;
 
@@ -494,13 +509,16 @@ class _ReelGridCellState extends State<_ReelGridCell> {
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
-                      children: const [
-                        Icon(Icons.trending_up,
+                      children: [
+                        const Icon(Icons.trending_up,
                             color: Colors.white, size: 10),
-                        SizedBox(width: 3),
+                        const SizedBox(width: 3),
+                        // Step H — localized badge text. toUpperCase() is
+                        // a no-op for Burmese (no letter case) and keeps
+                        // the punchy "TRENDING" look in English.
                         Text(
-                          'TRENDING',
-                          style: TextStyle(
+                          appConfig.translate('trending').toUpperCase(),
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 8,
                             fontWeight: FontWeight.bold,
@@ -560,8 +578,9 @@ class _ReelGridCellState extends State<_ReelGridCell> {
                         const Icon(Icons.video_library,
                             color: Colors.white70, size: 10),
                         const SizedBox(width: 3),
+                        // Step H — localized short episode-count badge.
                         Text(
-                          '${reel.episodeCount} eps',
+                          '${reel.episodeCount} ${appConfig.translate('eps')}',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 9,

@@ -1,5 +1,5 @@
 // =============================================================================
-// Phase 4 Steps E/F/G — Reels Video Player Screen (TikTok/IG-style)
+// Phase 4 Steps E/F/G/H — Reels Video Player Screen (TikTok/IG-style)
 // =============================================================================
 // Full-screen vertical-swipe video player for browsing Reels.
 //
@@ -26,6 +26,10 @@
 //   - Step G — Details modal: bottom-sheet with poster, title, trending
 //     badge, upload time, stats row (likes / episodes / downloads),
 //     description, and tappable download links (copy to clipboard).
+//   - Step H — Localisation + theme: all user-visible strings (tooltips,
+//     badges, error state, buttons) go through appConfig.translate();
+//     both sheets are dark/light theme-aware; the video canvas stays
+//     intentionally black in both themes.
 //
 // Player lifecycle:
 //   - The parent owns a single PageController. The visible page is the
@@ -787,9 +791,10 @@ class _ReelsVideoPlayerScreenState extends State<ReelsVideoPlayerScreen> {
   // ============================================================
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final bgColor = isDark ? Colors.black : Colors.black;
+    // Full-screen video canvas is intentionally always black in both
+    // light and dark themes (Step H theme polish — removed the previous
+    // redundant `isDark ? Colors.black : Colors.black` ternary).
+    final bgColor = Colors.black;
 
     return Scaffold(
       backgroundColor: bgColor,
@@ -1117,7 +1122,8 @@ class _ReelPageState extends State<_ReelPage> {
                   IconButton(
                     icon: const Icon(Icons.arrow_back, color: Colors.white),
                     onPressed: () => Navigator.of(context).pop(),
-                    tooltip: 'Back',
+                    // Step H — localized tooltip.
+                    tooltip: appConfig.translate('back'),
                   ),
                   const Spacer(),
                   IconButton(
@@ -1128,7 +1134,9 @@ class _ReelPageState extends State<_ReelPage> {
                       color: Colors.white,
                     ),
                     onPressed: widget.onToggleMute,
-                    tooltip: widget.isMuted ? 'Unmute' : 'Mute',
+                    // Step H — localized tooltip.
+                    tooltip: appConfig.translate(
+                        widget.isMuted ? 'unmute' : 'mute'),
                   ),
                 ],
               ),
@@ -1226,12 +1234,14 @@ class _ReelPageState extends State<_ReelPage> {
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
-                    children: const [
-                      Icon(Icons.trending_up, color: Colors.white, size: 12),
-                      SizedBox(width: 4),
+                    children: [
+                      const Icon(Icons.trending_up, color: Colors.white, size: 12),
+                      const SizedBox(width: 4),
+                      // Step H — localized badge (toUpperCase is a no-op
+                      // for Burmese).
                       Text(
-                        'TRENDING',
-                        style: TextStyle(
+                        appConfig.translate('trending').toUpperCase(),
+                        style: const TextStyle(
                           color: Colors.white,
                           fontSize: 9,
                           fontWeight: FontWeight.bold,
@@ -1305,16 +1315,18 @@ class _ReelPageState extends State<_ReelPage> {
           children: [
             const Icon(Icons.error_outline, color: Colors.white70, size: 48),
             const SizedBox(height: 12),
-            const Text(
-              'Unable to play this Reel',
-              style: TextStyle(color: Colors.white, fontSize: 14),
+            // Step H — localized error text.
+            Text(
+              appConfig.translate('reel_play_error'),
+              style: const TextStyle(color: Colors.white, fontSize: 14),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
             ElevatedButton.icon(
               onPressed: () => Navigator.of(context).pop(),
               icon: const Icon(Icons.close),
-              label: const Text('Close'),
+              // Step H — localized button label.
+              label: Text(appConfig.translate('close')),
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFE50914),
                 foregroundColor: Colors.white,
