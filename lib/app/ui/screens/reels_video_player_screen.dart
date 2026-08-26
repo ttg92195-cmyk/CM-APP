@@ -1,5 +1,5 @@
 // =============================================================================
-// Phase 4 Step E — Reels Video Player Screen (TikTok/IG-style)
+// Phase 4 Steps E/F/G — Reels Video Player Screen (TikTok/IG-style)
 // =============================================================================
 // Full-screen vertical-swipe video player for browsing Reels.
 //
@@ -20,6 +20,12 @@
 //   - Action stack (right side, vertical): Like, Bookmark, Episodes,
 //     Details. Each is a circular icon button with a count/label below.
 //   - Title + description (bottom-left, over a gradient).
+//   - Step F — Episodes modal: bottom-sheet listing all episodes;
+//     selecting one shows a loading overlay on the player, switches
+//     the video URL, and auto-plays.
+//   - Step G — Details modal: bottom-sheet with poster, title, trending
+//     badge, upload time, stats row (likes / episodes / downloads),
+//     description, and tappable download links (copy to clipboard).
 //
 // Player lifecycle:
 //   - The parent owns a single PageController. The visible page is the
@@ -44,10 +50,12 @@
 
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/models/reel.dart';
 import 'package:cm_movies/app/core/services/reels_service.dart';
@@ -379,14 +387,393 @@ class _ReelsVideoPlayerScreenState extends State<ReelsVideoPlayerScreen> {
   }
 
   void _showDetailsModal(Reel reel) {
-    // Step G will replace this with the actual details bottom-sheet.
+    // Phase 4 Step G — bottom-sheet showing full Reel details:
+    //   - Poster thumbnail (9:16) + title + trending badge + upload time
+    //   - Stats row: like count, episode count, download-link count
+    //   - Description (scrollable, only if non-empty)
+    //   - Download links: tappable rows that copy the URL to clipboard
+    // The video keeps playing behind the sheet (same as Episodes modal).
     final appConfig = Provider.of<AppConfig>(context, listen: false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content:
-            Text('${appConfig.translate('reel_details')}: ${reel.title}'),
-        duration: const Duration(seconds: 1),
-        behavior: SnackBarBehavior.floating,
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    final bgColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+    final accentColor = const Color(0xFFE50914);
+    final textPrimary = isDark ? Colors.white : Colors.black87;
+    final textSecondary = isDark ? Colors.white54 : Colors.black54;
+    final dividerColor = isDark ? Colors.white10 : Colors.black12;
+
+    final posterUrl = reel.posterUrl ?? '';
+    final hasPoster = posterUrl.isNotEmpty;
+    final description = (reel.description ?? '').trim();
+    final timeAgo = reel.timeAgo;
+    final likeCount = _effectiveLikeCount(reel);
+    final episodeCount = reel.episodeCount;
+    final downloadCount = reel.downloadLinks.length;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: bgColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      isScrollControlled: true,
+      builder: (sheetCtx) {
+        return SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(sheetCtx).size.height * 0.75,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Handle bar
+                Container(
+                  margin: const EdgeInsets.only(top: 10, bottom: 6),
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: isDark ? Colors.white24 : Colors.black12,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                // Header
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 12, 12),
+                  child: Row(
+                    children: [
+                      Icon(Icons.info_outline, color: accentColor, size: 22),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          appConfig.translate('reel_details'),
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: textPrimary,
+                          ),
+                        ),
+                      ),
+                      // Close button — easier dismissal than swiping.
+                      IconButton(
+                        onPressed: () => Navigator.pop(sheetCtx),
+                        icon: Icon(Icons.close, color: textSecondary, size: 22),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 36,
+                          minHeight: 36,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Divider(height: 1, color: dividerColor),
+                // Scrollable content
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(20, 14, 20, 16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // ===== Poster + title + badges =====
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Poster thumbnail (9:16 ratio, 72x128).
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: SizedBox(
+                                width: 72,
+                                height: 128,
+                                child: hasPoster
+                                    ? CachedNetworkImage(
+                                        imageUrl: posterUrl,
+                                        fit: BoxFit.cover,
+                                        placeholder: (_, __) => Container(
+                                          color: isDark
+                                              ? Colors.white10
+                                              : Colors.black12,
+                                          child: const Center(
+                                            child: SizedBox(
+                                              width: 18,
+                                              height: 18,
+                                              child: CircularProgressIndicator(
+                                                  strokeWidth: 2),
+                                            ),
+                                          ),
+                                        ),
+                                        errorWidget: (_, __, ___) => Container(
+                                          color: isDark
+                                              ? Colors.white10
+                                              : Colors.black12,
+                                          child: Icon(Icons.video_library,
+                                              color: textSecondary, size: 28),
+                                        ),
+                                      )
+                                    : Container(
+                                        color: isDark
+                                            ? Colors.white10
+                                            : Colors.black12,
+                                        child: Icon(Icons.video_library,
+                                            color: textSecondary, size: 28),
+                                      ),
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            // Title + trending badge + upload time.
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    reel.title,
+                                    style: TextStyle(
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.bold,
+                                      color: textPrimary,
+                                      height: 1.3,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  if (reel.isTrending) ...[
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 3,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.orange.withOpacity(0.15),
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.local_fire_department,
+                                              color: Colors.orange, size: 13),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            appConfig.translate('trending'),
+                                            style: const TextStyle(
+                                              color: Colors.orange,
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                  ],
+                                  if (timeAgo.isNotEmpty)
+                                    Row(
+                                      children: [
+                                        Icon(Icons.schedule,
+                                            color: textSecondary, size: 13),
+                                        const SizedBox(width: 4),
+                                        Flexible(
+                                          child: Text(
+                                            timeAgo,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: textSecondary,
+                                            ),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        // ===== Stats row =====
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildDetailStat(
+                                icon: Icons.favorite,
+                                iconColor: Colors.redAccent,
+                                value: '$likeCount',
+                                label: appConfig.translate('like_count'),
+                                bg: isDark ? Colors.white10 : Colors.black12,
+                                valueColor: textPrimary,
+                                labelColor: textSecondary,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: _buildDetailStat(
+                                icon: Icons.video_library,
+                                iconColor: accentColor,
+                                value: '$episodeCount',
+                                label: appConfig.translate('episodes'),
+                                bg: isDark ? Colors.white10 : Colors.black12,
+                                valueColor: textPrimary,
+                                labelColor: textSecondary,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: _buildDetailStat(
+                                icon: Icons.download,
+                                iconColor: Colors.blueAccent,
+                                value: '$downloadCount',
+                                label: appConfig.translate('download'),
+                                bg: isDark ? Colors.white10 : Colors.black12,
+                                valueColor: textPrimary,
+                                labelColor: textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                        // ===== Description =====
+                        if (description.isNotEmpty) ...[
+                          const SizedBox(height: 18),
+                          Text(
+                            appConfig.translate('reel_description'),
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: textSecondary,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            description,
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: textPrimary,
+                              height: 1.5,
+                            ),
+                          ),
+                        ],
+                        // ===== Download links =====
+                        if (downloadCount > 0) ...[
+                          const SizedBox(height: 18),
+                          Text(
+                            '${appConfig.translate('download')} (${downloadCount})',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: textSecondary,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          ...reel.downloadLinks.asMap().entries.map((entry) {
+                            final i = entry.key;
+                            final link = entry.value;
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(8),
+                                onTap: () {
+                                  // Copy the download URL to clipboard so
+                                  // the user can paste it into a browser
+                                  // or download manager. Close the sheet
+                                  // first so the confirmation SnackBar is
+                                  // visible (a SnackBar shown while the
+                                  // sheet is open renders behind it).
+                                  Clipboard.setData(
+                                      ClipboardData(text: link));
+                                  Navigator.pop(sheetCtx);
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        appConfig.translate('link_copied'),
+                                      ),
+                                      duration:
+                                          const Duration(milliseconds: 1200),
+                                      behavior: SnackBarBehavior.floating,
+                                    ),
+                                  );
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: isDark
+                                        ? Colors.white10
+                                        : Colors.black12,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.link,
+                                          color: accentColor, size: 18),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Text(
+                                          '${appConfig.translate('copy_link')} ${i + 1}',
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            color: textPrimary,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Icon(Icons.copy,
+                                          color: textSecondary, size: 16),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          }),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Small stat card used in the Details modal stats row.
+  Widget _buildDetailStat({
+    required IconData icon,
+    required Color iconColor,
+    required String value,
+    required String label,
+    required Color bg,
+    required Color valueColor,
+    required Color labelColor,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: iconColor, size: 20),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+              color: valueColor,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: TextStyle(fontSize: 11, color: labelColor),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
       ),
     );
   }
