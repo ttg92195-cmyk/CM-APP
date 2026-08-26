@@ -5426,3 +5426,27 @@ Stage Summary:
 - Build-blocking compile error resolved with minimal change (4 insertions, 1 deletion)
 - No behavior change: same null-safety semantics, just written in a form Dart 3.5 accepts
 - Ready for Bro to re-run `flutter build apk --release --no-tree-shake-icons`
+
+---
+Task ID: 4-G
+Agent: Main Agent
+Task: Phase 4 Step G — Reels Details Modal (replace SnackBar placeholder with real bottom sheet)
+
+Work Log:
+- Added 3 translation keys to assets/lang/en.json + my.json: copy_link, link_copied, reel_description (both files now 222 keys, validated JSON)
+- Replaced _showDetailsModal() SnackBar placeholder in reels_video_player_screen.dart with a full showModalBottomSheet:
+  - Handle bar + header (info icon + "Reel Details" + close button)
+  - Poster thumbnail 72x128 (CachedNetworkImage, placeholder/error fallback)
+  - Title + orange trending badge (local_fire_department) + timeAgo with schedule icon
+  - Stats row (3 cards via _buildDetailStat helper): like_count / episodes / download count
+  - Description section (only when non-empty)
+  - Download links section: tappable rows copy URL to Clipboard, pop sheet, then show "link_copied" SnackBar (popped first because SnackBar renders behind an open sheet)
+- Added imports: flutter/services.dart (Clipboard), cached_network_image
+- Updated file header comment to "Phase 4 Steps E/F/G"
+- Ran phase4_43_balance_check.py — OK (566/113/54 balanced)
+- Avoided known compile pitfalls: no Future<void> ?? pattern, no Colors.black05, standard Material icons only
+- Committed 965b42b in CM-APP, parent pointer 34884fd, both pushed
+
+Stage Summary:
+- Details button now opens a full details bottom sheet with poster/title/badges/stats/description/download links
+- Step H (localization + theme polish) and Step I (final commit) remain
