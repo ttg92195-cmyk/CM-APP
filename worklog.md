@@ -5359,3 +5359,51 @@ Stage Summary:
 - Root cause: confusion between static const field and const constructor in Dart.
 - Bro should re-run: `flutter build apk --release --no-tree-shake-icons`.
 - After build success: continue to Phase 4 Step F (Episodes Modal).
+
+---
+Task ID: Phase 4-F
+Agent: Main Agent
+Task: Phase 4 Step F — Episodes Modal. Replace the Step E SnackBar placeholder for the Episodes button with a real bottom-sheet modal. Selecting an episode shows CircularProgressIndicator overlay on the video player + switches the active video + auto-plays.
+
+Work Log:
+- Read existing _showEpisodesModal (Step E SnackBar placeholder) + _ReelPage state (Player + _isBuffering + _setActive + _applyMute) to plan the integration points.
+- Added parent state to _ReelsVideoPlayerScreenState:
+  - _currentEpisodeIndex: Map<String, int> keyed by Reel.id. Default 0 when absent from map. Tracks which episode is currently playing for each Reel.
+  - _isEpisodeSwitching: bool. Set true on episode select, cleared when open() completes. Drives the CircularProgressIndicator overlay on the active page.
+- Replaced _showEpisodesModal implementation: now calls showModalBottomSheet with:
+  - Header: video_library icon + translated 'reel_episodes' label + episode count.
+  - Episode list: ListView.builder with ListTile per episode. Leading: 36x36 square with episode number (selected = red bg, others = grey bg). Title: episode title (selected = red bold, others = normal). Trailing: play_circle_fill (selected) or play_circle_outline.
+  - Tap → Navigator.pop(sheetCtx, i) → .then((selectedIndex) → _switchEpisode(reel.id, selectedIndex)).
+  - Theme-aware colors (light/dark). Fixed 2 invalid Colors.black06 references I almost shipped — caught by lint scan before commit.
+- New method _switchEpisode(reelId, newIndex):
+  - Safety checks: currentReel.id matches reelId (user might have swiped during modal), newIndex in valid range, not same as current.
+  - setState: update _currentEpisodeIndex + set _isEpisodeSwitching=true.
+  - Call active page's _openEpisode via _pageKeys[_currentIndex].currentState?._openEpisode(newIndex).
+  - setState: clear _isEpisodeSwitching when done.
+- New method _openEpisode(int episodeIndex) in _ReelPageState:
+  - Safety: _isInitialized must be true.
+  - Get URL via widget.reel.videoUrlForEpisode(episodeIndex) — returns null if index out of range. Returns the main videoUrl for index 0 when episodes list is empty (single-video Reel).
+  - setState _isBuffering=true so the page shows the loading state while we're opening the new Media.
+  - try: await _player.stop().timeout(1s) — release native decoder before opening new Media.
+  - await _player.open(Media(url)) — media_kit handles native (re)load.
+  - Auto-play if widget.isActive is true.
+  - catch: debugPrint + _hasError=true.
+  - finally: _isBuffering=false.
+- Added new props to _ReelPage: currentEpisodeIndex + isEpisodeSwitching. Updated _ReelPage constructor call site in PageView.builder to pass these props.
+- Added visual overlay in _ReelPage.build(): when widget.isEpisodeSwitching is true, shows a Positioned.fill Container with black 60% opacity + Centered CircularProgressIndicator (white, strokeWidth 3). This is Bro's exact UX: "Episode 2 ကိုရွေးချက်လိုက်ရင် Video Player က အဝိုင်းလည်လာပြီး Episode 2 ကိုပြောင်းသွားမယ်။"
+- Verification:
+  - Bracket balance: 414/105/41 ✓
+  - No bad patterns: Colors.black05/black06/VideoColors/fillColors/snap.data()/const Duration.zero all absent ✓
+  - Reel model getters used: hasEpisodes, episodeCount, videoUrlForEpisode, episodes — all verified ✓
+
+Stage Summary:
+- Multi-episode Reels now work end-to-end:
+  1. Admin creates a Reel with multiple episodes (Step B form allows this).
+  2. User taps Reels tab → grid → tap on the multi-episode Reel cell.
+  3. Player opens at episode 1 (or main videoUrl when no episodes).
+  4. Tap the Episodes icon on the right action stack.
+  5. Bottom-sheet modal shows all episodes with the current one highlighted.
+  6. User taps "Episode 2" → modal closes → black overlay with CircularProgressIndicator appears on the video player.
+  7. _player.stop() → _player.open(newMedia) → _player.play() — episode 2 starts playing auto.
+  8. User can switch back via the same modal — reopens with "Episode 2" highlighted, can pick "Episode 1".
+- Next: Step G — Details Modal. Replace the Step E SnackBar placeholder for the Details button with a real bottom-sheet showing post poster + description + download button.

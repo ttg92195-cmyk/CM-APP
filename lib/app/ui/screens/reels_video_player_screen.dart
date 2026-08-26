@@ -91,6 +91,17 @@ class _ReelsVideoPlayerScreenState extends State<ReelsVideoPlayerScreen> {
   // Per-Reel bookmark state — local only for Step E; Step H will persist.
   final Set<String> _bookmarkedReelIds = {};
 
+  // Per-Reel current episode index — supports multi-episode Reels where
+  // the user can switch between Episode 1, 2, 3... via the Episodes modal.
+  // Keyed by Reel.id. Default value (when absent from map) is 0 (the main
+  // videoUrl, or the first explicit episode when episodes list is set).
+  final Map<String, int> _currentEpisodeIndex = {};
+
+  // Per-page "is episode currently switching" flag — shows CircularProgressIndicator
+  // overlay on the active video player while we're opening a new Media.
+  // Set true on episode select → cleared when open() completes.
+  bool _isEpisodeSwitching = false;
+
   SharedPreferences? _prefsCache;
 
   @override
@@ -187,9 +198,15 @@ class _ReelsVideoPlayerScreenState extends State<ReelsVideoPlayerScreen> {
   }
 
   void _showEpisodesModal(Reel reel) {
-    // Step F will replace this with the actual episodes bottom-sheet.
+    // Phase 4 Step F — bottom-sheet listing all episodes.
+    // Selecting an episode: shows CircularProgressIndicator overlay on
+    // the video player + switches the video + auto-plays.
     final appConfig = Provider.of<AppConfig>(context, listen: false);
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
     if (!reel.hasEpisodes) {
+      // Single-video Reel — no episodes to switch between.
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(appConfig.translate('reels_empty')),
@@ -199,14 +216,163 @@ class _ReelsVideoPlayerScreenState extends State<ReelsVideoPlayerScreen> {
       );
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-            '${appConfig.translate('reel_episodes')} (${reel.episodeCount}) — Step F placeholder'),
-        duration: const Duration(seconds: 1),
-        behavior: SnackBarBehavior.floating,
+
+    final currentIndex = _currentEpisodeIndex[reel.id] ?? 0;
+    final bgColor =
+        isDark ? const Color(0xFF1E1E1E) : Colors.white;
+    final accentColor = const Color(0xFFE50914);
+    final textPrimary = isDark ? Colors.white : Colors.black87;
+    final textSecondary = isDark ? Colors.white54 : Colors.black54;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: bgColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-    );
+      isScrollControlled: true,
+      builder: (sheetCtx) {
+        return SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(sheetCtx).size.height * 0.6,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Handle bar
+                Container(
+                  margin: const EdgeInsets.only(top: 10, bottom: 6),
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: isDark ? Colors.white24 : Colors.black12,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                // Header
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+                  child: Row(
+                    children: [
+                      Icon(Icons.video_library,
+                          color: accentColor, size: 22),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          appConfig.translate('reel_episodes'),
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: textPrimary,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '${reel.episodeCount} ${appConfig.translate('episodes').toLowerCase()}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Divider(
+                  height: 1,
+                  color: isDark ? Colors.white10 : Colors.black12,
+                ),
+                // Episode list
+                Flexible(
+                  child: ListView.builder(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    itemCount: reel.episodes.length,
+                    itemBuilder: (listCtx, i) {
+                      final ep = reel.episodes[i];
+                      final isSelected = i == currentIndex;
+                      return ListTile(
+                        leading: Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: isSelected
+                                ? accentColor.withOpacity(0.15)
+                                : (isDark
+                                    ? Colors.white10
+                                    : Colors.black12),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Center(
+                            child: Text(
+                              '${i + 1}',
+                              style: TextStyle(
+                                color: isSelected
+                                    ? accentColor
+                                    : textSecondary,
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                        title: Text(
+                          ep.title,
+                          style: TextStyle(
+                            color: isSelected ? accentColor : textPrimary,
+                            fontWeight: isSelected
+                                ? FontWeight.w600
+                                : FontWeight.normal,
+                          ),
+                        ),
+                        trailing: isSelected
+                            ? Icon(Icons.play_circle_fill,
+                                color: accentColor, size: 24)
+                            : Icon(Icons.play_circle_outline,
+                                color: textSecondary, size: 22),
+                        onTap: () {
+                          Navigator.pop(sheetCtx, i);
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    ).then((selectedIndex) {
+      if (selectedIndex is int && selectedIndex >= 0) {
+        _switchEpisode(reel.id, selectedIndex);
+      }
+    });
+  }
+
+  /// Switch the active Reel's video to episode [newIndex]. Shows
+  /// CircularProgressIndicator overlay on the active page while loading,
+  /// then calls _ReelPage's _openEpisode method via the page key.
+  Future<void> _switchEpisode(String reelId, int newIndex) async {
+    final currentReel = widget.reels[_currentIndex];
+    if (currentReel.id != reelId) return; // safety: user already swiped
+    if (newIndex < 0 || newIndex >= currentReel.episodes.length) return;
+
+    final currentIdx = _currentEpisodeIndex[reelId] ?? 0;
+    if (newIndex == currentIdx) return; // no-op
+
+    setState(() {
+      _currentEpisodeIndex[reelId] = newIndex;
+      _isEpisodeSwitching = true;
+    });
+
+    // Tell the active page to open the new episode's video URL.
+    final pageKey = _pageKeys[_currentIndex];
+    if (pageKey != null) {
+      await pageKey.currentState?._openEpisode(newIndex) ?? Future.value();
+    }
+
+    if (mounted) {
+      setState(() => _isEpisodeSwitching = false);
+    }
   }
 
   void _showDetailsModal(Reel reel) {
@@ -253,6 +419,10 @@ class _ReelsVideoPlayerScreenState extends State<ReelsVideoPlayerScreen> {
             likeCount: _effectiveLikeCount(widget.reels[index]),
             isLiked: _likedReelIds.contains(widget.reels[index].id),
             isBookmarked: _bookmarkedReelIds.contains(widget.reels[index].id),
+            currentEpisodeIndex:
+                _currentEpisodeIndex[widget.reels[index].id] ?? 0,
+            isEpisodeSwitching:
+                _isEpisodeSwitching && index == _currentIndex,
             onToggleMute: _toggleMute,
             onToggleLike: () => _toggleLike(widget.reels[index].id),
             onToggleBookmark: () => _toggleBookmark(widget.reels[index].id),
@@ -277,6 +447,8 @@ class _ReelPage extends StatefulWidget {
   final int likeCount;
   final bool isLiked;
   final bool isBookmarked;
+  final int currentEpisodeIndex;
+  final bool isEpisodeSwitching;
   final VoidCallback onToggleMute;
   final VoidCallback onToggleLike;
   final VoidCallback onToggleBookmark;
@@ -291,6 +463,8 @@ class _ReelPage extends StatefulWidget {
     required this.likeCount,
     required this.isLiked,
     required this.isBookmarked,
+    required this.currentEpisodeIndex,
+    required this.isEpisodeSwitching,
     required this.onToggleMute,
     required this.onToggleLike,
     required this.onToggleBookmark,
@@ -432,6 +606,41 @@ class _ReelPageState extends State<_ReelPage> {
     } catch (_) {}
   }
 
+  /// Phase 4 Step F — Switch the active video to episode [episodeIndex].
+  /// Called by the parent when the user selects an episode from the modal.
+  /// Sets _isBuffering=true (which the parent uses to show a loading
+  /// overlay), stops the current video, opens the new Media, and
+  /// auto-plays.
+  Future<void> _openEpisode(int episodeIndex) async {
+    if (!_isInitialized) return;
+    final url = widget.reel.videoUrlForEpisode(episodeIndex);
+    if (url == null || url.isEmpty) return;
+
+    // Mark local buffering state so the page shows the loading overlay
+    // until open() completes and the buffering stream fires.
+    if (mounted) setState(() => _isBuffering = true);
+
+    try {
+      // Stop + pause current playback first to release native decoder
+      // resources before opening the new Media.
+      try {
+        await _player.stop().timeout(const Duration(seconds: 1));
+      } catch (_) {}
+      // Open the new episode video URL.
+      await _player.open(Media(url));
+      if (!mounted) return;
+      // Auto-play if this page is currently active.
+      if (widget.isActive) {
+        await _player.play();
+      }
+    } catch (e) {
+      debugPrint('Reels episode switch failed: $e');
+      if (mounted) setState(() => _hasError = true);
+    } finally {
+      if (mounted) setState(() => _isBuffering = false);
+    }
+  }
+
   // ============================================================
   // BUILD
   // ============================================================
@@ -462,6 +671,24 @@ class _ReelPageState extends State<_ReelPage> {
               reel.posterUrl!,
               fit: BoxFit.cover,
               errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+            ),
+          ),
+
+        // ====================== EPISODE SWITCHING OVERLAY ======================
+        // Phase 4 Step F — Shows a CircularProgressIndicator + dim background
+        // while the user's selected episode is loading. Bro asked for this
+        // exact UX: "Episode 2 ကိုရွေးချက်လိုက်ရင် Video Player က
+        // အဝိုင်းလည်လာပြီး Episode 2 ကိုပြောင်းသွားမယ်။"
+        if (widget.isEpisodeSwitching)
+          Positioned.fill(
+            child: Container(
+              color: Colors.black.withOpacity(0.6),
+              child: const Center(
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 3,
+                ),
+              ),
             ),
           ),
 
