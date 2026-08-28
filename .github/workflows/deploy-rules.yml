@@ -1,0 +1,77 @@
+name: Deploy Firestore Rules
+
+# Deploys firestore.rules to Firebase whenever the rules file changes on
+# the main branch (or when this workflow file itself changes, so a new
+# workflow run deploys immediately).
+#
+# WHY THIS EXISTS (Phase 4 hotfix, 2026-08-28):
+#   Bro hit "[cloud_firestore/permission-denied]" when posting a Reel from
+#   Admin Panel -> Reels tab. Root cause: Step A added the `reels` match
+#   block + isValidReel() to firestore.rules in the repo, but Firestore
+#   Security Rules are NOT live until deployed — and nothing in this repo
+#   deployed them automatically. deploy-functions.yml only deploys the
+#   onUserCreated Cloud Function. Firestore's implicit default for a
+#   collection with no matching allow rule is DENY, so every read/write
+#   on /reels returned permission-denied until the rules were deployed.
+#   Historically rules deployment was a manual step Bro ran by hand
+#   (`firebase deploy --only firestore:rules`) — and it was forgotten for
+#   Step A. This workflow closes that gap permanently.
+#
+# WHEN TO RUN:
+#   - Automatically when firestore.rules changes on main
+#   - Automatically when this workflow file changes (so adding/fixing the
+#     workflow itself triggers a deploy of the current rules)
+#   - Manually via workflow_dispatch (click "Run workflow" in Actions tab)
+#
+# PREREQUISITE (same as deploy-functions.yml):
+#   The FIREBASE_SERVICE_ACCOUNT GitHub secret must be configured
+#   (GitHub repo -> Settings -> Secrets and variables -> Actions).
+#   If it is not set, this job is skipped silently so pushes never break CI.
+#   In that case deploy manually from a machine with firebase-cli logged in:
+#     firebase deploy --only firestore:rules
+#
+# NOTE: Deploying rules does NOT require an app rebuild or re-release —
+#   rules are evaluated server-side. Existing installed APKs pick up new
+#   rules immediately (on next Firestore request).
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'firestore.rules'
+      - '.github/workflows/deploy-rules.yml'
+  workflow_dispatch:  # Allow manual trigger from Actions tab
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Only run if the FIREBASE_SERVICE_ACCOUNT secret is set. If not set,
+    # the workflow is skipped silently (no error) so that Bro can push
+    # code changes without breaking CI when the secret isn't configured.
+    if: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools@latest
+
+      - name: Deploy Firestore Rules
+        uses: w9jds/firebase-action@v13.6.0
+        with:
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          projectId: cm-movies-dabab
+          args: deploy --only firestore:rules
+
+      - name: Print result
+        run: |
+          echo "✅ Firestore Security Rules deployed successfully!"
+          echo ""
+          echo "New collections governed by the deployed rules take effect"
+          echo "immediately — no app rebuild needed."

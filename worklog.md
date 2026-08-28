@@ -5495,3 +5495,31 @@ Stage Summary:
 - Reels feature COMPLETE — full step history: A (Reel model + ReelsService + firestore.rules) → B (Admin Reels tab + form) → C (5th bottom nav tab) → D (3-column grid with trending badges) → E (fullscreen vertical PageView player with like/mute) → F (episodes bottom-sheet modal + video switch) → G (details bottom-sheet modal + copy download links) → H (localisation EN/MY + theme polish) → I (final commit)
 - All code on origin/main and verified buildable by Bro (Step H release build succeeded)
 - Repo hygiene restored: both clones clean, synced, no stale stashes blocking future syncs
+
+---
+Task ID: 4-rules-hotfix
+Agent: Main Agent
+Task: Phase 4 hotfix — Reels permission-denied on Admin Panel post (firestore.rules never deployed)
+
+Work Log:
+- Bro reported: Admin Panel → Reels tab → posting a Reel shows "Error: [cloud_firestore/permission-denied] The caller does not have permission to execute the specified operation."
+- Diagnosis path:
+  - firestore.rules in repo (identical in both clones) DOES contain `match /reels/{reelId}` (line 335) + `isValidReel()` helper — added in Step A commit 1629b73
+  - Client payload verified clean: Reel.toMap() is null-safe (slug/description/posterUrl omitted when null), likeCount forced to int 0, all types match isValidReel() validation
+  - Audit-log write is unawaited/best-effort — cannot cause the surfaced error
+  - CI audit: deploy-functions.yml deploys ONLY the onUserCreated Cloud Function — NOTHING deploys firestore.rules automatically; deployment was always a manual step by Bro (worklog references from Phases 2.x/3.x)
+  - git log of firestore.rules: last deploy was ~June 29 (Phase 4.6, preservesAdminOnlyFields era per worklog 4937); the ONLY undeployed change since is Step A's reels block — so deployed rules simply have no reels match block → Firestore default DENY on /reels → permission-denied for read AND write
+  - Rules file syntax sanity-checked: brackets balanced (201/201, 46/46, 31/31), reels block + isValidReel correctly wired (isAdmin() && isValidReel())
+- Fix: created .github/workflows/deploy-rules.yml
+  - Triggers: push to main touching firestore.rules OR the workflow file itself + workflow_dispatch
+  - Deploys via w9jds/firebase-action@v13.6.0 with FIREBASE_SERVICE_ACCOUNT secret, projectId cm-movies-dabab, args `deploy --only firestore:rules` (same proven pattern as deploy-functions.yml)
+  - Silently skips if the secret is not configured (same guard as deploy-functions.yml)
+  - Pushing this workflow triggers an immediate deploy of the current rules (which include the reels block)
+- Committed and pushed to origin/main; CM-APP clone synced via pull --rebase
+- No app code changed — no APK rebuild needed; rules are evaluated server-side and take effect immediately for installed apps
+
+Stage Summary:
+- Root cause: rules were committed in Step A but never deployed to Firebase (manual step forgotten; no automation existed)
+- Fix: auto-deploy workflow added; on push it deploys immediately (if secret configured); fallback is manual `firebase deploy --only firestore:rules`
+- This also fixes the Reels tab list loading (reads on /reels were denied by the same missing rule)
+- For the future: ANY new Firestore collection added to firestore.rules will now auto-deploy on push to main
