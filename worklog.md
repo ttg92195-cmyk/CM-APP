@@ -5537,3 +5537,27 @@ Current state:
 - IMMEDIATE FIX for Bro (pick one):
   A) Manual deploy (fastest): from repo root: firebase login (if needed) then `firebase deploy --only firestore:rules` — takes effect instantly for ALL installed APKs, no rebuild needed
   B) Configure the GitHub secret (Firebase Console → Project Settings → Service Accounts → Generate New Private Key; GitHub → Settings → Secrets and variables → Actions → FIREBASE_SERVICE_ACCOUNT), then Actions → Deploy Firestore Rules → Run workflow
+
+---
+Task ID: 4-edit-hotfix
+Agent: Main Agent
+Task: Phase 4 hotfix — Reel EDIT fails with permission-denied while CREATE works (after rules deployment)
+
+Work Log:
+- Bro deployed the new firestore.rules via Firebase Console (copy-paste from GitHub) — CREATE Reel now works, but EDITING a Reel still returns "[cloud_firestore/permission-denied]"
+- Since create passes isAdmin(), the admin check is fine — the difference had to be in the write payload validation (isValidReel) between the create and update code paths
+- Root cause found in reel_form_page.dart (_saveReel, EDIT branch): the update map includes 'description': reel.description and 'posterUrl': reel.posterUrl — both are NULL when the admin leaves those optional fields empty
+- Firestore rules evaluate request.resource.data as the MERGED POST-WRITE document on update: an explicit null in the patch makes description/posterUrl null in the merged doc, and isValidReel() requires `description is string` / `posterUrl is string` whenever present → `null is string` fails → the ENTIRE update is rejected with permission-denied
+- CREATE never hit this because addReel() uses Reel.toMap() which OMITS null fields entirely (if (description != null) 'description': description)
+- Also note: Bro's terminal attempt of Method A failed harmlessly (no firebase CLI on Android terminal; "No command firebase found") — irrelevant now since rules were deployed successfully via Console
+- Fix applied in reels_service.dart updateReel() (single fix point, benefits all callers):
+  - Before writing, every null value in the update map is converted to FieldValue.delete() — a deleted field is ABSENT in the post-write doc (passes validation) and also gives correct "clear the field" semantics (removing a previously stored value instead of leaving stale data)
+  - Defensive title check changed from `(data['title'] as String).isNotEmpty` to `titleValue is String && titleValue.isNotEmpty` (after null-conversion, a null title would be a FieldValue instance and the cast would throw)
+  - File header comment updated to note the hotfix
+- Verified: bracket balance OK (182/182, 53/53, 25/25), no known pitfall patterns, no rules changes needed
+- Committed and pushed; root clone synced + pointer bumped
+
+Stage Summary:
+- Reel create vs edit asymmetry explained: toMap() omits nulls (create) vs hand-built map sends nulls (edit) + rules validate merged post-write doc on update
+- Fix is CLIENT-SIDE ONLY — Firestore rules stay strict (they correctly caught a real client bug), NO Firebase Console changes and NO rules redeployment needed
+- Bro needs to: git pull → rebuild APK → edit any Reel (including ones with empty description/poster) → should save successfully now

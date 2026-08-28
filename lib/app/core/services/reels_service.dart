@@ -1,5 +1,6 @@
 // =============================================================================
-// Phase 4 Step A — Reels Firestore Service
+// Phase 4 Step A — Reels Firestore Service (+ 2026-08-28 hotfix: null-safe
+// updateReel via FieldValue.delete, fixing permission-denied on Reel edits)
 // =============================================================================
 // Singleton service that handles all CRUD operations for the `reels`
 // Firestore collection. Modeled after FirestoreContentService but kept
@@ -246,15 +247,41 @@ class ReelsService {
 
   /// Update an existing Reel (admin only). Accepts a partial update map
   /// so the admin UI can patch just the fields the user edited.
+  ///
+  /// NULL HANDLING (Phase 4 hotfix, 2026-08-28): the Admin Reels form
+  /// sends `description: null` / `posterUrl: null` when those optional
+  /// fields are left empty. An explicit null in an update patch makes the
+  /// post-write document contain null for that field, and the security
+  /// rules (isValidReel) validate optional string fields as `is string`
+  /// whenever present — `null is string` fails, so the ENTIRE update was
+  /// rejected with [cloud_firestore/permission-denied]. Create never hit
+  /// this because Reel.toMap() omits null fields entirely.
+  ///
+  /// Fix: every null value in [data] is converted to FieldValue.delete()
+  /// BEFORE the write. Deleting the field (a) removes any previously
+  /// stored value — matching the admin's intent of clearing the field —
+  /// and (b) leaves the field ABSENT in the post-write doc, which passes
+  /// rules validation.
   Future<void> updateReel(String id, Map<String, dynamic> data) async {
     await verifyAdmin();
+
+    // Convert null values to FieldValue.delete() — never write nulls.
+    // (Update rules evaluate the merged post-write doc: a deleted field
+    // is simply absent, which is valid for all optional Reel fields.)
+    final nullKeys = data.keys.where((k) => data[k] == null).toList(growable: false);
+    for (final key in nullKeys) {
+      data[key] = FieldValue.delete();
+    }
+
     // Auto-update derived fields when title changes.
-    if (data.containsKey('title') && (data['title'] as String).isNotEmpty) {
-      final title = data['title'] as String;
-      data['title_lowercase'] = title.toLowerCase();
+    // Defensive `is String` check instead of a cast: after the conversion
+    // above, a null title would be a FieldValue (cast would throw).
+    final titleValue = data['title'];
+    if (titleValue is String && titleValue.isNotEmpty) {
+      data['title_lowercase'] = titleValue.toLowerCase();
       // Auto-generate slug if not explicitly provided.
       if (!data.containsKey('slug')) {
-        data['slug'] = _generateSlug(title);
+        data['slug'] = _generateSlug(titleValue);
       }
     }
     data['updatedAt'] = FieldValue.serverTimestamp();
