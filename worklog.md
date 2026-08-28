@@ -5523,3 +5523,17 @@ Stage Summary:
 - Fix: auto-deploy workflow added; on push it deploys immediately (if secret configured); fallback is manual `firebase deploy --only firestore:rules`
 - This also fixes the Reels tab list loading (reads on /reels were denied by the same missing rule)
 - For the future: ANY new Firestore collection added to firestore.rules will now auto-deploy on push to main
+
+Addendum (same day, after first push):
+- First version of deploy-rules.yml FAILED validation on GitHub: run name showed as raw file path, 0 jobs ran. Root cause: inherited the `if: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}` job-level pattern from deploy-functions.yml — GitHub Actions REJECTS the `secrets` context in job-level `if:` ("Unrecognized named-value: 'secrets'") at file-validation time.
+- Investigated via GitHub API: deploy-functions.yml has 111 historical runs, ALL failed, ZERO ever had a proper workflow name — it has been invalid since creation and never deployed anything. (Its onUserCreated function was therefore never deployed via CI either — separate latent issue, fix deferred.)
+- Fixed deploy-rules.yml (commit e475ab4): secret mapped to job-level env var (allowed) + per-step `if: env.FIREBASE_SERVICE_ACCOUNT != ''` (allowed) + clear skip-notice step. Confirmed via API: run 33150749939 completed with proper name "Deploy Firestore Rules", job success.
+- BUT the "Deploy Firestore Rules" step itself was SKIPPED: the FIREBASE_SERVICE_ACCOUNT GitHub secret is NOT configured in the repo. The workflow is now correct and ready, but cannot deploy until the secret exists.
+- No Firebase credentials exist on this server (checked .firebaserc = project id only, no service-account JSON anywhere, no firebase CLI) — the deploy itself must be done from Bro's machine.
+
+Current state:
+- Rules file (with reels block) is correct, syntax-checked, and pushed
+- deploy-rules.yml workflow is valid, green, and will auto-deploy on any future firestore.rules change — but only once FIREBASE_SERVICE_ACCOUNT secret is configured
+- IMMEDIATE FIX for Bro (pick one):
+  A) Manual deploy (fastest): from repo root: firebase login (if needed) then `firebase deploy --only firestore:rules` — takes effect instantly for ALL installed APKs, no rebuild needed
+  B) Configure the GitHub secret (Firebase Console → Project Settings → Service Accounts → Generate New Private Key; GitHub → Settings → Secrets and variables → Actions → FIREBASE_SERVICE_ACCOUNT), then Actions → Deploy Firestore Rules → Run workflow
