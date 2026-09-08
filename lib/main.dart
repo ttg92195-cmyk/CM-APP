@@ -7,6 +7,10 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+// Phase 4 hotfix (2026-08-28): TMDB image proxy — app_settings config load
+// wired to auth state + splash (image.tmdb.org unreachable from Myanmar).
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cm_movies/app/core/services/tmdb_image_proxy.dart';
 // Phase 3.2: firebase_app_check import REMOVED — package no longer in
 // pubspec.yaml. App Check activation was disabled (sideloaded APK +
 // Play Integrity incompatibility), so the package provides no benefit.
@@ -114,6 +118,18 @@ void main() async {
         persistenceEnabled: true,
         cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
       );
+
+      // Phase 4 hotfix (2026-08-28): TMDB image proxy config. The
+      // app_settings read requires an authenticated user, so we retry the
+      // load every time auth becomes available (covers first login — at
+      // cold start before sign-in the read is denied and stays in direct
+      // mode). The load is idempotent: it short-circuits once a read has
+      // succeeded, and every failure is silently tolerated.
+      FirebaseAuth.instance.authStateChanges().listen((user) {
+        if (user != null) {
+          unawaited(TmdbImageProxy.loadFromFirestore());
+        }
+      });
 
       // Phase 2.5: Configure Crashlytics collection.
       // - Debug builds: collection DISABLED (avoid dashboard noise from
@@ -321,8 +337,14 @@ class _CMMoviesAppState extends State<CMMoviesApp> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     // Start minimum splash delay (3 seconds)
-    Future.delayed(const Duration(seconds: 3), () {
+    Future.delayed(const Duration(seconds: 3), () async {
       if (mounted) {
+        // Phase 4 hotfix (2026-08-28): make sure the TMDB proxy config is
+        // resolved BEFORE the splash dismisses, so the first movie posters
+        // on the home grid already use the proxy. Short-circuits when the
+        // auth-state listener (main.dart) already loaded it; worst case it
+        // adds ~2.5s (its internal timeout) only when Firestore is slow.
+        await TmdbImageProxy.loadFromFirestore();
         setState(() => _minSplashElapsed = true);
         // After splash, check internet and updates
         _checkInternet();

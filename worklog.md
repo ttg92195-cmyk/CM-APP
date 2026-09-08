@@ -5561,3 +5561,36 @@ Stage Summary:
 - Reel create vs edit asymmetry explained: toMap() omits nulls (create) vs hand-built map sends nulls (edit) + rules validate merged post-write doc on update
 - Fix is CLIENT-SIDE ONLY — Firestore rules stay strict (they correctly caught a real client bug), NO Firebase Console changes and NO rules redeployment needed
 - Bro needs to: git pull → rebuild APK → edit any Reel (including ones with empty description/poster) → should save successfully now
+
+---
+Task ID: 4-tmdb-proxy
+Agent: Main Agent
+Task: Phase 4 hotfix — TMDB posters not loading in Myanmar (image.tmdb.org blocked by ISPs); add Cloudflare Worker image proxy with remote config
+
+Work Log:
+- Bro reported poster images not showing in the app; sample URL https://image.tmdb.org/t/p/w500/yihdXomYb5kTeSivtFndMy5iDmf.jpg fails to open for him
+- Diagnosis: tested the exact URL (+w342/original sizes) from this server — ALL return HTTP 200 in ~150ms → the images are alive; the failure is regional. image.tmdb.org is blocked/unresolvable from Myanmar ISPs (MPT/Atom/Ooredoo/Mytel) — a well-known Myanmar connectivity problem. Firebase/Google endpoints ARE reachable (the app itself works), so a proxy on a reachable network fixes posters
+- Solution: Cloudflare Worker as a caching reverse proxy for image.tmdb.org (Cloudflare edge is reachable from Myanmar)
+- Created lib/app/core/services/tmdb_image_proxy.dart:
+  - Remote-config: reads app_settings/tmdb_image_proxy {enabled: bool, baseUrl: string} from Firestore (2.5s timeout, failure-tolerant, idempotent — retries only after failed reads)
+  - resolve(String? url): rewrites https://image.tmdb.org/* → <proxy>/* at DISPLAY time only; null/empty → ''; non-TMDB URLs (custom hosts, Firebase Storage) pass through untouched; query strings (movie_card ?retry=N) preserved
+  - While the config doc is missing or disabled → pure passthrough = zero behavior change
+- Wiring in main.dart:
+  - FirebaseAuth.authStateChanges().listen → unawaited loadFromFirestore() as soon as a user signs in (app_settings read needs auth; covers first-login case where the cold-start read is denied)
+  - Splash 3-second callback now awaits loadFromFirestore() BEFORE dismissing splash, so the first home-grid posters already use the proxy (short-circuits when already loaded; worst case +2.5s only when Firestore is slow)
+- Display sites wrapped with TmdbImageProxy.resolve():
+  - Movie.fullPosterUrl (movie.dart) — central getter used by ~10 UI sites (movie_card, watchlist, details, admin panel, download screens, list tiles)
+  - MovieDetail.fullPosterUrl (movie_detail.dart)
+  - _ReelGridCellState._posterUrl (reels_page.dart — grid cell posters)
+  - Details-modal posterUrl (reels_video_player_screen.dart)
+  - TMDB generator search-result preview (tmdb_generator_page.dart ~line 2845)
+- IMPORTANT DESIGN DECISION: Firestore keeps storing CANONICAL image.tmdb.org URLs (TmdbService.getPosterUrl unchanged for storage) — the proxy is display-time only, so it can be swapped/disabled/changed by editing ONE Firestore doc with no data migration and no app rebuild (after this update)
+- Created cloudflare/tmdb-image-proxy.js — the Worker source with full setup instructions in the header: only proxies GET /t/p/* paths (not an open proxy), 7-day edge cache via Cache API (ignoreSearch so ?retry=N busts client cache but not edge cache), forwards path only, CORS header for direct browser use
+- No Firestore rules changes needed: app_settings read is already allowed for authenticated users; Bro creates the config doc via Firebase Console (bypasses rules)
+- Verified: bracket balance OK on all 7 touched Dart files; no pitfall patterns; 7 resolve/load call sites wired
+- Committed in CM-APP, pushed; root clone synced + pointer bumped
+
+Stage Summary:
+- Poster fix delivered as display-time URL rewrite + remote-configured Cloudflare Worker proxy
+- Bro's steps: (1) free Cloudflare account → create Worker "tmdb-images" → paste cloudflare/tmdb-image-proxy.js → deploy; (2) test <worker-url>/t/p/w500/yihdXomYb5kTeSivtFndMy5iDmf.jpg in browser; (3) Firestore → app_settings → create doc tmdb_image_proxy {enabled: true, baseUrl: <worker-url>}; (4) rebuild APK once; (5) future proxy changes = edit the Firestore doc only
+- If posters still fail through the worker, the fallback is hosting posters on Firebase Storage (reachable from Myanmar) — deferred until needed

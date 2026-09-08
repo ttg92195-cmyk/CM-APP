@@ -4,6 +4,10 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/services/tmdb_service.dart';
+// Phase 4 hotfix (2026-08-28): TMDB previews route through the image proxy
+// when enabled (image.tmdb.org unreachable from Myanmar ISPs) — the
+// canonical URL is still SAVED to Firestore (display-time rewrite only).
+import 'package:cm_movies/app/core/services/tmdb_image_proxy.dart';
 import 'package:cm_movies/app/core/services/firestore_content_service.dart';
 import 'package:cm_movies/app/ui/components/movie_card.dart';
 import 'package:cm_movies/app/ui/components/no_toolbar_on_single_tap_text_field.dart';
@@ -2839,7 +2843,10 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
                     borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
                     child: posterPath != null && posterPath.isNotEmpty
                         ? CachedNetworkImage(
-                            imageUrl: TmdbService.getPosterUrl(posterPath),
+                            // Proxy at display time; saved poster URLs stay
+                            // canonical (image.tmdb.org) in Firestore.
+                            imageUrl: TmdbImageProxy.resolve(
+                                TmdbService.getPosterUrl(posterPath)),
                             fit: BoxFit.cover,
                             placeholder: (_, __) => Container(
                               color: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,

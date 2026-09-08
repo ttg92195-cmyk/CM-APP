@@ -1,4 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+// Phase 4 hotfix (2026-08-28): posters route through the TMDB image proxy
+// when enabled (image.tmdb.org is unreachable from Myanmar ISPs).
+import 'package:cm_movies/app/core/services/tmdb_image_proxy.dart';
 
 class MovieDetail {
   final String id;
@@ -166,7 +169,9 @@ class MovieDetail {
 
   String get fullPosterUrl {
     if (poster == null || poster!.isEmpty) return '';
-    if (poster!.startsWith('http')) return poster!;
+    // Rewrite image.tmdb.org URLs through the proxy at DISPLAY time —
+    // Firestore keeps the canonical URL (proxy stays swappable).
+    if (poster!.startsWith('http')) return TmdbImageProxy.resolve(poster!);
     return '';
   }
 }

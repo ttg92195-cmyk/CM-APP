@@ -38,6 +38,9 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/models/reel.dart';
 import 'package:cm_movies/app/core/services/reels_service.dart';
+// Phase 4 hotfix (2026-08-28): TMDB-hosted reel posters route through the
+// image proxy when enabled (image.tmdb.org unreachable from Myanmar ISPs).
+import 'package:cm_movies/app/core/services/tmdb_image_proxy.dart';
 import 'package:cm_movies/app/ui/screens/reels_video_player_screen.dart';
 
 class ReelsPage extends StatefulWidget {
@@ -396,8 +399,10 @@ class _ReelGridCellState extends State<_ReelGridCell> {
   static const int _maxAutoRetries = 1;
 
   String get _posterUrl {
-    if (_posterRetryCount == 0) return widget.reel.posterUrl ?? '';
-    final base = widget.reel.posterUrl ?? '';
+    // Resolve through the TMDB proxy when enabled; non-TMDB URLs (custom
+    // hosts, Firebase Storage, etc.) pass through unchanged.
+    final base = TmdbImageProxy.resolve(widget.reel.posterUrl);
+    if (_posterRetryCount == 0) return base;
     if (base.isEmpty) return base;
     final sep = base.contains('?') ? '&' : '?';
     return '$base${sep}retry=$_posterRetryCount';

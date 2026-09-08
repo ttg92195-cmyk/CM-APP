@@ -62,6 +62,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/models/reel.dart';
+// Phase 4 hotfix (2026-08-28): TMDB-hosted reel posters route through the
+// image proxy when enabled (image.tmdb.org unreachable from Myanmar ISPs).
+import 'package:cm_movies/app/core/services/tmdb_image_proxy.dart';
 import 'package:cm_movies/app/core/services/reels_service.dart';
 
 /// Entry point: pushes a full-screen Reels video player.
@@ -407,7 +410,9 @@ class _ReelsVideoPlayerScreenState extends State<ReelsVideoPlayerScreen> {
     final textSecondary = isDark ? Colors.white54 : Colors.black54;
     final dividerColor = isDark ? Colors.white10 : Colors.black12;
 
-    final posterUrl = reel.posterUrl ?? '';
+    // Resolve through the TMDB proxy when enabled; non-TMDB URLs pass
+    // through unchanged.
+    final posterUrl = TmdbImageProxy.resolve(reel.posterUrl);
     final hasPoster = posterUrl.isNotEmpty;
     final description = (reel.description ?? '').trim();
     final timeAgo = reel.timeAgo;
