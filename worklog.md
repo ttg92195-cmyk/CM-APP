@@ -5664,3 +5664,31 @@ Stage Summary:
 - New poster proxy on Google infra (Cloud Functions) — the one network path proven reachable in-app (Firestore data loads while images hang on the same screen)
 - Bro's steps: (1) deploy the function: pull latest → `cd functions && npm install` → `cd ..` → `firebase deploy --only functions:tmdbImageProxy` (or ALL: firebase deploy --only functions) — takes ~2-3 min; (2) test in phone browser: https://us-central1-cm-movies-dabab.cloudfunctions.net/tmdbImageProxy/t/p/w500/yihdXomYb5kTeSivtFndMy5iDmf.jpg → poster must appear; (3) Firestore → app_settings → tmdb_image_proxy → edit baseUrl → https://us-central1-cm-movies-dabab.cloudfunctions.net/tmdbImageProxy (enabled stays true); (4) app → Settings → About → TMDB Poster Proxy → tap → should say ON with the NEW host → go to Movies tab → posters load. NO app rebuild needed
 - If posters STILL hang after the Google-host proxy: the problem is in-app image loading generally (not the host) → next step would be an in-app test-image button in the diagnostics tile + adb logs; the Cloudflare worker remains a working fallback for other networks (config is swappable per Firestore doc)
+
+---
+Task ID: 4-tmdb-proxy-e
+Agent: Main Agent
+Task: Bro's firebase deploy of tmdbImageProxy failed — "project must be on the Blaze (pay-as-you-go) plan"; provide a no-card alternative and build it end-to-end
+
+Work Log:
+- Bro's Termux setup now fully working (firebase-tools 15.30.1, logged in as guyg20985@gmail.com, CM-APP cloned, functions npm-installed) — only the deploy itself failed on the Blaze requirement (Cloud Functions hard-require pay-as-you-go; also explains why the old deploy-functions workflow could never have worked even with the secret present)
+- Decision: keep the Cloud Function path for "has international card" (Blaze free tier ≈ $0 for poster traffic), and build a FREE no-card path for the likely Myanmar reality
+- Chose Firebase HOSTING static mirror as the no-card path after verifying:
+  - Hosting works on Spark (free) — no card
+  - <project>.web.app is Google infra — same proven-reachable path as Firestore (loads in-app while image.tmdb.org AND workers.dev hang)
+  - TmdbImageProxy.resolve() preserves the full path and only swaps the host → baseUrl https://cm-movies-dabab.web.app + static files at /t/p/<size>/<file>.jpg = ZERO app changes
+  - Posters are stored in Firestore as full image.tmdb.org/t/p/... URLs (batch template confirms); series live in movies collection with type:'series', seasons/episodes/casts embedded in docs; no client-side size transformation (no replaceAll w500→w780 patterns) → mirroring exact stored paths is complete coverage
+- Built the Poster Mirror pipeline:
+  - scripts/sync-posters.js: admin SDK (FIREBASE_SERVICE_ACCOUNT inline JSON or GOOGLE_APPLICATION_CREDENTIALS file) → dynamic listCollections() (skips users/bookmarks/watchlist/devices) → recursive string extraction of /t/p/ paths from all doc fields incl. 1 level of subcollections → incremental download from image.tmdb.org (5-way pool, 20s timeout, 1 retry, atomic tmp+rename writes) → rewrites hosting/index.html status page with counts + 12 sample poster thumbnails; --selftest mode with 6 fixture cases (all PASS locally); exit 0 on partial failures, 1 only on credential/access fatals
+  - .github/workflows/sync-posters.yml: workflow_dispatch + nightly 19:30 UTC (01:00 MMT) + push on script/workflow/firebase.json paths; job-env secret mapping (same secrets-in-if workaround as deploy-functions.yml); firebase-admin installed isolated via --prefix $RUNNER_TEMP (no repo pollution); commits posters back via poster-sync-bot with [skip ci]; deploys with npx firebase-tools deploy --only hosting; contents:write permission; concurrency-guarded
+  - firebase.json: + hosting block (public hosting/, ignore dotfiles+node_modules, 7-day Cache-Control on /t/p/**)
+  - hosting/index.html placeholder (replaced by the script with live stats each run)
+- Validated: node --check OK; --selftest 6/6 PASS; YAML parses (8 steps); firebase.json parses; .gitignore has no blockers
+- Spark limits noted in workflow header: 10GB storage / 360MB/day transfer ≈ 7-9k poster loads/day — fine for current user base, client caches via CachedNetworkImage + Cache-Control
+- Committed 1bbc18b in root (publisher), pushed to GitHub main; files synced to cm-app workspace copy
+
+Stage Summary:
+- TWO live paths now: (A) Blaze upgrade if Bro has an international card — Termux deploy is already set up, re-run firebase deploy --only functions:tmdbImageProxy; (B) FREE Poster Mirror — 3 browser-only steps: generate service account key → GitHub secret FIREBASE_SERVICE_ACCOUNT → run "Sync & Deploy Poster Mirror" workflow
+- After either path: same finish line — Firestore app_settings/tmdb_image_proxy.baseUrl → https://us-central1-cm-movies-dabab.cloudfunctions.net/tmdbImageProxy (A) or https://cm-movies-dabab.web.app (B), then tap the proxy tile in Settings → About
+- Poster Mirror test: https://cm-movies-dabab.web.app/ (status page with real thumbnails — better test than a single guessed poster path which may not be in his Firestore)
+- New movies added later → run the workflow again (or wait for the nightly run)
