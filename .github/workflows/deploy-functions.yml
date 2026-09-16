@@ -24,6 +24,19 @@ name: Deploy Cloud Functions
 #
 #   Once the secret is added, this workflow will deploy the Cloud Functions
 #   automatically on the next push to main (or when manually triggered).
+#
+#   Until the secret is configured, the deploy steps below are SKIPPED
+#   (silently, green checkmark) — deploy manually instead:
+#     cd functions && npm install && cd ..
+#     firebase deploy --only functions
+#
+# IMPORTANT IMPLEMENTATION NOTE (same bug as deploy-rules.yml had):
+#   The `secrets` context is NOT allowed in a job-level `if:` — GitHub
+#   rejects the workflow at validation time, the run completes with 0
+#   jobs, and the run name shows the raw file path. That latent bug made
+#   ALL historical runs of this workflow fail silently. Instead, the
+#   secret is mapped to a JOB ENV VAR and each step checks
+#   `env.FIREBASE_SERVICE_ACCOUNT`, which is always allowed.
 
 on:
   push:
@@ -36,43 +49,65 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # Only run if the FIREBASE_SERVICE_ACCOUNT secret is set. If not set,
-    # the workflow is skipped silently (no error) so that Bro can push
-    # code changes without breaking CI when the secret isn't configured yet.
-    if: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
+    env:
+      # Map the secret once at job level; steps check the env var.
+      # secrets in job-level `env:` IS allowed (unlike job-level `if:`).
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
 
     steps:
+      - name: Check secret is configured
+        if: env.FIREBASE_SERVICE_ACCOUNT == ''
+        run: |
+          echo "⚠️  FIREBASE_SERVICE_ACCOUNT secret is NOT configured —"
+          echo "    skipping deploy. To deploy manually from your machine:"
+          echo "      cd functions && npm install && cd .."
+          echo "      firebase deploy --only functions"
+          echo "    To enable CI deploys, add the secret (see workflow header)."
+
       - name: Checkout code
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
         uses: actions/checkout@v4
 
       - name: Setup Node.js
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
         uses: actions/setup-node@v4
         with:
           node-version: '18'
 
       - name: Install Firebase CLI
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
         run: npm install -g firebase-tools@latest
 
       - name: Install Cloud Functions dependencies
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
         run: |
           cd functions
           npm install
 
       - name: Deploy Cloud Functions
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
         uses: w9jds/firebase-action@v13.6.0
         with:
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           projectId: cm-movies-dabab
-          args: deploy --only functions:onUserCreated --force
+          # Deploy ALL functions in index.js explicitly (never a bare
+          # `--only functions` without names — a bare deploy can prompt
+          # to DELETE remote functions missing from local code, and
+          # --force would auto-confirm that deletion).
+          args: deploy --only functions:onUserCreated,functions:sendNotification,functions:onNotificationCreated,functions:tmdbImageProxy --force
 
-      - name: Print deployment URL
+      - name: Print deployment summary
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
         run: |
-          echo "✅ Cloud Function onUserCreated deployed successfully!"
+          echo "✅ Cloud Functions deployed successfully!"
           echo ""
-          echo "From now on, every new Firebase Auth user will automatically"
-          echo "get a /users/{uid} Firestore doc created server-side."
+          echo "  - onUserCreated: auto-creates /users/{uid} docs on signup"
+          echo "  - sendNotification: admin-triggered FCM push"
+          echo "  - onNotificationCreated: Firestore-triggered FCM push"
+          echo "  - tmdbImageProxy: TMDB poster proxy for Myanmar (Google infra)"
           echo ""
-          echo "Existing users without docs can either:"
-          echo "  1. Manually create docs in Firebase Console, OR"
-          echo "  2. Delete the Auth users and re-register (the function"
-          echo "     will create the docs automatically)"
+          echo "TMDB poster proxy URL (set app_settings/tmdb_image_proxy.baseUrl):"
+          echo "  https://us-central1-cm-movies-dabab.cloudfunctions.net/tmdbImageProxy"
+          echo ""
+          echo "Test it in a browser:"
+          echo "  https://us-central1-cm-movies-dabab.cloudfunctions.net/tmdbImageProxy/t/p/w500/yihdXomYb5kTeSivtFndMy5iDmf.jpg"

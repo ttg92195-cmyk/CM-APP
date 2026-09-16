@@ -309,3 +309,171 @@ exports.onNotificationCreated = onDocumentCreated(
     }
   }
 );
+
+// ============================================================================
+// Cloud Function: tmdbImageProxy (HTTPS, Phase 4 hotfix 2026-09-16)
+// ============================================================================
+// WHY THIS EXISTS:
+//   Myanmar ISPs block/blackhole image.tmdb.org, so every TMDB poster URL
+//   stored in Firestore fails to load inside the app (posters show endless
+//   shimmer placeholders). The first fix routed posters through a
+//   Cloudflare Worker (tmdb-images.guyg20985.workers.dev) — that Worker
+//   works from a desktop/phone BROWSER, but the app's own HTTP requests to
+//   *.workers.dev still hang (ISP DNS blackholing of the workers.dev
+//   domain — Chrome bypasses it via DNS-over-HTTPS, Dart's HttpClient
+//   cannot). Meanwhile Google/Firebase endpoints are PROVEN reachable
+//   in-app: Firestore data (titles, ratings, metadata) loads fine on the
+//   same screen where posters fail.
+//
+//   So this function serves the same images from Google's own
+//   infrastructure (Cloud Functions / Cloud Run), which the app can
+//   already reach.
+//
+// BEHAVIOR:
+//   GET https://us-central1-cm-movies-dabab.cloudfunctions.net/tmdbImageProxy/t/p/w500/<file>.jpg
+//     → fetches https://image.tmdb.org/t/p/w500/<file>.jpg server-side
+//     → returns the image bytes with 7-day Cache-Control.
+//   - Only /t/p/* paths (TMDB image paths) — NOT an open proxy.
+//   - Only GET/HEAD methods.
+//   - Path is validated (charset + length + no traversal) before fetch.
+//   - Size-capped in-memory LRU cache (~300 images ≈ 15-30MB) per warm
+//     instance — repeat requests never re-hit TMDB; cold starts fetch
+//     fresh (TMDB CDN is fast from Google's network).
+//   - 15s abort timeout on the upstream fetch.
+//   - CORS: open (images are public content).
+//
+// APP WIRING (NO app rebuild needed):
+//   The app already rewrites image.tmdb.org URLs through whatever host is
+//   configured in Firestore app_settings/tmdb_image_proxy.baseUrl
+//   (TmdbImageProxy, display-time rewrite only). To switch from the
+//   Cloudflare Worker to this function, edit ONE Firestore doc:
+//     app_settings/tmdb_image_proxy.baseUrl =
+//       https://us-central1-cm-movies-dabab.cloudfunctions.net/tmdbImageProxy
+//   then in the app: Settings → About → "TMDB Poster Proxy" → tap to
+//   re-check (no restart, no rebuild). The app's PosterCacheManager keys
+//   images by URL, so the new host is fetched fresh.
+//
+// COST (Blaze plan):
+//   Posters are ~30-100KB. Free tier = 2M invocations/month; egress is
+//   billed after free allowance at ~$0.12/GB — for a typical catalog
+//   (2-3k unique posters) + daily users this is well under $2/month,
+//   and in-memory + client-side caching keep repeat traffic near zero.
+//
+// SECURITY:
+//   - Read-only, path-restricted image proxy — cannot be used to fetch
+//     arbitrary origins, only image.tmdb.org/t/p/*.
+//   - No auth required (posters are public; CachedNetworkImage cannot
+//     attach Firebase auth headers).
+//   - 5MB response cap rejects absurd upstream payloads.
+// ============================================================================
+
+const TMDB_PROXY_ORIGIN = 'https://image.tmdb.org';
+const TMDB_PROXY_CACHE = new Map(); // path -> { buf, ctype }
+const TMDB_PROXY_CACHE_MAX = 300; // entries (~15-30MB) per warm instance
+
+function tmdbProxyCacheGet(p) {
+  const hit = TMDB_PROXY_CACHE.get(p);
+  if (hit) {
+    // LRU refresh: move to most-recently-used position.
+    TMDB_PROXY_CACHE.delete(p);
+    TMDB_PROXY_CACHE.set(p, hit);
+  }
+  return hit;
+}
+
+function tmdbProxyCachePut(p, entry) {
+  if (TMDB_PROXY_CACHE.size >= TMDB_PROXY_CACHE_MAX) {
+    const oldest = TMDB_PROXY_CACHE.keys().next().value;
+    TMDB_PROXY_CACHE.delete(oldest);
+  }
+  TMDB_PROXY_CACHE.set(p, entry);
+}
+
+exports.tmdbImageProxy = onRequest(
+  { cors: true, region: 'us-central1', timeoutSeconds: 30, memory: '128MB' },
+  async (req, res) => {
+    // Only GET/HEAD (browsers/probes sometimes send OPTIONS — cors:true
+    // already handles that before we get here).
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.set('Allow', 'GET, HEAD');
+      return res.status(405).send('Method not allowed');
+    }
+
+    // Path after the function name, e.g. /t/p/w500/<file>.jpg.
+    // Query strings (the app appends ?retry=N cache-busters) are ignored —
+    // the image identity is the path alone.
+    const path = (req.path || '/').split('?')[0];
+
+    if (!path.startsWith('/t/p/')) {
+      return res
+        .status(404)
+        .send('CM Movies TMDB image proxy — usage: /t/p/<size>/<file>');
+    }
+
+    // Path safety: TMDB paths are ASCII [a-zA-Z0-9._/-] only, always short.
+    if (
+      path.length > 200 ||
+      path.includes('..') ||
+      /[^a-zA-Z0-9._/-]/.test(path)
+    ) {
+      return res.status(400).send('Bad path');
+    }
+
+    // Serve from the warm-instance memory cache when possible.
+    const cached = tmdbProxyCacheGet(path);
+    if (cached) {
+      res.set('Content-Type', cached.ctype);
+      res.set('Content-Length', String(cached.buf.length));
+      res.set('Cache-Control', 'public, max-age=604800'); // 7 days
+      res.set('Access-Control-Allow-Origin', '*');
+      res.set('X-Proxy', 'tmdb-image-proxy/gcf');
+      return res.status(200).send(cached.buf);
+    }
+
+    // Fetch upstream with a hard 15s abort.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    try {
+      const upstream = await fetch(TMDB_PROXY_ORIGIN + path, {
+        method: 'GET',
+        redirect: 'follow',
+        signal: controller.signal,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+          Accept: 'image/webp,image/apng,image/*,*/*;q=0.8',
+        },
+      });
+
+      if (!upstream.ok) {
+        return res
+          .status(upstream.status === 404 ? 404 : 502)
+          .send('Upstream error ' + upstream.status);
+      }
+
+      const ctype = upstream.headers.get('content-type') || 'image/jpeg';
+      const buf = Buffer.from(await upstream.arrayBuffer());
+
+      if (buf.length === 0 || buf.length > 5 * 1024 * 1024) {
+        return res.status(502).send('Unexpected image size');
+      }
+
+      tmdbProxyCachePut(path, { buf, ctype });
+
+      res.set('Content-Type', ctype);
+      res.set('Content-Length', String(buf.length));
+      res.set('Cache-Control', 'public, max-age=604800'); // 7 days
+      res.set('Access-Control-Allow-Origin', '*');
+      res.set('X-Proxy', 'tmdb-image-proxy/gcf');
+      return res.status(200).send(buf);
+    } catch (err) {
+      const aborted = err && err.name === 'AbortError';
+      logger.error('tmdbImageProxy fetch failed:', path, err && err.message);
+      return res
+        .status(502)
+        .send(aborted ? 'Upstream timeout' : 'Proxy fetch failed');
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+);

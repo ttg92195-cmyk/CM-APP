@@ -5642,3 +5642,25 @@ Stage Summary:
 - Firestore config verified CORRECT from Bro's screenshots — the issue is the app not picking it up, not the config
 - Bro's immediate test (no rebuild needed): FORCE-CLOSE the app completely and reopen — if his APK is the Sep 15 hotfix-#2 build it already has the proxy code, and a fresh launch after today's doc creation should enable the proxy
 - If still broken: install the NEW build (this commit) → Settings → About → "TMDB Poster Proxy" row shows ON/OFF/failed + tap re-checks and reports the exact error — send me what it says
+
+---
+Task ID: 4-tmdb-proxy-d
+Agent: Main Agent
+Task: Bro rebuilt with the diagnostics build — proxy row shows "ON — https://tmdb-images.guyg20985.workers.dev" but posters STILL not loading; asked for an alternative approach
+
+Work Log:
+- Bro sent a 47s screen recording; extracted 12 frames + zoomed crops, analyzed via VLM + pixel analysis
+- Findings: (1) Settings proxy tile ON + snackbar "Poster Proxy: ON" — config loads correctly in-app; (2) ALL posters flat gray across Home/Movies (Spider-Man, Project Hail Mary, Nezha, GoT, ONE PIECE, Pokémon...) — pixel-diff shows boxes are CHANGING over time = shimmer placeholders = images STUCK IN LOADING, requests neither succeed nor fail (hang signature, not the errorWidget — no "Tap to retry" visible); (3) Home banner also gray; (4) CRITICAL: Firestore DATA (titles, ratings, durations, quality badges) all load fine = Google/Firebase endpoints ARE reachable in-app on the same screen where images hang
+- Diagnosis: the app's Dart HTTP requests to image.tmdb.org hang (ISP blackhole) AND requests to *.workers.dev ALSO hang in-app even though the same URL loads in Chrome on the same phone — consistent with Myanmar ISP DNS poisoning/blackholing of the workers.dev domain (Chrome bypasses via DNS-over-HTTPS; Dart HttpClient uses system DNS). Google infra is the only network path PROVEN to work in-app
+- Bro asked for an alternative ("တခြားဟာပြောင်းသုံးရင် နည်းလမ်း") → built the TMDB image proxy on GOOGLE infrastructure instead of Cloudflare:
+  - Added exports.tmdbImageProxy to functions/index.js (Node 18, gen2 onRequest, us-central1, 128MB, 30s timeout): GET/HEAD only, /t/p/* paths only, path validated (charset+length+no traversal), 15s AbortController upstream timeout, 5MB response cap, size-capped LRU memory cache (~300 images) per warm instance, 7-day Cache-Control + CORS *, browser UA upstream, errors as readable text. No new npm dependencies
+  - Proxy URL: https://us-central1-cm-movies-dabab.cloudfunctions.net/tmdbImageProxy/t/p/w500/<file>.jpg
+  - ZERO app changes needed: the app rewrites hosts at display time from app_settings/tmdb_image_proxy.baseUrl — Bro just edits the Firestore doc to the function URL, then Settings → tap proxy tile to force-reload (built in the previous commit). No rebuild, no restart
+- Fixed deploy-functions.yml (deploy-functions historical 111/111 silent failures): moved the job-level `if: ${{ secrets... }}` (secrets context forbidden in job-level if — same latent bug as deploy-rules.yml) to job-level env mapping + step-level `if: env.X != ''` checks; deploy args now explicitly list ALL four functions (onUserCreated, sendNotification, onNotificationCreated, tmdbImageProxy) instead of only onUserCreated — bare --only functions avoided so --force can never auto-delete a remote-only function
+- Validated: node --check functions/index.js OK; balance check OK (202/202, 91/91); YAML parses (7 steps with correct conditions)
+- Committed in CM-APP, pushed; root clone synced + pointer bumped
+
+Stage Summary:
+- New poster proxy on Google infra (Cloud Functions) — the one network path proven reachable in-app (Firestore data loads while images hang on the same screen)
+- Bro's steps: (1) deploy the function: pull latest → `cd functions && npm install` → `cd ..` → `firebase deploy --only functions:tmdbImageProxy` (or ALL: firebase deploy --only functions) — takes ~2-3 min; (2) test in phone browser: https://us-central1-cm-movies-dabab.cloudfunctions.net/tmdbImageProxy/t/p/w500/yihdXomYb5kTeSivtFndMy5iDmf.jpg → poster must appear; (3) Firestore → app_settings → tmdb_image_proxy → edit baseUrl → https://us-central1-cm-movies-dabab.cloudfunctions.net/tmdbImageProxy (enabled stays true); (4) app → Settings → About → TMDB Poster Proxy → tap → should say ON with the NEW host → go to Movies tab → posters load. NO app rebuild needed
+- If posters STILL hang after the Google-host proxy: the problem is in-app image loading generally (not the host) → next step would be an in-app test-image button in the diagnostics tile + adb logs; the Cloudflare worker remains a working fallback for other networks (config is swappable per Firestore doc)
