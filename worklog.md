@@ -5594,3 +5594,29 @@ Stage Summary:
 - Poster fix delivered as display-time URL rewrite + remote-configured Cloudflare Worker proxy
 - Bro's steps: (1) free Cloudflare account → create Worker "tmdb-images" → paste cloudflare/tmdb-image-proxy.js → deploy; (2) test <worker-url>/t/p/w500/yihdXomYb5kTeSivtFndMy5iDmf.jpg in browser; (3) Firestore → app_settings → create doc tmdb_image_proxy {enabled: true, baseUrl: <worker-url>}; (4) rebuild APK once; (5) future proxy changes = edit the Firestore doc only
 - If posters still fail through the worker, the fallback is hosting posters on Firebase Storage (reachable from Myanmar) — deferred until needed
+
+---
+Task ID: 4-tmdb-proxy-b
+Agent: Main Agent
+Task: Fix Cloudflare Worker "error code: 1101" — Bro deployed the TMDB image proxy worker (step 4 done) but the test URL returned error text instead of the poster
+
+Work Log:
+- Bro reported https://tmdb-images.guyg20985.workers.dev/t/p/w500/yihdXomYb5kTeSivtFndMy5iDmf.jpg shows an error page
+- Tested from server: worker URL → HTTP 500 "error code: 1101" (Cloudflare: Worker threw an unhandled exception); origin image.tmdb.org same path → HTTP 200 image/jpeg 74274 bytes (via BunnyCDN) — TMDB is fine, the failure is INSIDE the worker script
+- Also verified upstream accepts both browser UA and the v1 custom UA "cm-movies-proxy/1.0" (both 200) — not a header issue
+- Root cause in v1 worker (cloudflare/tmdb-image-proxy.js): `caches.default` / `cache.match()` were called OUTSIDE the try/catch. On workers.dev the Cache API can throw (limited/unavailable there), producing an unhandled exception → generic 1101 page. Every other code path (upstream fetch etc.) was inside try/catch and would have returned a readable 502, so the Cache API lines were the only possible 1101 source
+- Rewrote worker as v2:
+  1. ENTIRE fetch handler wrapped in try/catch — nothing can 1101 anymore
+  2. Edge cache (caches.default) demoted to best-effort: cache.match and cache.put each individually guarded; any cache error → skip caching, proxy directly (client still gets 7-day Cache-Control)
+  3. Cache key normalized to path-only (query strings like ?retry=N excluded via a constructed Request key instead of v1's ignoreSearch)
+  4. Any unexpected error now returns the actual exception text in the response body (readable in browser) instead of Cloudflare's generic 1101 page
+  5. Added /__health liveness endpoint (returns "tmdb-image-proxy v2 OK" with no upstream call)
+  6. Browser-like User-Agent + Accept headers; fresh response headers (Content-Type preserved from upstream, Cache-Control 7d, CORS *, X-Proxy marker); ctx.waitUntil guarded
+- Validated: node --check syntax OK; balance check OK (56/56 parens, 29/29 braces); chmod 644 on the three files with stale 755 permission noise (deploy-rules.yml, worker js, tmdb_image_proxy.dart) to clean the working tree
+- App-side code unchanged (commit f5fbc8f already delivered TmdbImageProxy + wiring); no Dart changes, no rebuild implications from this commit beyond the worker file
+- Committed in CM-APP, pushed; root clone synced + pointer bumped
+
+Stage Summary:
+- Worker v2 is defensive-by-construction: even if the Cache API diagnosis is wrong for Bro's account, the next failure will return its actual error text in the browser instead of 1101 (self-diagnosing in one round-trip)
+- Bro's steps now: (1) Cloudflare dashboard → tmdb-images worker → Edit code → select all → delete → paste new cloudflare/tmdb-image-proxy.js v2 → Deploy; (2) open the test URL → poster should appear (also can check /__health); (3) if it STILL errors, the page itself now shows the exact reason — send it back
+- After the poster loads through the worker: Firestore → app_settings → tmdb_image_proxy {enabled: true, baseUrl: https://tmdb-images.guyg20985.workers.dev} → rebuild APK once
