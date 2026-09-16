@@ -9,6 +9,7 @@ import 'package:cm_movies/app/ui/screens/about_kmm_page.dart';
 import 'package:cm_movies/app/ui/screens/privacy_policy_page.dart';
 import 'package:cm_movies/app/ui/screens/vip_page.dart';
 import 'package:cm_movies/app/core/services/poster_cache_manager.dart';
+import 'package:cm_movies/app/core/services/tmdb_image_proxy.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -32,6 +33,7 @@ class _SettingsPageState extends State<SettingsPage> {
   static const Color _cAbout = Color(0xFF607D8B);
   static const Color _cHelp = Color(0xFF8D6E63);
   static const Color _cPrivacy = Color(0xFF5C6BC0);
+  static const Color _cProxy = Color(0xFF26A69A);
 
   // =========================================================================
   // Clear cache — DESIGN CHANGE (audit finding C7)
@@ -733,6 +735,40 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  // Phase 4 hotfix (2026-09-16) — manual TMDB poster proxy check/reload.
+  // Re-reads app_settings/tmdb_image_proxy with a longer 8s budget and
+  // reports the exact outcome (enabled host / not found / failure reason)
+  // in a SnackBar. Also lets the admin pick up a just-edited Firestore
+  // config without restarting the app.
+  Future<void> _reloadPosterProxy(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final isMy = Provider.of<AppConfig>(context, listen: false).languageCode ==
+        'my';
+    await TmdbImageProxy.loadFromFirestore(
+      force: true,
+      timeout: const Duration(seconds: 8),
+    );
+    if (mounted) setState(() {});
+    final String msg;
+    if (TmdbImageProxy.isEnabled) {
+      msg = 'Poster Proxy: ON — ${TmdbImageProxy.baseUrl}';
+    } else if (TmdbImageProxy.lastError != null) {
+      var err = TmdbImageProxy.lastError ?? '';
+      if (err.length > 140) err = '${err.substring(0, 140)}...';
+      msg = isMy ? 'Load မအောင် — $err' : 'Proxy load failed: $err';
+    } else {
+      msg = isMy
+          ? 'OFF — config မတွေ့/ပိတ်'
+          : 'OFF — no enabled config found (direct mode)';
+    }
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        duration: const Duration(seconds: 5),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final appConfig = Provider.of<AppConfig>(context);
@@ -858,6 +894,30 @@ class _SettingsPageState extends State<SettingsPage> {
           _buildSettingsCard(
             theme: theme,
             children: [
+              // Phase 4 hotfix (2026-09-16) — TMDB poster proxy diagnostics.
+              // Shows whether the proxy config (app_settings/tmdb_image_proxy)
+              // actually loaded; tap re-checks it and reports the exact
+              // outcome/error in a SnackBar. Makes poster problems visible
+              // without adb logs (needed while posters fail in Myanmar).
+              _buildNavRow(
+                icon: Icons.image_outlined,
+                iconColor: _cProxy,
+                title: appConfig.languageCode == 'my'
+                    ? 'Poster ပုံ Proxy'
+                    : 'TMDB Poster Proxy',
+                subtitle: TmdbImageProxy.isEnabled
+                    ? 'ON — ${TmdbImageProxy.baseUrl}'
+                    : (TmdbImageProxy.lastError != null
+                        ? (appConfig.languageCode == 'my'
+                            ? 'ပျက်နေ — ပြန်စစ်ရန် နှိပ်ပါ'
+                            : 'Load failed — tap to retry')
+                        : (appConfig.languageCode == 'my'
+                            ? 'OFF — တိုက်ရိုက်ချိတ်ဆက်'
+                            : 'OFF — direct mode')),
+                onTap: () => _reloadPosterProxy(context),
+                theme: theme,
+              ),
+              _buildInnerDivider(theme),
               _buildNavRow(
                 icon: Icons.info_outline,
                 iconColor: _cAbout,

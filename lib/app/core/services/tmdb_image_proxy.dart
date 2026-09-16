@@ -58,6 +58,11 @@ class TmdbImageProxy {
   /// can retry.
   static bool _loaded = false;
 
+  /// Last load failure reason (TimeoutException / permission-denied / ...).
+  /// Null when the last attempt succeeded. Exposed for the Settings
+  /// diagnostics tile — makes proxy problems visible without adb logs.
+  static String? lastError;
+
   /// Whether TMDB images are currently routed through the proxy.
   static bool get isEnabled => _baseUrl != null;
 
@@ -68,14 +73,28 @@ class TmdbImageProxy {
   ///
   /// Safe to call repeatedly — short-circuits after the first successful
   /// read. Tolerates every failure mode by staying in direct mode.
-  static Future<void> loadFromFirestore() async {
-    if (_loaded) return;
+  ///
+  /// [force] re-reads even after a successful earlier load (used by the
+  /// Settings diagnostics tile right after the admin edits the Firestore
+  /// doc — no app restart needed to pick up a config change).
+  /// [timeout] bounds the read (auto-load keeps the snappy 2.5s splash
+  /// budget; manual reloads from Settings use a longer 8s budget).
+  static Future<void> loadFromFirestore({
+    bool force = false,
+    Duration timeout = const Duration(milliseconds: 2500),
+  }) async {
+    if (_loaded && !force) return;
+    if (force) {
+      _loaded = false;
+      _baseUrl = null;
+    }
+    lastError = null;
     try {
       final doc = await FirebaseFirestore.instance
           .collection('app_settings')
           .doc('tmdb_image_proxy')
           .get()
-          .timeout(const Duration(milliseconds: 2500));
+          .timeout(timeout);
       // Read succeeded — never retry within this app session.
       _loaded = true;
       final data = doc.data();
@@ -100,6 +119,7 @@ class TmdbImageProxy {
     } catch (e) {
       // Offline / pre-auth / rules rejection — stay in direct mode and
       // allow a later trigger to retry (do NOT set _loaded).
+      lastError = e.toString();
       debugPrint('TmdbImageProxy: load failed (direct mode): $e');
     }
   }

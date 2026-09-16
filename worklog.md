@@ -5620,3 +5620,25 @@ Stage Summary:
 - Worker v2 is defensive-by-construction: even if the Cache API diagnosis is wrong for Bro's account, the next failure will return its actual error text in the browser instead of 1101 (self-diagnosing in one round-trip)
 - Bro's steps now: (1) Cloudflare dashboard → tmdb-images worker → Edit code → select all → delete → paste new cloudflare/tmdb-image-proxy.js v2 → Deploy; (2) open the test URL → poster should appear (also can check /__health); (3) if it STILL errors, the page itself now shows the exact reason — send it back
 - After the poster loads through the worker: Firestore → app_settings → tmdb_image_proxy {enabled: true, baseUrl: https://tmdb-images.guyg20985.workers.dev} → rebuild APK once
+
+---
+Task ID: 4-tmdb-proxy-c
+Agent: Main Agent
+Task: Bro completed Step 5 (Firestore config) and rebuilt — posters still not showing in the app; diagnose why
+
+Work Log:
+- Bro sent 3 screenshots; read via VLM: ALL THREE are Firebase Console views confirming the Firestore config is 100% CORRECT — project CM-Movies, collection app_settings, doc tmdb_image_proxy, baseUrl (string) = https://tmdb-images.guyg20985.workers.dev, enabled (boolean) = true
+- Re-verified from server: worker /__health OK, poster through worker OK (HTTP 200, image/webp 42KB)
+- Verified app-side chain in repo: Movie.fullPosterUrl → TmdbImageProxy.resolve() (22 fullPosterUrl call sites, movie_card uses it); main.dart wiring (authStateChanges listener + splash await) present; build.yml triggers on every push, and f5fbc8f (proxy code, Sep 8) predates the Sep 15 hotfix-#2 build Bro already installed — so his APK almost certainly HAS the proxy code
+- Verified firestore.rules: app_settings read for authenticated users has existed since commit 1d6adb2 (Jun 28) — deployed rules (Bro pasted manually Sep 15 during reels hotfix) include it, so the config read is NOT rules-blocked
+- Remaining suspects (invisible without adb logs): (a) app session started before the doc was created today (proxy state locks per-session once a read SUCCEEDS with doc missing → direct mode until full app restart); (b) installed APK predates Sep 8; (c) 2.5s config-read timeout on slow Myanmar network
+- Delivered visibility fix so the next build is self-diagnosing (no adb needed):
+  - tmdb_image_proxy.dart: loadFromFirestore({bool force = false, Duration timeout = 2.5s}) — force re-reads even after a successful load (picks up just-edited Firestore config WITHOUT app restart); lastError static exposes the failure reason (timeout / permission-denied / offline)
+  - settings_page.dart: new "TMDB Poster Proxy" diagnostics tile at the top of the About group — subtitle shows live state (ON — <worker host> / OFF — direct / Load failed — tap to retry); tapping force-reloads with an 8s budget and shows a SnackBar with the exact outcome or truncated error (bilingual via languageCode, no new translate() keys so translations-check.yml stays green); messenger captured before await + mounted-guarded setState (no context-across-async-gap)
+- Validated: balance check OK on both files; pitfall scan clean (no Colors.black0X / Duration.zero / snap.data()[ / Future.value() patterns)
+- Committed in CM-APP, pushed; root clone synced + pointer bumped
+
+Stage Summary:
+- Firestore config verified CORRECT from Bro's screenshots — the issue is the app not picking it up, not the config
+- Bro's immediate test (no rebuild needed): FORCE-CLOSE the app completely and reopen — if his APK is the Sep 15 hotfix-#2 build it already has the proxy code, and a fresh launch after today's doc creation should enable the proxy
+- If still broken: install the NEW build (this commit) → Settings → About → "TMDB Poster Proxy" row shows ON/OFF/failed + tap re-checks and reports the exact error — send me what it says
