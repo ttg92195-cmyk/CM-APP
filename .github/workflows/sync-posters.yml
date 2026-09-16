@@ -1,0 +1,131 @@
+name: Sync & Deploy Poster Mirror
+
+# =============================================================================
+# TMDB POSTER MIRROR — Phase 4 hotfix (2026-09-16)
+# =============================================================================
+# WHY: Cloud Functions (tmdbImageProxy) requires the Blaze plan (international
+# credit card — hard in Myanmar). Firebase Hosting is FREE on Spark, and
+# <project>.web.app is Google infrastructure — reachable from Myanmar inside
+# the app (Firestore traffic works on the same path while image.tmdb.org and
+# workers.dev hang).
+#
+# WHAT: Mirrors every TMDB image referenced in Firestore into hosting/t/p/…
+# and deploys Firebase Hosting, so the app can load posters from
+#   https://cm-movies-dabab.web.app/t/p/w500/<file>.jpg
+# with ZERO app changes — the existing Firestore remote config just needs:
+#   app_settings/tmdb_image_proxy.baseUrl
+#     → https://cm-movies-dabab.web.app   (enabled stays true)
+#
+# WHEN:
+#   - Manually (Actions → Run workflow) — run after adding new movies!
+#   - Nightly at 01:00 Myanmar time (19:30 UTC) — picks up new content
+#   - On push that changes this workflow or the sync script
+#
+# PREREQUISITE (same secret the functions workflow needs):
+#   GitHub secret FIREBASE_SERVICE_ACCOUNT = the Firebase service account
+#   JSON key. To create it (free, no Blaze needed):
+#     1. Firebase Console → ⚙️ Project settings → Service accounts
+#     2. "Generate new private key" → downloads a JSON file
+#     3. GitHub repo → Settings → Secrets and variables → Actions
+#     4. New repository secret → name FIREBASE_SERVICE_ACCOUNT
+#        → value = the ENTIRE JSON file contents
+#
+# LIMITS (Spark free tier): 10GB hosting storage, 360MB/day transfer.
+# A w500 poster is ~30-50KB → roughly 7-9k poster loads/day; the app caches
+# client-side, so this is fine for the current user base. If usage ever
+# outgrows it, upgrading to Blaze lifts the caps.
+# =============================================================================
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 19 * * *' # 19:30 UTC = 01:00 MMT daily
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/sync-posters.js'
+      - '.github/workflows/sync-posters.yml'
+      - 'firebase.json'
+
+permissions:
+  contents: write # commit newly mirrored posters back to the repo
+
+concurrency:
+  group: sync-posters
+  cancel-in-progress: false
+
+jobs:
+  sync-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      # secrets context is forbidden in job-level if: — map to env first
+      # (same pattern as deploy-functions.yml).
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      FIREBASE_PROJECT_ID: cm-movies-dabab
+
+    steps:
+      - name: Explain what to do when the secret is missing
+        if: env.FIREBASE_SERVICE_ACCOUNT == ''
+        run: |
+          echo "::error::Secret FIREBASE_SERVICE_ACCOUNT is not configured — skipping."
+          echo "To enable poster mirror deploys:"
+          echo "  1. Firebase Console → ⚙️ Project settings → Service accounts"
+          echo "  2. Click 'Generate new private key' (free, no Blaze needed)"
+          echo "  3. GitHub → Settings → Secrets and variables → Actions"
+          echo "  4. New secret: FIREBASE_SERVICE_ACCOUNT = entire JSON contents"
+          echo "  5. Re-run this workflow"
+
+      - name: Checkout code
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install firebase-admin (isolated, outside the repo tree)
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: npm install --prefix "$RUNNER_TEMP/poster-deps" firebase-admin@12
+
+      - name: Sync posters from TMDB into hosting/
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        env:
+          NODE_PATH: ${{ runner.temp }}/poster-deps/node_modules
+        run: node scripts/sync-posters.js
+
+      - name: Commit newly mirrored posters
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: |
+          git config user.name "poster-sync-bot"
+          git config user.email "actions@github.com"
+          git add hosting/
+          if git diff --cached --quiet; then
+            echo "No new posters to commit."
+          else
+            git commit -m "chore(posters): mirror new TMDB posters [skip ci]"
+            git push
+            echo "Committed and pushed new posters."
+          fi
+
+      - name: Deploy to Firebase Hosting
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/poster-sa.json
+        run: |
+          echo "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/poster-sa.json"
+          npx -y firebase-tools deploy --only hosting --non-interactive \
+            --project "$FIREBASE_PROJECT_ID"
+
+      - name: Summary
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: |
+          echo "### Poster mirror deployed :cinema:" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Status page: https://cm-movies-dabab.web.app/" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Example poster: https://cm-movies-dabab.web.app/t/p/w500/yihdXomYb5kTeSivtFndMy5iDmf.jpg" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Then in Firestore → app_settings → tmdb_image_proxy → baseUrl →" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`https://cm-movies-dabab.web.app\` (enabled: true), and tap the" >> "$GITHUB_STEP_SUMMARY"
+          echo "TMDB Poster Proxy row in the app's Settings → About to reload." >> "$GITHUB_STEP_SUMMARY"
