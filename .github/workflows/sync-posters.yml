@@ -96,7 +96,7 @@ jobs:
         run: node scripts/sync-posters.js
 
       - name: Commit newly mirrored posters
-        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        if: env.FIREBASE_SERVICE_ACCOUNT != '' && success()
         run: |
           git config user.name "poster-sync-bot"
           git config user.email "actions@github.com"
@@ -110,7 +110,7 @@ jobs:
           fi
 
       - name: Deploy to Firebase Hosting
-        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        if: env.FIREBASE_SERVICE_ACCOUNT != '' && success()
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/poster-sa.json
         run: |
@@ -126,6 +126,7 @@ jobs:
           echo "- Status page: https://cm-movies-dabab.web.app/" >> "$GITHUB_STEP_SUMMARY"
           echo "- Example poster: https://cm-movies-dabab.web.app/t/p/w500/yihdXomYb5kTeSivtFndMy5iDmf.jpg" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Then in Firestore → app_settings → tmdb_image_proxy → baseUrl →" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`https://cm-movies-dabab.web.app\` (enabled: true), and tap the" >> "$GITHUB_STEP_SUMMARY"
-          echo "TMDB Poster Proxy row in the app's Settings → About to reload." >> "$GITHUB_STEP_SUMMARY"
+          echo "The sync sets the app config automatically (app_settings/" >> "$GITHUB_STEP_SUMMARY"
+          echo "tmdb_image_proxy: enabled=true, baseUrl=https://cm-movies-dabab.web.app)." >> "$GITHUB_STEP_SUMMARY"
+          echo "If posters don't show in the app: force-close and reopen it, or" >> "$GITHUB_STEP_SUMMARY"
+          echo "Settings → About → tap the TMDB Poster Proxy row to reload." >> "$GITHUB_STEP_SUMMARY"

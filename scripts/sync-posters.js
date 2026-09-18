@@ -22,7 +22,22 @@
 //   4. Downloads each referenced image ONCE from image.tmdb.org (GitHub
 //      runners are outside Myanmar, so TMDB is reachable) into hosting/<path>
 //      — incremental: already-mirrored files are skipped
+//      — most-visible sizes first (w500 posters before backdrops/original)
 //   5. Rewrites hosting/index.html with sync stats + sample posters
+//   6. Auto-points the APP at the mirror: sets
+//      app_settings/tmdb_image_proxy = { enabled: true,
+//      baseUrl: https://<project>.web.app } (merge — no manual Firestore
+//      editing needed; the app picks it up on next launch / proxy-row tap)
+//
+// FIX HISTORY:
+//   2026-09-18 — runPool was called WITHOUT its concurrency argument:
+//     Math.min(undefined, N) = NaN → Array.from({length: NaN}) = ZERO worker
+//     runners → the pool resolved instantly, downloading NOTHING while
+//     reporting downloaded=0 failed=0. Both nightly runs "succeeded" with
+//     an empty mirror (deploy log: "found 1 files"). Now: the call passes
+//     the concurrency, runPool hardens invalid concurrency to >= 1 worker,
+//     and a post-pool invariant (downloaded + failed === missing.length)
+//     aborts loudly BEFORE deploy if a single item ever goes missing again.
 //
 //   The GitHub workflow (.github/workflows/sync-posters.yml) then commits
 //   the new files and runs `firebase deploy --only hosting`.
@@ -73,9 +88,23 @@ const SKIP_COLLECTIONS = new Set([
 // walking future-proofs against subcollection-based layouts).
 const SUBCOLLECTION_DEPTH = 1;
 
-const DOWNLOAD_CONCURRENCY = 5;
+// 10 parallel downloads — TMDB's image CDN handles this comfortably and it
+// keeps a ~3700-image first sync inside a few minutes.
+const DOWNLOAD_CONCURRENCY = 10;
 const FETCH_TIMEOUT_MS = 20000;
 const MAX_SAMPLES_IN_INDEX = 12;
+
+// Mirror the sizes the app actually renders on its main screens FIRST, so an
+// interrupted/capped run still leaves movie-card posters live. 'original'
+// (big backdrops) goes last.
+const SIZE_PRIORITY = ['w500', 'w342', 'w185', 'w780', 'w300', 'w154', 'w92'];
+function sizeRank(p) {
+  const m = /\/t\/p\/([A-Za-z0-9_-]+)\//.exec(p);
+  const size = m ? m[1] : '';
+  const i = SIZE_PRIORITY.indexOf(size);
+  if (i >= 0) return i;
+  return size === 'original' ? 98 : 50;
+}
 
 // Matches /t/p/<size>/<file>.<ext> with an optional https://image.tmdb.org
 // prefix. Stops at the extension, so query strings (?retry=N) are ignored.
@@ -107,7 +136,7 @@ function collectTmdbPaths(value, out) {
 // ---------------------------------------------------------------------------
 // Self-test
 // ---------------------------------------------------------------------------
-function selfTest() {
+async function selfTest() {
   const cases = [
     {
       name: 'plain full https URL',
@@ -167,6 +196,50 @@ function selfTest() {
       console.log(`      got : ${JSON.stringify(got)}`);
     }
   }
+
+  // --- runPool regression tests (the 2026-09-18 bug) ---
+  // A pool MUST process every item even when concurrency is omitted.
+  {
+    const items = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    let processed = 0;
+    await runPool(items, async () => {
+      await new Promise((r) => setTimeout(r, 1));
+      processed++;
+    });
+    const ok = processed === items.length;
+    console.log(
+      `${ok ? 'PASS' : 'FAIL'}  runPool processes all items without concurrency arg (regression: 0 processed)`
+    );
+    if (!ok) {
+      failed++;
+      console.log(`      want: ${items.length} processed`);
+      console.log(`      got : ${processed} processed`);
+    }
+  }
+  // Concurrency must be honored (never more than N workers alive).
+  {
+    const items = Array.from({ length: 20 }, (_, i) => i);
+    let processed = 0;
+    let live = 0;
+    let maxLive = 0;
+    await runPool(
+      items,
+      async () => {
+        live++;
+        maxLive = Math.max(maxLive, live);
+        await new Promise((r) => setTimeout(r, 2));
+        processed++;
+        live--;
+      },
+      4
+    );
+    const ok = processed === 20 && maxLive > 0 && maxLive <= 4;
+    console.log(
+      `${ok ? 'PASS' : 'FAIL'}  runPool honors concurrency (max live ${maxLive} <= 4)`
+    );
+    if (!ok) failed++;
+  }
+
   return failed === 0;
 }
 
@@ -239,7 +312,15 @@ async function fetchImage(tmdbPath) {
 
 async function runPool(items, worker, concurrency) {
   const queue = items.slice();
-  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+  // HARDENING (2026-09-18): a missing/invalid concurrency used to yield
+  // Math.min(undefined, N) = NaN → Array.from({length: NaN}) = [] → ZERO
+  // runners → instant no-op. Force at least one worker so this class of
+  // bug can never silently skip the whole workload again.
+  const workerCount = Math.max(
+    1,
+    Math.min(Number(concurrency) || 1, Math.max(items.length, 1))
+  );
+  const runners = Array.from({ length: workerCount }, async () => {
     while (queue.length) {
       const item = queue.shift();
       await worker(item);
@@ -251,7 +332,7 @@ async function runPool(items, worker, concurrency) {
 // ---------------------------------------------------------------------------
 // Status page (hosting/index.html)
 // ---------------------------------------------------------------------------
-function writeIndexHtml(paths, stats) {
+function writeIndexHtml(paths, stats, appConfig, mirrorBaseUrl) {
   if (paths.size === 0) return false;
   const samples = Array.from(paths).slice(0, MAX_SAMPLES_IN_INDEX);
   const sampleImgs = samples
@@ -276,6 +357,11 @@ function writeIndexHtml(paths, stats) {
   <h1>CM Movies — TMDB Poster Mirror</h1>
   <p>${paths.size} unique images mirrored &middot; ${stats.downloaded} new this run &middot; ${stats.failed} failed</p>
   <p>last sync: ${stats.finishedAt} UTC</p>
+  <p>app poster proxy: ${
+    appConfig
+      ? mirrorBaseUrl + ' (enabled — set automatically by sync)'
+      : 'NOT SET — set app_settings/tmdb_image_proxy.baseUrl = ' + mirrorBaseUrl
+  }</p>
   <div class="grid">
 ${sampleImgs}
   </div>
@@ -365,24 +451,51 @@ async function main() {
   }
   console.log(`already mirrored: ${stats.skipped}  to download: ${missing.length}`);
 
+  // Poster-critical sizes first (see SIZE_PRIORITY) — an interrupted run
+  // still leaves the most visible images mirrored and deployed.
+  missing.sort((a, b) => sizeRank(a) - sizeRank(b));
+
   const failures = [];
-  await runPool(missing, async (p) => {
-    const file = path.join(HOSTING_DIR, p);
-    try {
-      const buf = await fetchImage(p);
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      const tmp = file + '.tmp-' + process.pid;
-      fs.writeFileSync(tmp, buf);
-      fs.renameSync(tmp, file);
-      stats.downloaded++;
-      process.stdout.write('.');
-    } catch (e) {
-      stats.failed++;
-      failures.push(`${p} → ${e.message}`);
-      process.stdout.write('x');
-    }
-  });
+  await runPool(
+    missing,
+    async (p) => {
+      const file = path.join(HOSTING_DIR, p);
+      let tmp = null;
+      try {
+        const buf = await fetchImage(p);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        tmp = file + '.tmp-' + process.pid;
+        fs.writeFileSync(tmp, buf);
+        fs.renameSync(tmp, file);
+        tmp = null;
+        stats.downloaded++;
+        process.stdout.write('.');
+      } catch (e) {
+        if (tmp) {
+          try { fs.unlinkSync(tmp); } catch (_e) { /* best effort */ }
+        }
+        stats.failed++;
+        failures.push(`${p} → ${e.message}`);
+        process.stdout.write('x');
+      }
+    },
+    DOWNLOAD_CONCURRENCY // ← was missing entirely: the 2026-09-18 bug
+  );
   if (missing.length) console.log('');
+
+  // INVARIANT: every queued item must have been accounted for. If this ever
+  // trips, abort BEFORE the commit/deploy steps so the failure is visible
+  // instead of silently "succeeding" with an incomplete mirror.
+  const processed = stats.downloaded + stats.failed;
+  if (processed !== missing.length) {
+    console.error('');
+    console.error(
+      `!!! POOL SANITY FAILURE: processed ${processed} of ${missing.length} ` +
+        `queued items — a download pool bug lost work. Aborting before deploy.`
+    );
+    process.exit(1);
+  }
+
   if (failures.length) {
     console.log('failed downloads (upstream 404s are normal for removed media):');
     for (const f of failures.slice(0, 20)) console.log('  ' + f);
@@ -391,18 +504,56 @@ async function main() {
 
   // 4. Status page
   stats.finishedAt = new Date().toISOString().replace('T', ' ').slice(0, 16);
-  writeIndexHtml(paths, stats);
 
-  // 5. Summary (also parsed by humans — keep the last line greppable)
+  // 5. Point the APP at this mirror — remote config, zero app changes.
+  //    merge: true keeps any other fields an admin may have set.
+  const mirrorBaseUrl = `https://${PROJECT_ID}.web.app`;
+  let appConfig = false;
+  try {
+    await db.doc('app_settings/tmdb_image_proxy').set(
+      {
+        enabled: true,
+        baseUrl: mirrorBaseUrl,
+        posterMirror: {
+          files: paths.size,
+          newThisRun: stats.downloaded,
+          syncedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        updatedBy: 'sync-posters-bot',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    appConfig = true;
+    console.log(
+      `APP CONFIG SET: app_settings/tmdb_image_proxy → enabled:true, baseUrl:${mirrorBaseUrl}`
+    );
+  } catch (e) {
+    console.error(
+      'WARN: could not set app_settings/tmdb_image_proxy — set it manually in Firestore:',
+      e.message
+    );
+  }
+
+  writeIndexHtml(paths, stats, appConfig, mirrorBaseUrl);
+
+  // 6. Summary (also parsed by humans — keep the last line greppable)
   console.log(
     `SUMMARY: unique=${paths.size} downloaded=${stats.downloaded} ` +
-      `skipped=${stats.skipped} failed=${stats.failed} docsRead=${stats.docsRead}`
+      `skipped=${stats.skipped} failed=${stats.failed} docsRead=${stats.docsRead} ` +
+      `appConfig=${appConfig ? 'yes' : 'NO'} mirror=${mirrorBaseUrl}`
   );
   process.exit(0);
 }
 
 if (process.argv.includes('--selftest')) {
-  process.exit(selfTest() ? 0 : 1);
+  selfTest().then(
+    (ok) => process.exit(ok ? 0 : 1),
+    (e) => {
+      console.error('SELFTEST CRASHED:', e);
+      process.exit(1);
+    }
+  );
 } else {
   main().catch((e) => {
     console.error('FATAL:', e && e.message ? e.message : e);

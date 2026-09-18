@@ -11,7 +11,7 @@
   },
   "hosting": {
     "public": "hosting",
-    "ignore": ["**/.*", "**/node_modules/**"],
+    "ignore": ["**/.*", "**/node_modules/**", "**/*.tmp-*"],
     "headers": [
       {
         "source": "/t/p/**",
