@@ -52,6 +52,11 @@
 //     and a post-pool invariant (downloaded + failed === missing.length)
 //     aborts loudly BEFORE deploy if a single item ever goes missing again.
 //
+//   2026-09-19 — GCS mirror added (web.app blocked in Myanmar). First
+//     attempt taught us: admin.storage() is a FACADE — bucket() only,
+//     no createBucket ("storage.createBucket is not a function"). Fix:
+//     build a raw @google-cloud/storage client from the same SA key.
+//
 //   The GitHub workflow (.github/workflows/sync-posters.yml) then commits
 //   the new files and runs `firebase deploy --only hosting`.
 //
@@ -269,10 +274,21 @@ async function selfTest() {
 // ---------------------------------------------------------------------------
 // Firebase walk
 // ---------------------------------------------------------------------------
+// Parsed service-account key captured at init. firebase-admin's storage
+// facade only exposes bucket(), so creating the bucket needs a RAW
+// @google-cloud/storage client (which ships as a firebase-admin dep)
+// constructed with these credentials.
+let SA_CREDENTIALS = null;
+
 function initAdmin(admin) {
   const inline = process.env.FIREBASE_SERVICE_ACCOUNT;
   if (inline && inline.trim().startsWith('{')) {
-    admin.initializeApp({ credential: admin.credential.cert(JSON.parse(inline)) });
+    const parsed = JSON.parse(inline);
+    SA_CREDENTIALS = {
+      client_email: parsed.client_email,
+      private_key: parsed.private_key,
+    };
+    admin.initializeApp({ credential: admin.credential.cert(parsed) });
     return 'inline FIREBASE_SERVICE_ACCOUNT';
   }
   if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
@@ -373,8 +389,31 @@ function objectNameFor(p) {
 // uniform bucket-level access ON, public access prevention INHERITED, plus
 // an IAM binding allUsers → roles/storage.objectViewer. Idempotent; retried
 // because IAM ops on a just-created bucket can 404 for a few seconds.
-async function ensurePublicBucket(admin) {
-  const storage = admin.storage();
+// firebase-admin's admin.storage() is a FACADE exposing only bucket() —
+// the first GCS attempt failed with "storage.createBucket is not a
+// function". The real client ships as a firebase-admin dependency, so
+// require() finds it in the same node_modules; build it with the same SA
+// credentials so bucket-create + IAM policy calls are possible.
+function makeRawStorageClient() {
+  let StorageCtor;
+  try {
+    StorageCtor = require('@google-cloud/storage').Storage;
+  } catch (e) {
+    throw new Error(
+      '@google-cloud/storage is not resolvable next to firebase-admin. ' +
+        'Install it alongside: npm install --prefix <deps-dir> ' +
+        'firebase-admin@12 @google-cloud/storage@7'
+    );
+  }
+  if (SA_CREDENTIALS) {
+    return new StorageCtor({ credentials: SA_CREDENTIALS });
+  }
+  // GOOGLE_APPLICATION_CREDENTIALS is picked up automatically (ADC).
+  return new StorageCtor();
+}
+
+async function ensurePublicBucket() {
+  const storage = makeRawStorageClient();
   const bucket = storage.bucket(POSTER_BUCKET);
   const [exists] = await bucket.exists();
   if (!exists) {
@@ -620,7 +659,7 @@ async function main() {
   let gcsError = null;
   const gcs = { uploaded: 0, skipped: 0, failed: 0, failedList: [] };
   try {
-    bucket = await ensurePublicBucket(admin);
+    bucket = await ensurePublicBucket();
     const [files] = await bucket.getFiles({ prefix: 't/p/' });
     const gcsExisting = new Set(files.map((f) => f.name));
     const toUpload = [];

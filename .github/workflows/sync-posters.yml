@@ -93,9 +93,12 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install firebase-admin (isolated, outside the repo tree)
+      - name: Install firebase-admin + @google-cloud/storage (isolated, outside the repo tree)
         if: env.FIREBASE_SERVICE_ACCOUNT != ''
-        run: npm install --prefix "$RUNNER_TEMP/poster-deps" firebase-admin@12
+        # @google-cloud/storage is needed for bucket CREATE — firebase-admin's
+        # admin.storage() facade exposes only bucket(). It also ships as a
+        # firebase-admin dep; installing it explicitly guarantees resolution.
+        run: npm install --prefix "$RUNNER_TEMP/poster-deps" firebase-admin@12 @google-cloud/storage@7
 
       - name: Sync posters from TMDB into hosting/
         if: env.FIREBASE_SERVICE_ACCOUNT != ''
