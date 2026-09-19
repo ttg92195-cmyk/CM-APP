@@ -279,6 +279,7 @@ async function selfTest() {
 // @google-cloud/storage client (which ships as a firebase-admin dep)
 // constructed with these credentials.
 let SA_CREDENTIALS = null;
+let SA_PROJECT_ID = null;
 
 function initAdmin(admin) {
   const inline = process.env.FIREBASE_SERVICE_ACCOUNT;
@@ -288,6 +289,7 @@ function initAdmin(admin) {
       client_email: parsed.client_email,
       private_key: parsed.private_key,
     };
+    SA_PROJECT_ID = parsed.project_id || null;
     admin.initializeApp({ credential: admin.credential.cert(parsed) });
     return 'inline FIREBASE_SERVICE_ACCOUNT';
   }
@@ -405,11 +407,16 @@ function makeRawStorageClient() {
         'firebase-admin@12 @google-cloud/storage@7'
     );
   }
+  // The raw client cannot detect the project on a CI runner — pass it
+  // explicitly, or auth fails with "Unable to detect a Project Id in the
+  // current environment" (second GCS attempt, 2026-09-19).
+  const projectId = SA_PROJECT_ID || PROJECT_ID;
   if (SA_CREDENTIALS) {
-    return new StorageCtor({ credentials: SA_CREDENTIALS });
+    return new StorageCtor({ credentials: SA_CREDENTIALS, projectId });
   }
-  // GOOGLE_APPLICATION_CREDENTIALS is picked up automatically (ADC).
-  return new StorageCtor();
+  // GOOGLE_APPLICATION_CREDENTIALS (ADC) supplies its own key/project, but
+  // being explicit is harmless.
+  return new StorageCtor({ projectId });
 }
 
 async function ensurePublicBucket() {
