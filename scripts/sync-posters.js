@@ -24,10 +24,23 @@
 //      — incremental: already-mirrored files are skipped
 //      — most-visible sizes first (w500 posters before backdrops/original)
 //   5. Rewrites hosting/index.html with sync stats + sample posters
-//   6. Auto-points the APP at the mirror: sets
+//   6. Uploads every mirrored image to a PUBLIC Google Cloud Storage bucket
+//      (see "WHY GCS" below) and verifies anonymous reads actually work
+//   7. Auto-points the APP at the mirror: sets
 //      app_settings/tmdb_image_proxy = { enabled: true,
-//      baseUrl: https://<project>.web.app } (merge — no manual Firestore
-//      editing needed; the app picks it up on next launch / proxy-row tap)
+//      baseUrl: https://storage.googleapis.com/<project>-posters }
+//      (merge — no manual Firestore editing needed; the app picks it up on
+//      next launch / proxy-row tap)
+//
+// WHY GCS, IN ADDITION TO HOSTING (2026-09-19):
+//   <project>.web.app turned out to be BLOCKED on Myanmar ISP lines (the
+//   filters there target *.web.app since it is widely used to serve VPN
+//   configs) even though it loads fine from outside Myanmar. Meanwhile
+//   *.googleapis.com — the domain family the app already uses for Firestore —
+//   keeps working there. A public GCS bucket serves objects at
+//     https://storage.googleapis.com/<bucket>/t/p/w500/<file>.jpg
+//   — the exact same path shape — so flipping baseUrl to it needs ZERO app
+//   changes. Hosting stays deployed as a backup mirror (VPN / non-MM).
 //
 // FIX HISTORY:
 //   2026-09-18 — runPool was called WITHOUT its concurrency argument:
@@ -43,11 +56,12 @@
 //   the new files and runs `firebase deploy --only hosting`.
 //
 // SERVED URLS (what the app requests after the Firestore config change):
-//   https://cm-movies-dabab.web.app/t/p/w500/<file>.jpg
+//   https://storage.googleapis.com/cm-movies-dabab-posters/t/p/w500/<file>.jpg
+//   (backup: https://cm-movies-dabab.web.app/t/p/w500/<file>.jpg)
 //   — identical path shape to image.tmdb.org, so the app-side rewrite in
 //     TmdbImageProxy.resolve() works with ZERO app changes:
 //     Firestore app_settings/tmdb_image_proxy.baseUrl
-//       → https://cm-movies-dabab.web.app
+//       → https://storage.googleapis.com/cm-movies-dabab-posters
 //
 // USAGE:
 //   GitHub Actions (recommended — see the workflow file).
@@ -92,6 +106,15 @@ const SUBCOLLECTION_DEPTH = 1;
 // keeps a ~3700-image first sync inside a few minutes.
 const DOWNLOAD_CONCURRENCY = 10;
 const FETCH_TIMEOUT_MS = 20000;
+
+// GCS mirror — the PRIMARY serving origin as of 2026-09-19.
+// storage.googleapis.com is on the *.googleapis.com family, which Myanmar
+// ISPs leave open (the app's Firestore traffic proves it daily), unlike
+// *.web.app which is blocked there.
+const POSTER_BUCKET = process.env.POSTER_BUCKET || `${PROJECT_ID}-posters`;
+const GCS_PUBLIC_BASE = `https://storage.googleapis.com/${POSTER_BUCKET}`;
+const HOSTING_BASE = `https://${PROJECT_ID}.web.app`;
+const UPLOAD_CONCURRENCY = 10;
 const MAX_SAMPLES_IN_INDEX = 12;
 
 // Mirror the sizes the app actually renders on its main screens FIRST, so an
@@ -330,9 +353,95 @@ async function runPool(items, worker, concurrency) {
 }
 
 // ---------------------------------------------------------------------------
+// GCS mirror (storage.googleapis.com — the Myanmar-reachable origin)
+// ---------------------------------------------------------------------------
+function contentTypeFor(p) {
+  if (p.endsWith('.png')) return 'image/png';
+  if (p.endsWith('.webp')) return 'image/webp';
+  if (p.endsWith('.svg')) return 'image/svg+xml';
+  if (p.endsWith('.gif')) return 'image/gif';
+  return 'image/jpeg';
+}
+
+// Object name in the bucket: same path, minus the leading slash
+// ('/t/p/w500/x.jpg' → 't/p/w500/x.jpg').
+function objectNameFor(p) {
+  return p.replace(/^\//, '');
+}
+
+// Creates the bucket on first run and makes it publicly readable:
+// uniform bucket-level access ON, public access prevention INHERITED, plus
+// an IAM binding allUsers → roles/storage.objectViewer. Idempotent; retried
+// because IAM ops on a just-created bucket can 404 for a few seconds.
+async function ensurePublicBucket(admin) {
+  const storage = admin.storage();
+  const bucket = storage.bucket(POSTER_BUCKET);
+  const [exists] = await bucket.exists();
+  if (!exists) {
+    await storage.createBucket(POSTER_BUCKET, {
+      location: 'us',
+      storageClass: 'STANDARD',
+      uniformBucketLevelAccess: { enabled: true },
+    });
+    console.log(`GCS bucket created: ${POSTER_BUCKET} (us / STANDARD / UBLA)`);
+  }
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await bucket.setMetadata({
+        iamConfiguration: {
+          uniformBucketLevelAccess: { enabled: true },
+          publicAccessPrevention: 'inherited',
+        },
+      });
+      const [policy] = await bucket.iam.getPolicy();
+      const binding = (policy.bindings || []).find(
+        (b) => b.role === 'roles/storage.objectViewer'
+      );
+      if (!binding || !(binding.members || []).includes('allUsers')) {
+        policy.bindings.push({
+          role: 'roles/storage.objectViewer',
+          members: ['allUsers'],
+        });
+        await bucket.iam.setPolicy(policy);
+        console.log('GCS bucket made PUBLIC: allUsers → storage.objectViewer');
+      }
+      return bucket;
+    } catch (e) {
+      lastErr = e;
+      await new Promise((r) => setTimeout(r, 4000 * attempt));
+    }
+  }
+  throw lastErr;
+}
+
+// Proves the bucket serves objects ANONYMOUSLY before pointing the app at
+// it — a private bucket would just swap "blocked" posters for 403 posters.
+async function verifyPublicGet(objName) {
+  const url = `${GCS_PUBLIC_BASE}/${objName}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'CM-Movies-Poster-Sync/1.0',
+        Range: 'bytes=0-255',
+      },
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const ct = (res.headers.get('content-type') || '').toLowerCase();
+    if (!ct.startsWith('image/')) throw new Error('content-type ' + ct);
+    return true;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Status page (hosting/index.html)
 // ---------------------------------------------------------------------------
-function writeIndexHtml(paths, stats, appConfig, mirrorBaseUrl) {
+function writeIndexHtml(paths, stats, appConfig, mirrorBaseUrl, gcsNote) {
   if (paths.size === 0) return false;
   const samples = Array.from(paths).slice(0, MAX_SAMPLES_IN_INDEX);
   const sampleImgs = samples
@@ -362,6 +471,7 @@ function writeIndexHtml(paths, stats, appConfig, mirrorBaseUrl) {
       ? mirrorBaseUrl + ' (enabled — set automatically by sync)'
       : 'NOT SET — set app_settings/tmdb_image_proxy.baseUrl = ' + mirrorBaseUrl
   }</p>
+  <p>backup mirror: ${HOSTING_BASE} &middot; GCS bucket: ${POSTER_BUCKET}${gcsNote || ''}</p>
   <div class="grid">
 ${sampleImgs}
   </div>
@@ -502,18 +612,118 @@ async function main() {
     if (failures.length > 20) console.log(`  … and ${failures.length - 20} more`);
   }
 
+  // 3.5 GCS mirror upload (storage.googleapis.com — the Myanmar-reachable
+  //     origin). Any failure here is NON-FATAL: the app falls back to the
+  //     hosting mirror (the pre-2026-09-19 behavior) and we log loudly.
+  let bucket = null;
+  let gcsVerified = false;
+  let gcsError = null;
+  const gcs = { uploaded: 0, skipped: 0, failed: 0, failedList: [] };
+  try {
+    bucket = await ensurePublicBucket(admin);
+    const [files] = await bucket.getFiles({ prefix: 't/p/' });
+    const gcsExisting = new Set(files.map((f) => f.name));
+    const toUpload = [];
+    for (const p of paths) {
+      if (gcsExisting.has(objectNameFor(p))) {
+        gcs.skipped++;
+        continue;
+      }
+      let localOk = false;
+      try {
+        localOk = fs.statSync(path.join(HOSTING_DIR, p)).size > 0;
+      } catch (_e) {
+        /* its download failed earlier — nothing to upload */
+      }
+      if (localOk) toUpload.push(p);
+    }
+    console.log(
+      `GCS: ${gcs.skipped} already in bucket · ${toUpload.length} to upload`
+    );
+    if (toUpload.length) {
+      await runPool(
+        toUpload,
+        async (p) => {
+          try {
+            await bucket.upload(path.join(HOSTING_DIR, p), {
+              destination: objectNameFor(p),
+              resumable: false,
+              metadata: {
+                contentType: contentTypeFor(p),
+                cacheControl: 'public, max-age=604800', // 7 days
+              },
+            });
+            gcs.uploaded++;
+            process.stdout.write('.');
+          } catch (e) {
+            gcs.failed++;
+            gcs.failedList.push(`${p} → ${e.message}`);
+            process.stdout.write('x');
+          }
+        },
+        UPLOAD_CONCURRENCY
+      );
+      console.log('');
+      if (gcs.failedList.length) {
+        console.log('GCS upload failures (first 10):');
+        for (const f of gcs.failedList.slice(0, 10)) console.log('  ' + f);
+      }
+    }
+    // Anonymous public GET check — pick a locally-present, size-prioritized
+    // sample so we never point the app at a bucket not proven public.
+    const candidates = Array.from(paths)
+      .filter((p) => {
+        try {
+          return fs.statSync(path.join(HOSTING_DIR, p)).size > 0;
+        } catch (_e) {
+          return false;
+        }
+      })
+      .sort((a, b) => sizeRank(a) - sizeRank(b));
+    if (candidates.length) {
+      const sample = objectNameFor(candidates[0]);
+      await verifyPublicGet(sample);
+      gcsVerified = true;
+      console.log(`GCS public GET verified: ${GCS_PUBLIC_BASE}/${sample}`);
+    }
+  } catch (e) {
+    gcsError = (e && e.message) || String(e);
+    console.error('');
+    console.error('WARN: GCS mirror unavailable —', gcsError);
+    console.error(
+      '      The app stays pointed at the hosting mirror. If this persists:\n' +
+        '        - 403 on bucket create / IAM → give the service account the\n' +
+        '          "Storage Admin" role (Google Cloud Console → IAM → the\n' +
+        '          firebase-adminsdk-*@cm-movies-dabab account → Grant role)\n' +
+        '        - publicAccessPrevention enforced → remove that constraint\n' +
+        '        - 409 name taken → POSTER_BUCKET name collision'
+    );
+  }
+
   // 4. Status page
   stats.finishedAt = new Date().toISOString().replace('T', ' ').slice(0, 16);
 
-  // 5. Point the APP at this mirror — remote config, zero app changes.
-  //    merge: true keeps any other fields an admin may have set.
-  const mirrorBaseUrl = `https://${PROJECT_ID}.web.app`;
+  // 5. Point the APP at the best available mirror — remote config, zero
+  //    app changes. The GCS origin wins when its anonymous GET check passed
+  //    (*.googleapis.com is the family that works from Myanmar); otherwise
+  //    we fall back to the hosting mirror. merge: true keeps any other
+  //    fields an admin may have set.
+  const mirrorBaseUrl = gcsVerified ? GCS_PUBLIC_BASE : HOSTING_BASE;
   let appConfig = false;
   try {
     await db.doc('app_settings/tmdb_image_proxy').set(
       {
         enabled: true,
         baseUrl: mirrorBaseUrl,
+        hostingMirror: HOSTING_BASE,
+        gcsMirror: gcsVerified
+          ? {
+              bucket: POSTER_BUCKET,
+              publicBase: GCS_PUBLIC_BASE,
+              files: paths.size,
+              uploadedThisRun: gcs.uploaded,
+            }
+          : { error: (gcsError || 'not verified').slice(0, 500) },
         posterMirror: {
           files: paths.size,
           newThisRun: stats.downloaded,
@@ -535,13 +745,27 @@ async function main() {
     );
   }
 
-  writeIndexHtml(paths, stats, appConfig, mirrorBaseUrl);
+  writeIndexHtml(
+    paths,
+    stats,
+    appConfig,
+    mirrorBaseUrl,
+    gcsVerified
+      ? ' — public GET verified'
+      : ' — UNAVAILABLE' +
+        (gcsError ? ': ' + gcsError.replace(/[<>]/g, '') : '')
+  );
 
   // 6. Summary (also parsed by humans — keep the last line greppable)
   console.log(
     `SUMMARY: unique=${paths.size} downloaded=${stats.downloaded} ` +
       `skipped=${stats.skipped} failed=${stats.failed} docsRead=${stats.docsRead} ` +
-      `appConfig=${appConfig ? 'yes' : 'NO'} mirror=${mirrorBaseUrl}`
+      `appConfig=${appConfig ? 'yes' : 'NO'} mirror=${mirrorBaseUrl} ` +
+      `gcs=${
+        gcsVerified
+          ? `verified uploaded=${gcs.uploaded} skipped=${gcs.skipped} failed=${gcs.failed}`
+          : 'UNAVAILABLE'
+      }`
   );
   process.exit(0);
 }

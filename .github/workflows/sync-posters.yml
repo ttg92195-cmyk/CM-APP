@@ -4,17 +4,21 @@ name: Sync & Deploy Poster Mirror
 # TMDB POSTER MIRROR — Phase 4 hotfix (2026-09-16)
 # =============================================================================
 # WHY: Cloud Functions (tmdbImageProxy) requires the Blaze plan (international
-# credit card — hard in Myanmar). Firebase Hosting is FREE on Spark, and
-# <project>.web.app is Google infrastructure — reachable from Myanmar inside
-# the app (Firestore traffic works on the same path while image.tmdb.org and
-# workers.dev hang).
+# credit card — hard in Myanmar). Firebase Hosting is FREE on Spark but its
+# <project>.web.app domain turned out to be BLOCKED on Myanmar ISP lines
+# (2026-09-19). *.googleapis.com — the family Firestore already uses — still
+# works there, so the PRIMARY mirror is now a public GCS bucket served from
+# storage.googleapis.com. Hosting stays deployed as a backup (VPN / non-MM).
 #
 # WHAT: Mirrors every TMDB image referenced in Firestore into hosting/t/p/…
-# and deploys Firebase Hosting, so the app can load posters from
-#   https://cm-movies-dabab.web.app/t/p/w500/<file>.jpg
-# with ZERO app changes — the existing Firestore remote config just needs:
+# AND uploads them to the public GCS bucket cm-movies-dabab-posters, so the
+# app can load posters from EITHER of:
+#   https://storage.googleapis.com/cm-movies-dabab-posters/t/p/w500/<f>.jpg  ← primary
+#   https://cm-movies-dabab.web.app/t/p/w500/<f>.jpg                         ← backup
+# with ZERO app changes — the sync script sets the Firestore remote config:
 #   app_settings/tmdb_image_proxy.baseUrl
-#     → https://cm-movies-dabab.web.app   (enabled stays true)
+#     → https://storage.googleapis.com/cm-movies-dabab-posters  (when the
+#       anonymous public-GET check on the bucket passes; else hosting fallback)
 #
 # WHEN:
 #   - Manually (Actions → Run workflow) — run after adding new movies!
@@ -30,10 +34,13 @@ name: Sync & Deploy Poster Mirror
 #     4. New repository secret → name FIREBASE_SERVICE_ACCOUNT
 #        → value = the ENTIRE JSON file contents
 #
-# LIMITS (Spark free tier): 10GB hosting storage, 360MB/day transfer.
-# A w500 poster is ~30-50KB → roughly 7-9k poster loads/day; the app caches
-# client-side, so this is fine for the current user base. If usage ever
-# outgrows it, upgrading to Blaze lifts the caps.
+# LIMITS (free tiers — this project has NO billing account, so caps are
+# hard-capped, never billed):
+#   GCS (primary):  5GB storage (current mirror ≈ 150-300MB), 1GB egress,
+#                   50k anonymous object GETs/month (~1.6k/day; the app
+#                   caches posters 7 days client-side, so fine for now).
+#   Hosting (backup): 10GB storage, 360MB/day transfer.
+# If usage ever outgrows these, upgrading to Blaze lifts the caps.
 # =============================================================================
 
 on:
@@ -62,6 +69,7 @@ jobs:
       # (same pattern as deploy-functions.yml).
       FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
       FIREBASE_PROJECT_ID: cm-movies-dabab
+      POSTER_BUCKET: cm-movies-dabab-posters
 
     steps:
       - name: Explain what to do when the secret is missing
@@ -121,12 +129,12 @@ jobs:
       - name: Summary
         if: env.FIREBASE_SERVICE_ACCOUNT != ''
         run: |
-          echo "### Poster mirror deployed :cinema:" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Poster mirror synced :cinema:" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Status page: https://cm-movies-dabab.web.app/" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Example poster: https://cm-movies-dabab.web.app/t/p/w500/yihdXomYb5kTeSivtFndMy5iDmf.jpg" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Primary (Myanmar-reachable): https://storage.googleapis.com/cm-movies-dabab-posters/t/p/w500/yihdXomYb5kTeSivtFndMy5iDmf.jpg" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Backup: https://cm-movies-dabab.web.app/" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "The sync sets the app config automatically (app_settings/" >> "$GITHUB_STEP_SUMMARY"
-          echo "tmdb_image_proxy: enabled=true, baseUrl=https://cm-movies-dabab.web.app)." >> "$GITHUB_STEP_SUMMARY"
+          echo "tmdb_image_proxy: baseUrl=https://storage.googleapis.com/cm-movies-dabab-posters)." >> "$GITHUB_STEP_SUMMARY"
           echo "If posters don't show in the app: force-close and reopen it, or" >> "$GITHUB_STEP_SUMMARY"
           echo "Settings → About → tap the TMDB Poster Proxy row to reload." >> "$GITHUB_STEP_SUMMARY"
