@@ -22,6 +22,20 @@ service cloud.storage {
     }
 
     // ============================================
+    // TMDB POSTER MIRROR (/t/p/...) — PUBLIC read.
+    // The sync-posters workflow mirrors image.tmdb.org posters into the
+    // default GCS bucket under t/ and the app loads them anonymously from
+    // https://storage.googleapis.com/<bucket>/t/... — TMDB posters are
+    // public content, no auth needed. The bucket is ALSO public via IAM
+    // (allUsers → objectViewer); this rule covers the path in case Firebase
+    // Security Rules govern the storage.googleapis.com endpoint.
+    // ============================================
+    match /t/{posterPath=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ============================================
     // MOVIE POSTERS / IMAGES — authenticated users can read
     // ============================================
     match /movies/{imagePath=**} {

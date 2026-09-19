@@ -11,14 +11,21 @@ name: Sync & Deploy Poster Mirror
 # storage.googleapis.com. Hosting stays deployed as a backup (VPN / non-MM).
 #
 # WHAT: Mirrors every TMDB image referenced in Firestore into hosting/t/p/…
-# AND uploads them to the public GCS bucket cm-movies-dabab-posters, so the
-# app can load posters from EITHER of:
-#   https://storage.googleapis.com/cm-movies-dabab-posters/t/p/w500/<f>.jpg  ← primary
-#   https://cm-movies-dabab.web.app/t/p/w500/<f>.jpg                         ← backup
+# AND uploads them to the public Firebase default GCS bucket
+# (cm-movies-dabab.firebasestorage.app), so the app can load posters from
+# EITHER of:
+#   https://storage.googleapis.com/cm-movies-dabab.firebasestorage.app/t/p/w500/<f>.jpg  ← primary
+#   https://cm-movies-dabab.web.app/t/p/w500/<f>.jpg                                     ← backup
 # with ZERO app changes — the sync script sets the Firestore remote config:
 #   app_settings/tmdb_image_proxy.baseUrl
-#     → https://storage.googleapis.com/cm-movies-dabab-posters  (when the
-#       anonymous public-GET check on the bucket passes; else hosting fallback)
+#     → https://storage.googleapis.com/<bucket>  (when the anonymous
+#       public-GET check on the bucket passes; else hosting fallback)
+#
+# BUCKET NOTE: creating a NEW bucket needs a billing account (fails on the
+# free plan), but the Firebase DEFAULT bucket works without billing. If it
+# doesn't exist yet, create it once: Firebase Console → Build → Storage →
+# "Get started" (free, no card). The sync then auto-detects it.
+# (POSTER_BUCKET env can override the preferred bucket name.)
 #
 # WHEN:
 #   - Manually (Actions → Run workflow) — run after adding new movies!
@@ -69,7 +76,6 @@ jobs:
       # (same pattern as deploy-functions.yml).
       FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
       FIREBASE_PROJECT_ID: cm-movies-dabab
-      POSTER_BUCKET: cm-movies-dabab-posters
 
     steps:
       - name: Explain what to do when the secret is missing
@@ -100,7 +106,22 @@ jobs:
         # firebase-admin dep; installing it explicitly guarantees resolution.
         run: npm install --prefix "$RUNNER_TEMP/poster-deps" firebase-admin@12 @google-cloud/storage@7
 
-      - name: Sync posters from TMDB into hosting/
+      - name: Deploy Storage Rules (public poster read — best effort)
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        # Runs BEFORE the sync so the /t/** public-read rule is already live
+        # when the sync's anonymous public-GET verification runs. Tolerates
+        # failure: the default bucket may not exist yet (it is created by
+        # Firebase Console → Storage → "Get started" — or possibly by this
+        # very deploy, which we probe for in the next step either way).
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/poster-sa.json
+        run: |
+          echo "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/poster-sa.json"
+          npx -y firebase-tools deploy --only storage --non-interactive \
+            --project "$FIREBASE_PROJECT_ID" \
+            || echo "::warning::storage rules deploy failed (bucket may not exist yet)"
+
+      - name: Sync posters from TMDB into hosting/ + GCS
         if: env.FIREBASE_SERVICE_ACCOUNT != ''
         env:
           NODE_PATH: ${{ runner.temp }}/poster-deps/node_modules
@@ -134,10 +155,10 @@ jobs:
         run: |
           echo "### Poster mirror synced :cinema:" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Primary (Myanmar-reachable): https://storage.googleapis.com/cm-movies-dabab-posters/t/p/w500/yihdXomYb5kTeSivtFndMy5iDmf.jpg" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Primary (Myanmar-reachable): https://storage.googleapis.com/cm-movies-dabab.firebasestorage.app/t/p/w500/yihdXomYb5kTeSivtFndMy5iDmf.jpg" >> "$GITHUB_STEP_SUMMARY"
           echo "- Backup: https://cm-movies-dabab.web.app/" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "The sync sets the app config automatically (app_settings/" >> "$GITHUB_STEP_SUMMARY"
-          echo "tmdb_image_proxy: baseUrl=https://storage.googleapis.com/cm-movies-dabab-posters)." >> "$GITHUB_STEP_SUMMARY"
+          echo "tmdb_image_proxy: baseUrl=https://storage.googleapis.com/<bucket>)." >> "$GITHUB_STEP_SUMMARY"
           echo "If posters don't show in the app: force-close and reopen it, or" >> "$GITHUB_STEP_SUMMARY"
           echo "Settings → About → tap the TMDB Poster Proxy row to reload." >> "$GITHUB_STEP_SUMMARY"

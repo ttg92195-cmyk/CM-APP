@@ -56,17 +56,23 @@
 //     attempt taught us: admin.storage() is a FACADE — bucket() only,
 //     no createBucket ("storage.createBucket is not a function"). Fix:
 //     build a raw @google-cloud/storage client from the same SA key.
+//     Then: bucket CREATE needs billing ("billing account for the owning
+//     project is disabled in state absent") → use the Firebase DEFAULT
+//     bucket instead (exists without billing); candidates tried in order,
+//     first existing bucket wins.
 //
 //   The GitHub workflow (.github/workflows/sync-posters.yml) then commits
 //   the new files and runs `firebase deploy --only hosting`.
 //
 // SERVED URLS (what the app requests after the Firestore config change):
-//   https://storage.googleapis.com/cm-movies-dabab-posters/t/p/w500/<file>.jpg
+//   https://storage.googleapis.com/<bucket>/t/p/w500/<file>.jpg
+//   where <bucket> = the Firebase default bucket
+//   (cm-movies-dabab.firebasestorage.app) or any existing POSTER_BUCKET.
 //   (backup: https://cm-movies-dabab.web.app/t/p/w500/<file>.jpg)
 //   — identical path shape to image.tmdb.org, so the app-side rewrite in
 //     TmdbImageProxy.resolve() works with ZERO app changes:
 //     Firestore app_settings/tmdb_image_proxy.baseUrl
-//       → https://storage.googleapis.com/cm-movies-dabab-posters
+//       → https://storage.googleapis.com/<bucket>
 //
 // USAGE:
 //   GitHub Actions (recommended — see the workflow file).
@@ -117,9 +123,18 @@ const FETCH_TIMEOUT_MS = 20000;
 // ISPs leave open (the app's Firestore traffic proves it daily), unlike
 // *.web.app which is blocked there.
 const POSTER_BUCKET = process.env.POSTER_BUCKET || `${PROJECT_ID}-posters`;
-const GCS_PUBLIC_BASE = `https://storage.googleapis.com/${POSTER_BUCKET}`;
 const HOSTING_BASE = `https://${PROJECT_ID}.web.app`;
 const UPLOAD_CONCURRENCY = 10;
+
+// Which bucket actually serves the GCS mirror — resolved at runtime.
+// Creating a brand-new bucket needs a billing account (blocked on the free
+// plan: "billing account for the owning project is disabled in state
+// absent"), but the FIREBASE DEFAULT buckets (<project>.firebasestorage.app
+// / <project>.appspot.com) live happily WITHOUT billing once created. So
+// the sync uses the first existing candidate instead of insisting on a
+// custom bucket name.
+let gcsBucketName = null;
+let gcsPublicBase = null;
 const MAX_SAMPLES_IN_INDEX = 12;
 
 // Mirror the sizes the app actually renders on its main screens FIRST, so an
@@ -421,16 +436,67 @@ function makeRawStorageClient() {
 
 async function ensurePublicBucket() {
   const storage = makeRawStorageClient();
-  const bucket = storage.bucket(POSTER_BUCKET);
-  const [exists] = await bucket.exists();
-  if (!exists) {
-    await storage.createBucket(POSTER_BUCKET, {
-      location: 'us',
-      storageClass: 'STANDARD',
-      uniformBucketLevelAccess: { enabled: true },
-    });
-    console.log(`GCS bucket created: ${POSTER_BUCKET} (us / STANDARD / UBLA)`);
+  const candidates = [];
+  const add = (n) => {
+    if (n && !candidates.includes(n)) candidates.push(n);
+  };
+  add(POSTER_BUCKET);
+  add(`${PROJECT_ID}.firebasestorage.app`); // Firebase default (new)
+  add(`${PROJECT_ID}.appspot.com`); // Firebase default (legacy)
+
+  const notes = [];
+  for (const name of candidates) {
+    const bucket = storage.bucket(name);
+    let exists = false;
+    try {
+      [exists] = await bucket.exists();
+    } catch (e) {
+      notes.push(`${name}: ${e.message}`);
+      continue;
+    }
+    if (!exists && name === POSTER_BUCKET) {
+      try {
+        await storage.createBucket(name, {
+          location: 'us',
+          storageClass: 'STANDARD',
+          uniformBucketLevelAccess: { enabled: true },
+        });
+        exists = true;
+        console.log(`GCS bucket created: ${name} (us / STANDARD / UBLA)`);
+      } catch (e) {
+        const msg = (e && e.message) || String(e);
+        if (/billing|absent/i.test(msg)) {
+          console.log(
+            `no billing account → cannot create "${name}" (expected on the free plan); ` +
+              'trying the Firebase default bucket'
+          );
+        } else {
+          notes.push(`${name}: create → ${msg}`);
+        }
+        continue;
+      }
+    }
+    if (!exists) continue;
+    await makeBucketPublic(bucket);
+    gcsBucketName = name;
+    gcsPublicBase = `https://storage.googleapis.com/${name}`;
+    console.log(`GCS mirror bucket: ${name}`);
+    return bucket;
   }
+  throw new Error(
+    'no usable bucket. Tried: ' +
+      candidates.join(', ') +
+      (notes.length ? ' (' + notes.join(' | ') + ')' : '') +
+      '. FIX — one console click, free, no card: Firebase Console → Build → ' +
+      'Storage → "Get started" (creates the default bucket ' +
+      `"${PROJECT_ID}.firebasestorage.app"), then re-run this workflow.`
+  );
+}
+
+// Uniform bucket-level access ON, public access prevention INHERITED, plus
+// an IAM binding allUsers → roles/storage.objectViewer. Retried because IAM
+// ops on a just-created bucket can 404 for a few seconds.
+async function makeBucketPublic(bucket) {
   let lastErr = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -452,7 +518,7 @@ async function ensurePublicBucket() {
         await bucket.iam.setPolicy(policy);
         console.log('GCS bucket made PUBLIC: allUsers → storage.objectViewer');
       }
-      return bucket;
+      return;
     } catch (e) {
       lastErr = e;
       await new Promise((r) => setTimeout(r, 4000 * attempt));
@@ -464,7 +530,7 @@ async function ensurePublicBucket() {
 // Proves the bucket serves objects ANONYMOUSLY before pointing the app at
 // it — a private bucket would just swap "blocked" posters for 403 posters.
 async function verifyPublicGet(objName) {
-  const url = `${GCS_PUBLIC_BASE}/${objName}`;
+  const url = `${gcsPublicBase}/${objName}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
@@ -517,7 +583,7 @@ function writeIndexHtml(paths, stats, appConfig, mirrorBaseUrl, gcsNote) {
       ? mirrorBaseUrl + ' (enabled — set automatically by sync)'
       : 'NOT SET — set app_settings/tmdb_image_proxy.baseUrl = ' + mirrorBaseUrl
   }</p>
-  <p>backup mirror: ${HOSTING_BASE} &middot; GCS bucket: ${POSTER_BUCKET}${gcsNote || ''}</p>
+  <p>backup mirror: ${HOSTING_BASE} &middot; GCS bucket: ${gcsBucketName || POSTER_BUCKET}${gcsNote || ''}</p>
   <div class="grid">
 ${sampleImgs}
   </div>
@@ -730,7 +796,7 @@ async function main() {
       const sample = objectNameFor(candidates[0]);
       await verifyPublicGet(sample);
       gcsVerified = true;
-      console.log(`GCS public GET verified: ${GCS_PUBLIC_BASE}/${sample}`);
+      console.log(`GCS public GET verified: ${gcsPublicBase}/${sample}`);
     }
   } catch (e) {
     gcsError = (e && e.message) || String(e);
@@ -754,7 +820,7 @@ async function main() {
   //    (*.googleapis.com is the family that works from Myanmar); otherwise
   //    we fall back to the hosting mirror. merge: true keeps any other
   //    fields an admin may have set.
-  const mirrorBaseUrl = gcsVerified ? GCS_PUBLIC_BASE : HOSTING_BASE;
+  const mirrorBaseUrl = gcsVerified ? gcsPublicBase : HOSTING_BASE;
   let appConfig = false;
   try {
     await db.doc('app_settings/tmdb_image_proxy').set(
@@ -764,8 +830,8 @@ async function main() {
         hostingMirror: HOSTING_BASE,
         gcsMirror: gcsVerified
           ? {
-              bucket: POSTER_BUCKET,
-              publicBase: GCS_PUBLIC_BASE,
+              bucket: gcsBucketName,
+              publicBase: gcsPublicBase,
               files: paths.size,
               uploadedThisRun: gcs.uploaded,
             }
