@@ -5692,3 +5692,22 @@ Stage Summary:
 - After either path: same finish line — Firestore app_settings/tmdb_image_proxy.baseUrl → https://us-central1-cm-movies-dabab.cloudfunctions.net/tmdbImageProxy (A) or https://cm-movies-dabab.web.app (B), then tap the proxy tile in Settings → About
 - Poster Mirror test: https://cm-movies-dabab.web.app/ (status page with real thumbnails — better test than a single guessed poster path which may not be in his Firestore)
 - New movies added later → run the workflow again (or wait for the nightly run)
+
+---
+Task ID: recovery-verify
+Agent: Main Agent
+Task: Termux wipe recovery — verify final state after Bro ran the recovery command set; explain git push password prompt (invisible input) + GitHub PAT requirement
+
+Work Log:
+- Bro ran the delivered recovery command set in Termux; verified from his pasted terminal output:
+  - git config (user.name ttg92195-cmyk / user.email ttg92195-cmyk@users.noreply.github.com / credential.helper store) — OK
+  - Patch files cm-app-poster-cdn.patch + cm-app-cast-proxy.patch NOT in ~/storage/downloads (cp: cannot stat) → git apply failed → HARMLESS: working tree clean + "up to date with origin/main" + `sync-posters.js --selftest` 8/8 PASS (incl. GitHub-CDN-origin URL tests + runPool concurrency regression tests) prove both fixes (GitHub CDN origin preference + cast avatar proxy) were already committed and pushed to origin/main in the pre-wipe session — patches are obsolete, no re-apply needed
+  - git commit → "nothing to commit, working tree clean"; git push → "Everything up-to-date" → GitHub repo fully up to date → RECOVERY COMPLETE, nothing lost
+- Bro's concern: at the git push Password prompt nothing appeared when typing, so he skipped it (pressed Enter) → explained: (a) git password input is hidden by design (no asterisks — typing works, screen just stays blank); (b) GitHub removed account-password auth for git-over-HTTPS since Aug 2021 — a Personal Access Token is required as the password; (c) this time it caused no damage because there was nothing to push
+- Delivered PAT instructions (Burmese): GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token (classic) → note termux, expiration 90 days, ☑ repo scope → copy ghp_... immediately (shown once) → paste at password prompt via long-press → Paste (stays invisible) → Enter; credential.helper store saves it after first success; optional pre-store: echo "https://ttg92195-cmyk:<TOKEN>@github.com" > ~/.git-credentials
+
+Stage Summary:
+- Termux recovery COMPLETE: local repo == origin/main, all fixes present (selftest 8/8 PASS), GitHub up to date, no data loss
+- Missing patch files = non-issue (fixes already merged pre-wipe)
+- Only open item: next real push needs a PAT as password (account passwords rejected by GitHub) — instructions delivered
+- Suggested next check: open CM-APP and confirm posters/cast images load via the new CDN origin
