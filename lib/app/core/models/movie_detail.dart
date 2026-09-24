@@ -211,7 +211,14 @@ class CastMember {
 
   String get fullProfileUrl {
     if (profilePath == null || profilePath!.isEmpty) return '';
-    if (profilePath!.startsWith('http')) return profilePath!;
+    // Rewrite image.tmdb.org URLs through the proxy at DISPLAY time —
+    // cast avatars are stored as full image.tmdb.org URLs (same shape as
+    // posters) and MUST route through TmdbImageProxy like posters do,
+    // otherwise they bypass the mirror entirely and never load on
+    // Myanmar ISPs where image.tmdb.org is blocked.
+    if (profilePath!.startsWith('http')) {
+      return TmdbImageProxy.resolve(profilePath!);
+    }
     return '';
   }
 }
