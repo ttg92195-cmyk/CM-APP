@@ -5766,3 +5766,21 @@ Stage Summary:
 - Manual sync runs are now self-healing against concurrent pushes — Bro can re-run the workflow anytime without coordinating with code pushes
 - Bro does NOT need to re-run: the fix push already delivered the 25 posters + hosting deploy
 - Optional (still parked): status page keeps noting GCS bucket UNAVAILABLE — one free console click (Storage → "Get started") would add a second mirror layer; app currently served fine by Hosting at cm-movies-dabab.web.app
+
+---
+Task ID: 4-generator-poster-fallback
+Agent: Main Agent
+Task: TMDB Generator search results show NO posters at all (VPN or not) — diagnose and fix
+
+Work Log:
+- Bro's report: Menu → TMDB Generator → Search returns results (titles) but NOT A SINGLE poster shows; same with VPN ON
+- Root cause: the search-result card (tmdb_generator_page.dart ~2845) loads posters via TmdbImageProxy.resolve(TmdbService.getPosterUrl(path)) → rewrites to the mirror (cm-movies-dabab.web.app) — but the mirror ONLY hosts images referenced by the Firestore catalog (3799 files). Search results include NOT-yet-imported movies → 404. With VPN the request STILL goes to web.app (never to image.tmdb.org), so VPN cannot help — matches Bro's symptom exactly
+- Fix: new private _FallbackPosterImage widget in tmdb_generator_page.dart — try the PROXIED URL first (already-mirrored catalog posters load without VPN); on load error, retry ONCE with the DIRECT canonical image.tmdb.org URL (works on VPN / non-Myanmar lines); only if both fail show the error placeholder. errorWidget is a build callback → the URL switch is queued via addPostFrameCallback (never setState during build); ValueKey(url) forces cached_network_image to reload on switch; proxy disabled = identical behavior to the previous plain CachedNetworkImage
+- Scope note: search/import API calls (api.themoviedb.org) are a separate path — on ISP-blocked lines those still need VPN; this fix is images-only
+- MID-TASK INCIDENT — workspace snapshot rollback #3: local HEAD was found rolled back to 0544555 (this morning's pre-rebase state): pubspec 2.0.0+16, settings_page admin-only wrap GONE, worklog entries gone, BUT origin/main fully intact (2.0.1+18). Generator edits survived in the working tree (uncommitted, post-rollback). Recovery: stash generator edit → git reset --hard origin/main → stash pop (clean, generator file identical between old base and origin) → verified settings wrap back (line 908), pubspec 2.0.1+18, worklog complete. GitHub never at risk — all pushes of the day verified via API earlier
+- Bump version 2.0.1+18 → 2.0.1+19; dart_balance_check PASS (3221 lines); mirrors synced
+- Committed 4d82257, pushed (c917d22..4d82257); Flutter Build APK triggered
+
+Stage Summary:
+- Generator search posters: catalog movies load without VPN (mirror hit); brand-new movies load WITH VPN (direct fallback); brand-new movies WITHOUT VPN show placeholder until imported + next sync mirrors them — unavoidable while the mirror is static-catalog-only
+- Rollback-resilience note for future agents: ALWAYS git fetch + compare HEAD vs origin/main before editing; workspace rollbacks have now happened 3× (worklog revert, rebase-era loss, full HEAD rollback)
