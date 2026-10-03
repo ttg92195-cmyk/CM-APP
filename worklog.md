@@ -5747,3 +5747,22 @@ Work Log:
 Stage Summary:
 - Build 2.0.1+18: regular users see NO proxy tile; Bro (isAdmin:true — has Admin Panel access) still sees it and can tap-to-recheck
 - Bro's step after build: install the 2.0.1+18 APK → Settings → About group shows only About/Help/Privacy (proxy row gone for users, still visible for his admin account)
+
+---
+Task ID: 4-sync-push-race-fix
+Agent: Main Agent
+Task: Bro's manual "Sync & Deploy Poster Mirror" run failed at the push step (rejected non-fast-forward) — diagnose and fix the workflow
+
+Work Log:
+- Failure (run #24, workflow_dispatch on fa21a1e, 04:51 UTC = 11:21 MMT): the sync itself worked (downloaded 25 posters, committed 088010f locally) but the final bare `git push` was rejected because origin/main moved DURING the run — my pushes fa21a1e + a1875b3 (admin-only tile + worklog) landed inside the ~7min sync window. Runner died with the 25 downloaded posters (workspace discarded). No data loss beyond the re-download
+- Root cause: "Commit newly mirrored posters" step had a bare `git push` with no pull/rebase/retry — any concurrent push to main races it. The concurrency guard (group: sync-posters) only serializes sync runs against each other, not against code pushes
+- Fix in .github/workflows/sync-posters.yml: after `git commit`, loop up to 4 attempts of `git pull --rebase -X theirs origin main && git push origin main` with growing sleep (15/30/45s); actionable ::error:: if all 4 fail (nothing lost — next run re-downloads). YAML parses; step verified
+- Pushed 6311bf4 — the push itself re-triggered the sync workflow WITH the fix; Flutter Build APK also triggered (harmless, identical 2.0.1+18 APK)
+- Run on 6311bf4: "Sync & Deploy Poster Mirror" = SUCCESS (~17min, slow TMDB upstream but completed); bot commit dc15f08 landed on top of 6311bf4 — rebase-safe push proven live
+- Verified end state: status page "3799 unique images mirrored · 26 new this run · 0 failed, last sync 2026-10-03 05:19 UTC" (26 = the 25 lost posters + 1 new); spot-check GET https://cm-movies-dabab.web.app/t/p/w500/1JVBaxRy3OxkHymD3nwBd5kVWWL.jpg → HTTP 200, 93356 bytes
+- Local + mirrors synced to dc15f08 (git pull --rebase clean)
+
+Stage Summary:
+- Manual sync runs are now self-healing against concurrent pushes — Bro can re-run the workflow anytime without coordinating with code pushes
+- Bro does NOT need to re-run: the fix push already delivered the 25 posters + hosting deploy
+- Optional (still parked): status page keeps noting GCS bucket UNAVAILABLE — one free console click (Storage → "Get started") would add a second mirror layer; app currently served fine by Hosting at cm-movies-dabab.web.app
