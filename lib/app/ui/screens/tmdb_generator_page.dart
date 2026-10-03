@@ -2842,13 +2842,16 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
                   ClipRRect(
                     borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
                     child: posterPath != null && posterPath.isNotEmpty
-                        ? CachedNetworkImage(
-                            // Proxy at display time; saved poster URLs stay
-                            // canonical (image.tmdb.org) in Firestore.
-                            imageUrl: TmdbImageProxy.resolve(
-                                TmdbService.getPosterUrl(posterPath)),
-                            fit: BoxFit.cover,
-                            placeholder: (_, __) => Container(
+                        ? _FallbackPosterImage(
+                            // 2026-10-03 — search results include movies NOT
+                            // yet in the catalog, so their posters are not on
+                            // the mirror and 404 through the proxy (even with
+                            // VPN — the request goes to web.app, not TMDB).
+                            // The widget tries the mirror first (no VPN for
+                            // already-mirrored images), then the direct
+                            // image.tmdb.org URL (VPN / non-Myanmar lines).
+                            tmdbUrl: TmdbService.getPosterUrl(posterPath),
+                            placeholder: (ctx) => Container(
                               color: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
                               child: const Center(
                                 child: CircularProgressIndicator(
@@ -2857,7 +2860,7 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
                                 ),
                               ),
                             ),
-                            errorWidget: (_, __, ___) => Container(
+                            errorBuilder: (ctx) => Container(
                               color: isDark ? const Color(0xFF2A2A2A) : Colors.grey.shade200,
                               child: Icon(
                                 Icons.movie,
@@ -3131,6 +3134,88 @@ class _TmdbGeneratorPageState extends State<TmdbGeneratorPage>
           ],
         ),
       ),
+    );
+  }
+}
+
+// =============================================================================
+// 2026-10-03 — TMDB Generator search-result poster: mirror → direct fallback.
+// =============================================================================
+// WHY: TmdbImageProxy rewrites TMDB poster URLs to the self-hosted mirror
+// (app_settings/tmdb_image_proxy.baseUrl, e.g. cm-movies-dabab.web.app), but
+// that mirror only hosts images referenced by the Firestore catalog. Search
+// results here include movies NOT imported yet — their posters 404 on the
+// mirror AND keep failing with a VPN, because the request goes to the mirror
+// and never reaches image.tmdb.org (the exact bug reported on 2026-10-03).
+//
+// STRATEGY: try the PROXIED URL first — already-mirrored (catalog) posters
+// load without any VPN. On load error, retry ONCE with the DIRECT canonical
+// URL — works on VPN lines / networks where image.tmdb.org is reachable. Only
+// when both fail (e.g. brand-new movie, no VPN) is the error placeholder
+// shown. When the proxy is disabled the first URL IS the direct URL, so this
+// widget behaves exactly like the plain CachedNetworkImage it replaces.
+// =============================================================================
+class _FallbackPosterImage extends StatefulWidget {
+  const _FallbackPosterImage({
+    required this.tmdbUrl,
+    required this.placeholder,
+    required this.errorBuilder,
+    this.fit = BoxFit.cover,
+  });
+
+  /// Canonical (unresolved) image.tmdb.org URL — the direct fallback target.
+  final String tmdbUrl;
+  final BoxFit fit;
+  final WidgetBuilder placeholder;
+  final WidgetBuilder errorBuilder;
+
+  @override
+  State<_FallbackPosterImage> createState() => _FallbackPosterImageState();
+}
+
+class _FallbackPosterImageState extends State<_FallbackPosterImage> {
+  // First attempt: the proxy-resolved URL (equal to tmdbUrl when disabled).
+  late String _url = TmdbImageProxy.resolve(widget.tmdbUrl);
+  bool _switchedToDirect = false;
+  bool _fallbackQueued = false;
+
+  bool get _canFallback =>
+      !_switchedToDirect &&
+      _url != widget.tmdbUrl &&
+      widget.tmdbUrl.isNotEmpty;
+
+  // errorWidget is invoked during build — never setState there. Queue the
+  // switch to the direct URL for after the current frame instead.
+  void _queueDirectFallback() {
+    if (_fallbackQueued || !_canFallback) return;
+    _fallbackQueued = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() {
+        _switchedToDirect = true;
+        _url = widget.tmdbUrl;
+        _fallbackQueued = false;
+      });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return CachedNetworkImage(
+      // New key per URL forces a fresh load instead of reusing the previous
+      // attempt's failed/errored state.
+      key: ValueKey<String>(_url),
+      imageUrl: _url,
+      fit: widget.fit,
+      placeholder: (ctx, _) => widget.placeholder(ctx),
+      errorWidget: (ctx, url, error) {
+        _queueDirectFallback();
+        // While the direct retry is queued keep showing the placeholder;
+        // once the direct URL itself has failed too, show the error tile.
+        return _canFallback
+            ? widget.placeholder(ctx)
+            : widget.errorBuilder(ctx);
+      },
     );
   }
 }
