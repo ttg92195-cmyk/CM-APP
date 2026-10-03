@@ -899,30 +899,38 @@ class _SettingsPageState extends State<SettingsPage> {
               // actually loaded; tap re-checks it and reports the exact
               // outcome/error in a SnackBar. Makes poster problems visible
               // without adb logs (needed while posters fail in Myanmar).
-              _buildNavRow(
-                icon: Icons.image_outlined,
-                iconColor: _cProxy,
-                title: appConfig.languageCode == 'my'
-                    ? 'Poster ပုံ Proxy'
-                    : 'TMDB Poster Proxy',
-                subtitle: TmdbImageProxy.isEnabled
-                    ? 'ON — ${TmdbImageProxy.baseUrl}'
-                    : (TmdbImageProxy.lastError != null
-                        ? (appConfig.languageCode == 'my'
-                            ? 'ပျက်နေ — ပြန်စစ်ရန် နှိပ်ပါ'
-                            : 'Load failed — tap to retry')
-                        : (appConfig.languageCode == 'my'
-                            ? 'OFF — တိုက်ရိုက်ချိတ်ဆက်'
-                            : 'OFF — direct mode')),
-                onTap: () => _reloadPosterProxy(context),
-                theme: theme,
-              ),
-              _buildInnerDivider(theme),
+              // 2026-10-03 — ADMIN-ONLY: end users no longer see this row.
+              // The proxy state itself is Firestore-driven
+              // (app_settings/tmdb_image_proxy, auto-set by the nightly
+              // poster-mirror sync), so hiding the tile changes nothing for
+              // regular users — it only removes a confusing internal
+              // diagnostic from the Settings page.
+              if (appConfig.isCurrentUserAdmin) ...[
+                _buildNavRow(
+                  icon: Icons.image_outlined,
+                  iconColor: _cProxy,
+                  title: appConfig.languageCode == 'my'
+                      ? 'Poster ပုံ Proxy'
+                      : 'TMDB Poster Proxy',
+                  subtitle: TmdbImageProxy.isEnabled
+                      ? 'ON — ${TmdbImageProxy.baseUrl}'
+                      : (TmdbImageProxy.lastError != null
+                          ? (appConfig.languageCode == 'my'
+                              ? 'ပျက်နေ — ပြန်စစ်ရန် နှိပ်ပါ'
+                              : 'Load failed — tap to retry')
+                          : (appConfig.languageCode == 'my'
+                              ? 'OFF — တိုက်ရိုက်ချိတ်ဆက်'
+                              : 'OFF — direct mode')),
+                  onTap: () => _reloadPosterProxy(context),
+                  theme: theme,
+                ),
+                _buildInnerDivider(theme),
+              ],
               _buildNavRow(
                 icon: Icons.info_outline,
                 iconColor: _cAbout,
                 title: appConfig.translate('about_cm_movies'),
-                subtitle: '${appConfig.translate("version")}: 2.0.0',
+                subtitle: '${appConfig.translate("version")}: 2.0.1',
                 onTap: () => Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => const AboutKmmPage()),
