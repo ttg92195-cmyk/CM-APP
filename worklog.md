@@ -5711,3 +5711,39 @@ Stage Summary:
 - Missing patch files = non-issue (fixes already merged pre-wipe)
 - Only open item: next real push needs a PAT as password (account passwords rejected by GitHub) — instructions delivered
 - Suggested next check: open CM-APP and confirm posters/cast images load via the new CDN origin
+
+---
+Task ID: 4-cast-fix-recovered (reconstructed + SUCCESS — re-added after rebase resolution dropped it)
+Agent: Main Agent
+Task: Record the cast-fix history and Bro's user-confirmed SUCCESS for cast images through the poster mirror
+
+Work Log:
+- App-side fix (commit 30573ac, "Flutter Build APK" SUCCESS 2026-09-24T10:13Z, Bro installed the APK): movie_detail.dart CastMember.fullProfileUrl previously returned the raw image.tmdb.org URL → bypassed the proxy → dead on Myanmar ISPs. Fix: return TmdbImageProxy.resolve(profilePath) when profilePath starts with http — cast avatars route through the SAME proxy as posters; covers movie detail (~1031) and series detail (~864)
+- Bro's first on-device test (toggle ON) still failed → suspect was mirror-side profile coverage (profiles use w185/original vs poster w500 sizes)
+- VERIFIED SUCCESS (2026-10-03): Bro's screenshot (10:39 MMT) shows The Odyssey (2026, Nolan) detail screen with ALL cast avatars loading — Matt Damon/Odysseus, Tom Holland/Telemachus, Anne Hathaway/Penelope, Robert Pattinson/Antinous, Himesh Patel/Eurylochus — with the proxy ON on his Myanmar 4G line
+- Mirror status page cross-check: 3773 unique images (up from 3711), last sync 2026-10-02 23:15 UTC = 03 Oct 05:45 MMT "0 new · 0 failed" — nightly sync had populated profile files before Bro's morning test; earlier profile 404s were stale-mirror timing, not a code defect
+- NOTE: this entry was written to worklog once already today, then lost twice (workspace file revert, then git rebase conflict resolution taking the origin side) — third and final write
+
+Stage Summary:
+- TMDB image chain FULLY self-hosted and working in Myanmar: posters + backdrops + cast profiles served from https://cm-movies-dabab.web.app; sync auto-sets Firestore app_settings/tmdb_image_proxy.baseUrl
+- Known failure mode: brand-new movies' images appear on the mirror only after the NEXT sync (nightly 01:00 MMT or manual workflow_dispatch) — self-heals within a day
+- Bro must keep the "TMDB Poster Proxy" tile state ON (Firestore enabled:true) — direct = blocked in Myanmar
+
+---
+Task ID: 4-proxy-tile-hide
+Agent: Main Agent
+Task: Hide the "TMDB Poster Proxy" tile in Settings from regular users (Bro request: အသုံးပြုသူတွေ မမြင်စေချင်) — keep it admin-only
+
+Work Log:
+- Confirmed hiding is SAFE with zero user impact: TmdbImageProxy.isEnabled is purely Firestore-driven (app_settings/tmdb_image_proxy enabled+baseUrl, auto-set by the nightly sync); the Settings tile is diagnostics-only (tap → force reload → SnackBar). There is NO local user toggle gating resolve()
+- Admin pattern: appConfig.isCurrentUserAdmin (app_config.dart:178), already used in home_page.dart:647 with collection-if spread — reused the same pattern
+- settings_page.dart: wrapped the proxy NavRow AND its trailing _buildInnerDivider in `if (appConfig.isCurrentUserAdmin) ...[ ... ]` inside the About card children — non-admins see the card starting directly at "About CM Movies", no stray divider
+- Bonus fix: About row's stale hardcoded version 2.0.0 → 2.0.1 (real version was already 2.0.1+17)
+- pubspec.yaml: version 2.0.1+17 → 2.0.1+18 so Bro can identify the new build
+- Pre-work git hygiene: local auto-commits (screenshot + worklog) were 2 ahead / 32 behind origin/main; git pull --rebase hit worklog.md conflicts — resolved, rebase completed clean (side effect: cast-fix-recovered entry dropped again → re-added above)
+- Validated: scripts/dart_balance_check.py settings_page.dart → all balanced; mirrors (CM-APP/, cm-app/) synced
+- Committed fa21a1e, pushed to origin/main (9933602..fa21a1e); "Flutter Build APK" triggered on fa21a1e (in_progress at 04:50 UTC; previous 2 builds on this pipeline = success)
+
+Stage Summary:
+- Build 2.0.1+18: regular users see NO proxy tile; Bro (isAdmin:true — has Admin Panel access) still sees it and can tap-to-recheck
+- Bro's step after build: install the 2.0.1+18 APK → Settings → About group shows only About/Help/Privacy (proxy row gone for users, still visible for his admin account)
