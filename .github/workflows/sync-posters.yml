@@ -129,6 +129,11 @@ jobs:
 
       - name: Commit newly mirrored posters
         if: env.FIREBASE_SERVICE_ACCOUNT != '' && success()
+        # 2026-10-03 fix: the sync takes minutes, and other commits (app
+        # fixes, worklog docs) can land on main meanwhile — a bare
+        # `git push` then gets rejected (non-fast-forward) and the whole
+        # run fails, losing the freshly downloaded posters with the
+        # runner. Rebase on the latest main and retry before giving up.
         run: |
           git config user.name "poster-sync-bot"
           git config user.email "actions@github.com"
@@ -137,8 +142,20 @@ jobs:
             echo "No new posters to commit."
           else
             git commit -m "chore(posters): mirror new TMDB posters [skip ci]"
-            git push
-            echo "Committed and pushed new posters."
+            ok=0
+            for attempt in 1 2 3 4; do
+              if git pull --rebase -X theirs origin main && git push origin main; then
+                ok=1
+                echo "Committed and pushed new posters (attempt $attempt)."
+                break
+              fi
+              echo "::warning::push attempt $attempt failed — rebasing on latest main and retrying..."
+              sleep $((attempt * 15))
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "::error::Could not push after 4 attempts (main kept moving) — re-run this workflow later; nothing is lost, the sync just re-downloads."
+              exit 1
+            fi
           fi
 
       - name: Deploy to Firebase Hosting
