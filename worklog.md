@@ -5784,3 +5784,29 @@ Work Log:
 Stage Summary:
 - Generator search posters: catalog movies load without VPN (mirror hit); brand-new movies load WITH VPN (direct fallback); brand-new movies WITHOUT VPN show placeholder until imported + next sync mirrors them — unavoidable while the mirror is static-catalog-only
 - Rollback-resilience note for future agents: ALWAYS git fetch + compare HEAD vs origin/main before editing; workspace rollbacks have now happened 3× (worklog revert, rebase-era loss, full HEAD rollback)
+
+---
+Task ID: 4-proxy-always-on
+Agent: Main Agent
+Task: TMDB Poster Proxy tile intermittently shows "Load failed — tap to retry" and needs manual re-enable — make the proxy ALWAYS ON (Bro request 2026-10-14)
+
+Work Log:
+- Bro's report: with VPN everything works now (generator fallback fix confirmed); remaining issue = Settings → Poster Proxy tile sometimes flips to "Load failed — tap to retry" and he must tap to re-enable; wants it permanently ON
+- Root cause: TmdbImageProxy kept the config in MEMORY ONLY — every app start required a successful Firestore read of app_settings/tmdb_image_proxy within the 2.5s auto-load budget (authStateChanges listener + splash await); a failed read (slow Myanmar line, pre-auth denial, timeout) silently dropped the app to direct mode → posters break + tile shows "Load failed — tap to retry" until a manual tap (8s force read) succeeds
+- Fix (lib/app/core/services/tmdb_image_proxy.dart): last-known-good enabled baseUrl persisted to SharedPreferences (key tmdb_image_proxy_base_url; dependency already present ^2.2.2):
+  - _restoreCachedBaseUrl() runs FIRST on every load attempt (local read, no auth needed) → proxy ON from the first frame after the first-ever successful read
+  - a FAILED Firestore read now KEEPS the cached state (sets lastError + lastReadFromCache=true) instead of flipping to direct mode
+  - force re-check no longer nulls _baseUrl up front — a failed re-check keeps serving
+  - only a SUCCESSFUL read saying disabled / doc-missing clears the cache (admin intent preserved — Firestore stays the source of truth for OFF/move)
+  - new public static lastReadFromCache for diagnostics
+- settings_page.dart: tile subtitle + _reloadPosterProxy snackbar show "ON (cached)" / "ON (cache)" when running on the cached config — admin can distinguish live vs cached at a glance; tile remains admin-only
+- Edge case: brand-new install with empty cache + failing read → still shows "Load failed — tap to retry" ONCE; after the first successful read (auto or tapped) it is cached for good. Bro's device already loads ON, so the cache is written on the very first launch of 2.0.1+20
+- pubspec.yaml: 2.0.1+19 → 2.0.1+20
+- Workspace hygiene: BOTH local copies were stale vs origin/main (previous session's commits missing locally + old unrelated dirty files) — stashed dirt as "pre-sync-stale-local-work-2026-10-14", reset cm-app to origin/main (f57b272), implemented on the clean tree
+- Validated: dart_balance_check PASS both dart files (tmdb_image_proxy.dart 242 lines, settings_page.dart 984 lines)
+- Committed 78f1806, pushed; "Flutter Build APK" triggered
+
+Stage Summary:
+- Proxy is now ALWAYS ON once enabled once: Firestore hiccups/timeouts can no longer turn it off — "Load failed — tap to retry" effectively disappears for Bro
+- When the live re-check fails, admin sees "ON (cached) — https://cm-movies-dabab.web.app" and posters keep loading instead of breaking
+- Build to install: 2.0.1+20
