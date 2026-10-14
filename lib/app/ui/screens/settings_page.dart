@@ -740,6 +740,9 @@ class _SettingsPageState extends State<SettingsPage> {
   // reports the exact outcome (enabled host / not found / failure reason)
   // in a SnackBar. Also lets the admin pick up a just-edited Firestore
   // config without restarting the app.
+  // 2026-10-14 — a FAILED re-check no longer turns the proxy off: the
+  // last-known-good config stays active from the local cache, and the
+  // SnackBar says "ON (cached)" so the admin knows the live read failed.
   Future<void> _reloadPosterProxy(BuildContext context) async {
     final messenger = ScaffoldMessenger.of(context);
     final isMy = Provider.of<AppConfig>(context, listen: false).languageCode ==
@@ -751,7 +754,11 @@ class _SettingsPageState extends State<SettingsPage> {
     if (mounted) setState(() {});
     final String msg;
     if (TmdbImageProxy.isEnabled) {
-      msg = 'Poster Proxy: ON — ${TmdbImageProxy.baseUrl}';
+      msg = TmdbImageProxy.lastReadFromCache
+          ? (isMy
+              ? 'Poster Proxy: ON (cache) — ${TmdbImageProxy.baseUrl}'
+              : 'Poster Proxy: ON (cached) — ${TmdbImageProxy.baseUrl}')
+          : 'Poster Proxy: ON — ${TmdbImageProxy.baseUrl}';
     } else if (TmdbImageProxy.lastError != null) {
       var err = TmdbImageProxy.lastError ?? '';
       if (err.length > 140) err = '${err.substring(0, 140)}...';
@@ -905,6 +912,10 @@ class _SettingsPageState extends State<SettingsPage> {
               // poster-mirror sync), so hiding the tile changes nothing for
               // regular users — it only removes a confusing internal
               // diagnostic from the Settings page.
+              // 2026-10-14 — ALWAYS-ON: the last-known-good config is now
+              // cached in SharedPreferences, so a failed Firestore read no
+              // longer drops the proxy to direct mode. "ON (cached)" marks
+              // that state (live re-check failed, cached config in use).
               if (appConfig.isCurrentUserAdmin) ...[
                 _buildNavRow(
                   icon: Icons.image_outlined,
@@ -913,7 +924,11 @@ class _SettingsPageState extends State<SettingsPage> {
                       ? 'Poster ပုံ Proxy'
                       : 'TMDB Poster Proxy',
                   subtitle: TmdbImageProxy.isEnabled
-                      ? 'ON — ${TmdbImageProxy.baseUrl}'
+                      ? (TmdbImageProxy.lastReadFromCache
+                          ? (appConfig.languageCode == 'my'
+                              ? 'ON (cache) — ${TmdbImageProxy.baseUrl}'
+                              : 'ON (cached) — ${TmdbImageProxy.baseUrl}')
+                          : 'ON — ${TmdbImageProxy.baseUrl}')
                       : (TmdbImageProxy.lastError != null
                           ? (appConfig.languageCode == 'my'
                               ? 'ပျက်နေ — ပြန်စစ်ရန် နှိပ်ပါ'
