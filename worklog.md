@@ -5810,3 +5810,26 @@ Stage Summary:
 - Proxy is now ALWAYS ON once enabled once: Firestore hiccups/timeouts can no longer turn it off — "Load failed — tap to retry" effectively disappears for Bro
 - When the live re-check fails, admin sees "ON (cached) — https://cm-movies-dabab.web.app" and posters keep loading instead of breaking
 - Build to install: 2.0.1+20
+
+---
+Task ID: 4-jsdelivr-primary
+Agent: Main Agent
+Task: web.app blocked again in Myanmar + Firebase Hosting storage at 80.7% — switch poster serving to jsDelivr CDN (Bro tested it, asked "is this right?" and about its limits)
+
+Work Log:
+- Bro's screenshot (Usage & billing, Spark plan): Firestore quotas fine (reads 6.1%, writes 0%); Hosting Downloads 0.9% (90.9MB/10GB month) but Hosting STORAGE 8.1GB/10GB = 80.7% used (historical release accumulation — the LIVE hosting/ tree is only 267MB, 4053 files, none >2MB)
+- Bro already set baseUrl manually in Firestore to https://cdn.jsdelivr.net/gh/ttg92195-cmyk/CM-APP@main/hosting → ALL posters work on his Myanmar line without VPN; asked (a) is this a success? (b) what limits does jsDelivr have?
+- Confirmed YES: the CDN serves the SAME hosting/ folder from this public repo at the identical /t/p/… path shape — pure config, zero app changes
+- CRITICAL catch: scripts/sync-posters.js would have OVERWRITTEN his manual URL at the next sync (old logic gcsVerified ? gcsPublicBase : HOSTING_BASE — both Google hosts Myanmar-blocked). Fixed before tonight's 01:00 MMT run
+- sync-posters.js changes: JSDELIVR_BASE const + JSDELIVR_PROBE_PATH = veteran file t/p/w500/yihdXom… (on main for months; a file committed by the SAME run would 404 on the CDN for up to 12h); verifyJsDelivrGet() (anonymous Range-GET + image/* check, same pattern as the GCS check); mirrorBaseUrl priority = jsDelivr → GCS → web.app hosting; Firestore doc gains jsdelivrMirror field for diagnostics
+- sync-posters.yml: header rewritten for the jsDelivr era; limits table updated (jsDelivr 20MB/file, ~12h edge cache for @main, unlimited requests, repo must stay public, community service no SLA; Hosting storage 80.7% note); Summary step shows the CDN as primary
+- Validations: node --check PASS · YAML parse PASS · jsDelivr probe from workspace: HTTP/2 200, cache-control: max-age=604800, s-maxage=43200 (7d browser / 12h CDN edge — documented behavior confirmed live)
+- WORKSPACE ROLLBACK #4 mid-task: local HEAD found back at 25e9d6b (prior session's pushed commits missing locally; the 2026-10-14 stash gone; old dirty files back). GitHub never at risk — recovered via git fetch + git reset --hard origin/main; all prior work verified on origin (78f1806 always-ON fix, f8e91d8 worklog + 2 nightly bot commits). Lost local-only junk = same old WIP files as before, never on origin
+- Committed c9c90c3, pushed → sync workflow auto-triggered on c9c90c3 → SUCCESS (~10 min). Log proof: "jsDelivr CDN verified: …" AND "APP CONFIG SET: app_settings/tmdb_image_proxy → enabled:true, baseUrl:https://cdn.jsdelivr.net/gh/ttg92195-cmyk/CM-APP@main/hosting". GCS still unbuilt (bucket never created; falls through cleanly to jsDelivr)
+- Flutter Build APK also auto-triggered (harmless — no app code change, still 2.0.1+20, no reinstall needed)
+
+Stage Summary:
+- Posters now served by jsDelivr straight from the GitHub repo: no VPN, no Google-domain block exposure, no Firebase quota involvement; Bro's manual Firestore edit is now BOT-MANAGED (every sync re-verifies the CDN probe before writing)
+- jsDelivr limits (for Bro): 20MB/file (mirror max ~2MB) · ~12h edge cache on @main → new posters appear within ~12h of the nightly bot commit · no request/bandwidth cap · repo must stay public · no SLA — if jsDelivr ever degrades, one Firestore edit flips to the GCS/web.app backup
+- Firebase Hosting storage 80.7% is no longer urgent (Hosting = backup only); optional future: Blaze (pennies) or delete old Hosting releases
+- Rollback-resilience: 4th workspace rollback — origin/main remains the single source of truth; always fetch + compare before editing
