@@ -118,12 +118,29 @@ const SUBCOLLECTION_DEPTH = 1;
 const DOWNLOAD_CONCURRENCY = 10;
 const FETCH_TIMEOUT_MS = 20000;
 
-// GCS mirror — the PRIMARY serving origin as of 2026-09-19.
-// storage.googleapis.com is on the *.googleapis.com family, which Myanmar
-// ISPs leave open (the app's Firestore traffic proves it daily), unlike
-// *.web.app which is blocked there.
+// GCS mirror — a BACKUP serving origin since 2026-10-16 (was primary
+// 2026-09-19 → 2026-10-15, until *.googleapis.com too stopped loading
+// from Myanmar; see JSDELIVR_BASE above for the current primary).
 const POSTER_BUCKET = process.env.POSTER_BUCKET || `${PROJECT_ID}-posters`;
 const HOSTING_BASE = `https://${PROJECT_ID}.web.app`;
+
+// jsDelivr CDN — the PRIMARY serving origin as of 2026-10-16.
+// Serves the SAME hosting/ folder straight from the public GitHub repo
+// (ttg92195-cmyk/CM-APP@main) at the exact same path shape — zero app
+// changes. Why primary: *.web.app is ISP-blocked in Myanmar AND (as of
+// 2026-10-16) even the *.googleapis.com / web.app pair stopped loading
+// there, while cdn.jsdelivr.net stays reachable (user-verified on a
+// Myanmar line 2026-10-16). It also takes Firebase Hosting storage out
+// of the picture (was already at 80.7% of the 10GB Spark cap). Limits:
+// 20MB/file (largest mirror file < 2MB; mirror total 267MB), @main branch
+// URLs cached ~12h at the edges (nightly sync cadence fits), repo must
+// stay public (it is).
+const JSDELIVR_BASE =
+  'https://cdn.jsdelivr.net/gh/ttg92195-cmyk/CM-APP@main/hosting';
+// Probe file: on main for months, so jsDelivr edges certainly have it
+// cached (a file committed by THIS run would 404 on the CDN for up to
+// 12h — the pre-commit check must use a veteran file).
+const JSDELIVR_PROBE_PATH = 't/p/w500/yihdXomYb5kTeSivtFndMy5iDmf.jpg';
 const UPLOAD_CONCURRENCY = 10;
 
 // Which bucket actually serves the GCS mirror — resolved at runtime.
@@ -550,6 +567,32 @@ async function verifyPublicGet(objName) {
   }
 }
 
+// Same proof for the jsDelivr CDN — anonymous GET of a veteran mirror
+// file (committed to main long ago, so the CDN edges have it). Uses the
+// exact path shape the app will request. The runner hits the same edge
+// network users do, so a 200 + image/* here is a solid availability
+// signal before pointing the app at it.
+async function verifyJsDelivrGet() {
+  const url = `${JSDELIVR_BASE}/${JSDELIVR_PROBE_PATH}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'CM-Movies-Poster-Sync/1.0',
+        Range: 'bytes=0-255',
+      },
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const ct = (res.headers.get('content-type') || '').toLowerCase();
+    if (!ct.startsWith('image/')) throw new Error('content-type ' + ct);
+    return true;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Status page (hosting/index.html)
 // ---------------------------------------------------------------------------
@@ -815,18 +858,42 @@ async function main() {
   // 4. Status page
   stats.finishedAt = new Date().toISOString().replace('T', ' ').slice(0, 16);
 
+  // 4.5 jsDelivr CDN availability check — the PRIMARY origin as of
+  //     2026-10-16 (web.app blocked again in Myanmar; *.googleapis.com
+  //     no longer reliable there either). Falls back to GCS / hosting if
+  //     the CDN probe fails, so a jsDelivr outage can never break the
+  //     app silently.
+  let jsdelivrVerified = false;
+  try {
+    await verifyJsDelivrGet();
+    jsdelivrVerified = true;
+    console.log(
+      `jsDelivr CDN verified: ${JSDELIVR_BASE}/${JSDELIVR_PROBE_PATH}`
+    );
+  } catch (e) {
+    console.error(
+      'WARN: jsDelivr probe failed —',
+      (e && e.message) || String(e)
+    );
+  }
+
   // 5. Point the APP at the best available mirror — remote config, zero
-  //    app changes. The GCS origin wins when its anonymous GET check passed
-  //    (*.googleapis.com is the family that works from Myanmar); otherwise
-  //    we fall back to the hosting mirror. merge: true keeps any other
-  //    fields an admin may have set.
-  const mirrorBaseUrl = gcsVerified ? gcsPublicBase : HOSTING_BASE;
+  //    app changes. jsDelivr wins when its CDN probe passed (reachable
+  //    from Myanmar, user-verified 2026-10-16); then the GCS origin when
+  //    its anonymous GET check passed; otherwise the hosting mirror.
+  //    merge: true keeps any other fields an admin may have set.
+  const mirrorBaseUrl = jsdelivrVerified
+    ? JSDELIVR_BASE
+    : gcsVerified
+    ? gcsPublicBase
+    : HOSTING_BASE;
   let appConfig = false;
   try {
     await db.doc('app_settings/tmdb_image_proxy').set(
       {
         enabled: true,
         baseUrl: mirrorBaseUrl,
+        jsdelivrMirror: JSDELIVR_BASE,
         hostingMirror: HOSTING_BASE,
         gcsMirror: gcsVerified
           ? {

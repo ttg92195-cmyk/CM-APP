@@ -1,25 +1,25 @@
 name: Sync & Deploy Poster Mirror
 
 # =============================================================================
-# TMDB POSTER MIRROR — Phase 4 hotfix (2026-09-16)
+# TMDB POSTER MIRROR — Phase 4 hotfix (2026-09-16) / jsDelivr era (2026-10-16)
 # =============================================================================
-# WHY: Cloud Functions (tmdbImageProxy) requires the Blaze plan (international
-# credit card — hard in Myanmar). Firebase Hosting is FREE on Spark but its
-# <project>.web.app domain turned out to be BLOCKED on Myanmar ISP lines
-# (2026-09-19). *.googleapis.com — the family Firestore already uses — still
-# works there, so the PRIMARY mirror is now a public GCS bucket served from
-# storage.googleapis.com. Hosting stays deployed as a backup (VPN / non-MM).
+# WHY (latest): BOTH Google serving domains broke from Myanmar — *.web.app
+# is ISP-blocked (2026-09-19, and again after a brief reprieve) and even
+# storage.googleapis.com stopped loading reliably there (2026-10-16), while
+# cdn.jsdelivr.net (multi-CDN edge: Cloudflare/Fastly/…) stays reachable
+# (user-verified on a Myanmar line, 2026-10-16). Bonus: Firebase Hosting
+# storage was already at 80.7% of the 10GB Spark cap — jsDelivr takes that
+# quota out of the serving path entirely.
 #
 # WHAT: Mirrors every TMDB image referenced in Firestore into hosting/t/p/…
-# AND uploads them to the public Firebase default GCS bucket
-# (cm-movies-dabab.firebasestorage.app), so the app can load posters from
-# EITHER of:
-#   https://storage.googleapis.com/cm-movies-dabab.firebasestorage.app/t/p/w500/<f>.jpg  ← primary
-#   https://cm-movies-dabab.web.app/t/p/w500/<f>.jpg                                     ← backup
+# (committed to this public GitHub repo) AND uploads them to the public
+# Firebase default GCS bucket, so the app can load posters from EITHER of:
+#   https://cdn.jsdelivr.net/gh/ttg92195-cmyk/CM-APP@main/hosting/t/p/w500/<f>.jpg  ← primary
+#   https://storage.googleapis.com/cm-movies-dabab.firebasestorage.app/t/p/w500/<f>.jpg ← backup
+#   https://cm-movies-dabab.web.app/t/p/w500/<f>.jpg                               ← backup
 # with ZERO app changes — the sync script sets the Firestore remote config:
 #   app_settings/tmdb_image_proxy.baseUrl
-#     → https://storage.googleapis.com/<bucket>  (when the anonymous
-#       public-GET check on the bucket passes; else hosting fallback)
+#     → jsDelivr (when the CDN probe passes; else GCS → hosting fallback)
 #
 # BUCKET NOTE: creating a NEW bucket needs a billing account (fails on the
 # free plan), but the Firebase DEFAULT bucket works without billing. If it
@@ -43,11 +43,17 @@ name: Sync & Deploy Poster Mirror
 #
 # LIMITS (free tiers — this project has NO billing account, so caps are
 # hard-capped, never billed):
-#   GCS (primary):  5GB storage (current mirror ≈ 150-300MB), 1GB egress,
-#                   50k anonymous object GETs/month (~1.6k/day; the app
-#                   caches posters 7 days client-side, so fine for now).
-#   Hosting (backup): 10GB storage, 360MB/day transfer.
-# If usage ever outgrows these, upgrading to Blaze lifts the caps.
+#   jsDelivr (primary): free public CDN for GitHub repos — 20MB max/file
+#                   (largest mirror file < 2MB), no request/bandwidth cap,
+#                   @main branch URLs cached ~12h at the edges (fits the
+#                   nightly cadence; new posters appear within ~12h of the
+#                   bot commit), repo must stay public. Community service,
+#                   no SLA — if it ever degrades, flip baseUrl to a backup.
+#   GCS (backup):   5GB storage (current mirror ≈ 267MB), 1GB egress,
+#                   50k anonymous object GETs/month.
+#   Hosting (backup): 10GB storage — 80.7% ALREADY USED (8.1GB of old
+#                   releases); consider Blaze or release cleanup if the
+#                   deploy step starts failing.
 # =============================================================================
 
 on:
@@ -172,10 +178,10 @@ jobs:
         run: |
           echo "### Poster mirror synced :cinema:" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Primary (Myanmar-reachable): https://storage.googleapis.com/cm-movies-dabab.firebasestorage.app/t/p/w500/yihdXomYb5kTeSivtFndMy5iDmf.jpg" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Backup: https://cm-movies-dabab.web.app/" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Primary (Myanmar-reachable, user-verified 2026-10-16): https://cdn.jsdelivr.net/gh/ttg92195-cmyk/CM-APP@main/hosting/t/p/w500/yihdXomYb5kTeSivtFndMy5iDmf.jpg" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Backups: https://cm-movies-dabab.web.app/ · GCS bucket ${POSTER_BUCKET:-cm-movies-dabab.firebasestorage.app}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "The sync sets the app config automatically (app_settings/" >> "$GITHUB_STEP_SUMMARY"
-          echo "tmdb_image_proxy: baseUrl=https://storage.googleapis.com/<bucket>)." >> "$GITHUB_STEP_SUMMARY"
+          echo "tmdb_image_proxy: baseUrl=https://cdn.jsdelivr.net/gh/ttg92195-cmyk/CM-APP@main/hosting when the CDN probe passes)." >> "$GITHUB_STEP_SUMMARY"
           echo "If posters don't show in the app: force-close and reopen it, or" >> "$GITHUB_STEP_SUMMARY"
           echo "Settings → About → tap the TMDB Poster Proxy row to reload." >> "$GITHUB_STEP_SUMMARY"
