@@ -1839,6 +1839,8 @@ class DownloadManagerService extends ChangeNotifier {
     'anonfiles.com', 'pixeldrain.com', 'gofile.io', 'catbox.moe',
     'send.cm', 'uploadhaven.com', 'bowfile.com', 'nitroflare.com',
     'rapidgator.net', 'alfafile.net', 'depositfiles.com',
+    // Zerostorage / Ezfiles — direct download hosts
+    'zerostorage.net', 'ezfiles.net',
   };
 
   // Media file extensions — direct media URLs are always allowed regardless of domain
