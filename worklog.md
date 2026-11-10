@@ -5833,3 +5833,26 @@ Stage Summary:
 - jsDelivr limits (for Bro): 20MB/file (mirror max ~2MB) · ~12h edge cache on @main → new posters appear within ~12h of the nightly bot commit · no request/bandwidth cap · repo must stay public · no SLA — if jsDelivr ever degrades, one Firestore edit flips to the GCS/web.app backup
 - Firebase Hosting storage 80.7% is no longer urgent (Hosting = backup only); optional future: Blaze (pennies) or delete old Hosting releases
 - Rollback-resilience: 4th workspace rollback — origin/main remains the single source of truth; always fetch + compare before editing
+
+---
+Task ID: 4-about-kmm-localization
+Agent: Z User (new owner agent, first task after ownership handover)
+Task: About KMM page body texts stayed English when Myanmar language is selected — Bro asked whether he must translate manually or there is a proper way. Proper way implemented: all hardcoded strings wired into the JSON localization system + stale version display fixed (2.0.2+22)
+
+Work Log:
+- Ownership handover task 1. Bro provided GitHub token (push access verified via /repos/... permissions: push:true); repo cloned fresh to /home/z/my-project/cm-app at 825bd3f (poster-bot head)
+- Root cause: about_kmm_page.dart (371 lines) used appConfig.translate() ONLY for section headers (about_kmm, features, credits, streaming, downloading, watchlist, bookmarks, search, dark_mode, version) while ALL body texts — 2 description paragraphs, 8 feature card descriptions, 2 card titles (Cloud Sync, Multi-Language), 3 info-row labels (Build, Platform, Framework), credits intro, 4 credit items (title+subtitle), special-thanks paragraph — were hardcoded English string literals. LocalizationService.load('my') works fine; the page simply never asked it for these strings
+- Fix 1 — assets/lang/en.json + assets/lang/my.json: added 25 new keys (about_kmm_desc_1, about_kmm_desc_2, feature_{streaming,downloading,watchlist,bookmarks,search}_desc, feature_cloud_sync(+_desc), feature_multi_language(+_desc), feature_dark_mode_desc, info_{build,platform,framework}, credits_intro, credits_{development,backend,design,localization}(+_desc), credits_thanks). Myanmar translations written by the agent in the existing my.json style (ဒေါင်းလုဒ် / ဇာတ်လမ်းတွဲ / စထရင်းမင်း conventions preserved); keys inserted at alphabetically-nearest positions WITHOUT resorting (order-preserving insertion via scripts/about_kmm_add_keys.py to keep the git diff minimal — a sort_keys rewrite would have churned ~26 unrelated lines)
+- _meta bumped: version 1.0.0 → 1.1.0, lastUpdated → 2026-11-10, source describes the extraction. python3 scripts/verify_translations.py → PASS (253 keys both files, parity + placeholders + no empty values)
+- Fix 2 — about_kmm_page.dart: all 19 hardcoded strings replaced with appConfig.translate() calls (37 translate calls total on the page now). Header comment documents the contract: every visible string must go through translate()
+- Fix 3 — stale version display: page showed hardcoded 'Version 2.0.0' / 'Build 2026.06' while the app is 2.0.x+21 — drifted like the old poster base URL did. Now both the subtitle AND the Version/Build info rows read live via package_info_plus (PackageInfo.fromPlatform() → version / buildNumber) inside FutureBuilder with '2.0.2' / '22' as fallback literals. Platform row corrected from 'Android / iOS' to 'Android' (project builds Android only — flutter_launcher_icons config and media_kit_libs_android_video confirm no iOS target)
+- pubspec.yaml: version 2.0.1+21 → 2.0.2+22; added package_info_plus: ^8.1.2 to dependencies (version already pinned by dependency_overrides so resolution is unchanged — no pubspec.lock exists in repo, CI resolves fresh each build)
+- VALIDATION: scripts/verify_translations.py PASS · JSON parses both files · Dart paren/brace/bracket balance OK (187/9/10) · no leftover English literals (grep) · pubspec YAML valid. No Flutter SDK in this workspace — full compile proof deferred to the CI build that this push auto-triggers
+- NOT touched: firestore.rules, functions/, hosting/, .env (repo hygiene issues — junk folders CM-APP/, cm-app/, upload/, download/, tool-results/, agent-ctx/, skills/, a.out — flagged for Bro separately, deliberate scope discipline for the first push)
+
+Stage Summary:
+- Settings → မြန်မာ (Myanmar) now translates the ENTIRE About KMM page — descriptions, feature cards, info rows, credits, thanks — not just the headers. English mode unchanged
+- Version row now always shows the real pubspec version/build (2.0.2 / 22) — future bumps self-update, no more stale hardcode
+- Bro does NOT need to translate anything by hand; wording tweaks go straight into assets/lang/my.json (translator-friendly JSON by design)
+- Push auto-triggers: Flutter Build APK (2.0.2+22 artifact) + Translation Parity Check; Bro installs the new APK after the build goes green
+- Token hygiene reminder: Bro should revoke/rotate the PAT shared in chat after this session; prefer fine-grained, repo-scoped, short-expiry tokens going forward

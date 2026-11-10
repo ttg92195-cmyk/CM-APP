@@ -1,6 +1,6 @@
 name: cm_movies
 description: CM Movies App
-version: 2.0.1+21
+version: 2.0.2+22
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -78,6 +78,9 @@ dependencies:
   # File picker — for Batch Import (JSON file selection)
   # Pinned to 8.x for Flutter 3.24.5 compatibility
   file_picker: ^8.1.2
+  # About KMM page — live version/build display (was hardcoded 2.0.0/2026.06
+  # and had drifted). Already pinned to 8.1.2 via dependency_overrides.
+  package_info_plus: ^8.1.2
 
 dev_dependencies:
   flutter_launcher_icons: ^0.13.1

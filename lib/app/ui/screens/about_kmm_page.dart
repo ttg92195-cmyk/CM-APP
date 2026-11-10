@@ -1,6 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
+
+// Task 4-about-kmm-localization (2026-11-10): every visible string on this
+// page now goes through AppConfig.translate() so the Myanmar language
+// switch applies to the FULL page, not just the section headers. The long
+// body texts were previously hardcoded English strings and never changed
+// when the user picked "မြန်မာ" in Settings.
+// Version/Build rows now read live from package_info_plus instead of the
+// hardcoded '2.0.0' / '2026.06' that had drifted out of date.
 
 class AboutKmmPage extends StatelessWidget {
   const AboutKmmPage({super.key});
@@ -47,11 +56,17 @@ class AboutKmmPage extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 4),
-            Text(
-              '${appConfig.translate("version")} 2.0.0',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurface.withOpacity(0.6),
-              ),
+            FutureBuilder<PackageInfo>(
+              future: PackageInfo.fromPlatform(),
+              builder: (context, snapshot) {
+                final version = snapshot.data?.version ?? '2.0.2';
+                return Text(
+                  '${appConfig.translate("version")} $version',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurface.withOpacity(0.6),
+                  ),
+                );
+              },
             ),
             const SizedBox(height: 24),
 
@@ -76,14 +91,14 @@ class AboutKmmPage extends StatelessWidget {
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    'KMM (CM Movies) is a comprehensive streaming platform designed for movie and TV series enthusiasts. Whether you are looking for the latest blockbusters, classic films, trending series, or hidden gems from around the world, KMM brings everything together in one beautifully designed application. Our mission is to make discovering and enjoying entertainment as seamless and enjoyable as possible, with a focus on the Myanmar audience while also serving a global user base.',
+                    appConfig.translate('about_kmm_desc_1'),
                     style: theme.textTheme.bodyMedium?.copyWith(
                       height: 1.8,
                     ),
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    'Built with modern technology and a user-first approach, KMM offers a rich set of features including high-quality streaming, offline downloads, personalized watchlists, and cloud-synced bookmarks. The app supports both Myanmar and English languages, and adapts to both dark and light visual preferences. Every aspect of the experience is crafted to deliver speed, reliability, and visual delight.',
+                    appConfig.translate('about_kmm_desc_2'),
                     style: theme.textTheme.bodyMedium?.copyWith(
                       height: 1.8,
                     ),
@@ -109,7 +124,7 @@ class AboutKmmPage extends StatelessWidget {
               isDark,
               Icons.play_circle_outline,
               appConfig.translate('streaming'),
-              'Watch movies and series in multiple resolutions including HD and 4K. Our adaptive streaming technology automatically adjusts quality based on your connection speed for a smooth, buffer-free experience.',
+              appConfig.translate('feature_streaming_desc'),
             ),
             const SizedBox(height: 10),
             _buildFeatureCard(
@@ -117,7 +132,7 @@ class AboutKmmPage extends StatelessWidget {
               isDark,
               Icons.download_for_offline_outlined,
               appConfig.translate('downloading'),
-              'Download your favorite movies and episodes for offline viewing. Choose from multiple resolutions and servers, manage your downloads with a built-in download manager, and enjoy content anywhere without an internet connection.',
+              appConfig.translate('feature_downloading_desc'),
             ),
             const SizedBox(height: 10),
             _buildFeatureCard(
@@ -125,7 +140,7 @@ class AboutKmmPage extends StatelessWidget {
               isDark,
               Icons.playlist_add_check_rounded,
               appConfig.translate('watchlist'),
-              'Create a personal watchlist of movies and series you plan to watch. Your watchlist syncs across all devices via your account, so you can add a movie on your phone and watch it later on your tablet.',
+              appConfig.translate('feature_watchlist_desc'),
             ),
             const SizedBox(height: 10),
             _buildFeatureCard(
@@ -133,7 +148,7 @@ class AboutKmmPage extends StatelessWidget {
               isDark,
               Icons.bookmark_outline_rounded,
               appConfig.translate('bookmarks'),
-              'Save your favorite movies and series to your bookmarks for quick access. Bookmarks are cloud-synced through Firebase, ensuring your collection is always available no matter which device you use.',
+              appConfig.translate('feature_bookmarks_desc'),
             ),
             const SizedBox(height: 10),
             _buildFeatureCard(
@@ -141,23 +156,23 @@ class AboutKmmPage extends StatelessWidget {
               isDark,
               Icons.search_rounded,
               appConfig.translate('search'),
-              'Find movies and series instantly with our powerful search engine. Search by title, genre, tag, or year. Use advanced filters to narrow down results and discover exactly what you are looking for.',
+              appConfig.translate('feature_search_desc'),
             ),
             const SizedBox(height: 10),
             _buildFeatureCard(
               theme,
               isDark,
               Icons.cloud_sync_outlined,
-              'Cloud Sync',
-              'All your data — bookmarks, watchlist, viewing history, and preferences — is securely synced to the cloud via Firebase Firestore. Switch devices seamlessly without losing any of your personal content.',
+              appConfig.translate('feature_cloud_sync'),
+              appConfig.translate('feature_cloud_sync_desc'),
             ),
             const SizedBox(height: 10),
             _buildFeatureCard(
               theme,
               isDark,
               Icons.language_rounded,
-              'Multi-Language',
-              'Full support for both Myanmar and English languages. Switch between languages instantly from the Settings page, and the entire app interface updates in real time to match your preference.',
+              appConfig.translate('feature_multi_language'),
+              appConfig.translate('feature_multi_language_desc'),
             ),
             const SizedBox(height: 10),
             _buildFeatureCard(
@@ -165,7 +180,7 @@ class AboutKmmPage extends StatelessWidget {
               isDark,
               Icons.dark_mode_outlined,
               appConfig.translate('dark_mode'),
-              'Choose between a sleek dark theme and a clean light theme. Your preference is saved automatically and persists across sessions. The dark theme uses a rich #121212 background with vibrant red accents for comfortable viewing at night.',
+              appConfig.translate('feature_dark_mode_desc'),
             ),
             const SizedBox(height: 24),
 
@@ -181,13 +196,24 @@ class AboutKmmPage extends StatelessWidget {
               ),
               child: Column(
                 children: [
-                  _buildInfoRow(theme, '${appConfig.translate("version")}', '2.0.0'),
+                  FutureBuilder<PackageInfo>(
+                    future: PackageInfo.fromPlatform(),
+                    builder: (context, snapshot) {
+                      final version = snapshot.data?.version ?? '2.0.2';
+                      final buildNumber = snapshot.data?.buildNumber ?? '22';
+                      return Column(
+                        children: [
+                          _buildInfoRow(theme, appConfig.translate('version'), version),
+                          const SizedBox(height: 8),
+                          _buildInfoRow(theme, appConfig.translate('info_build'), buildNumber),
+                        ],
+                      );
+                    },
+                  ),
                   const SizedBox(height: 8),
-                  _buildInfoRow(theme, 'Build', '2026.06'),
+                  _buildInfoRow(theme, appConfig.translate('info_platform'), 'Android'),
                   const SizedBox(height: 8),
-                  _buildInfoRow(theme, 'Platform', 'Android / iOS'),
-                  const SizedBox(height: 8),
-                  _buildInfoRow(theme, 'Framework', 'Flutter'),
+                  _buildInfoRow(theme, appConfig.translate('info_framework'), 'Flutter'),
                 ],
               ),
             ),
@@ -217,22 +243,46 @@ class AboutKmmPage extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'KMM is developed and maintained by a dedicated team of developers and designers who are passionate about delivering the best entertainment experience to Myanmar and beyond.',
+                    appConfig.translate('credits_intro'),
                     style: theme.textTheme.bodyMedium?.copyWith(
                       height: 1.8,
                     ),
                   ),
                   const SizedBox(height: 16),
-                  _buildCreditItem(theme, isDark, Icons.code, 'Development', 'Flutter & Dart framework for cross-platform development'),
+                  _buildCreditItem(
+                    theme,
+                    isDark,
+                    Icons.code,
+                    appConfig.translate('credits_development'),
+                    appConfig.translate('credits_development_desc'),
+                  ),
                   const SizedBox(height: 10),
-                  _buildCreditItem(theme, isDark, Icons.cloud_outlined, 'Backend & Cloud', 'Google Firebase (Authentication, Firestore, Storage, App Check) for secure and scalable cloud infrastructure'),
+                  _buildCreditItem(
+                    theme,
+                    isDark,
+                    Icons.cloud_outlined,
+                    appConfig.translate('credits_backend'),
+                    appConfig.translate('credits_backend_desc'),
+                  ),
                   const SizedBox(height: 10),
-                  _buildCreditItem(theme, isDark, Icons.palette_outlined, 'Design', 'Material Design 3 with custom theming and user experience patterns'),
+                  _buildCreditItem(
+                    theme,
+                    isDark,
+                    Icons.palette_outlined,
+                    appConfig.translate('credits_design'),
+                    appConfig.translate('credits_design_desc'),
+                  ),
                   const SizedBox(height: 10),
-                  _buildCreditItem(theme, isDark, Icons.translate_rounded, 'Localization', 'Community-driven Myanmar and English translations'),
+                  _buildCreditItem(
+                    theme,
+                    isDark,
+                    Icons.translate_rounded,
+                    appConfig.translate('credits_localization'),
+                    appConfig.translate('credits_localization_desc'),
+                  ),
                   const SizedBox(height: 16),
                   Text(
-                    'Special thanks to all our beta testers, community members, and users who provide feedback and help us improve KMM with every release. Your support drives us to build a better experience.',
+                    appConfig.translate('credits_thanks'),
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurface.withOpacity(0.7),
                       height: 1.7,
