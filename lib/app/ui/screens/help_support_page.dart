@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
+// Localization contract (Task 6a, 2026-11-11): every visible string on this
+// page goes through appConfig.translate() — no hardcoded English.
+// Version/Build rows read live from package_info_plus (no stale literals).
 class HelpSupportPage extends StatelessWidget {
   const HelpSupportPage({super.key});
 
@@ -37,11 +41,17 @@ class HelpSupportPage extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  Text(
-                    '${appConfig.translate("app_version")}: 2.0.0',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurface.withOpacity(0.5),
-                    ),
+                  FutureBuilder<PackageInfo>(
+                    future: PackageInfo.fromPlatform(),
+                    builder: (context, snapshot) {
+                      final version = snapshot.data?.version ?? '2.0.2';
+                      return Text(
+                        '${appConfig.translate("app_version")}: $version',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurface.withOpacity(0.5),
+                        ),
+                      );
+                    },
                   ),
                 ],
               ),
@@ -54,38 +64,38 @@ class HelpSupportPage extends StatelessWidget {
             _buildFaqTile(
               theme,
               isDark,
-              'How do I create an account?',
-              'To create an account, open the app and tap on the "Register" button on the login screen. Enter your desired username and a strong password (at least 8 characters with uppercase, lowercase, and a number). Once submitted, your account will be created and you can start exploring movies and series immediately.',
+              appConfig.translate('faq_create_account_q'),
+              appConfig.translate('faq_create_account_a'),
             ),
             _buildFaqTile(
               theme,
               isDark,
-              'How do I add movies to my bookmarks?',
-              'While browsing any movie or series detail page, simply tap the bookmark icon to save it to your bookmarks. You can access all your bookmarked content from the Bookmarks tab in the bottom navigation bar. Bookmarks are synced to your account via Firebase, so they are available across all your devices.',
+              appConfig.translate('faq_bookmark_q'),
+              appConfig.translate('faq_bookmark_a'),
             ),
             _buildFaqTile(
               theme,
               isDark,
-              'How do I download movies for offline viewing?',
-              'First, make sure the download feature is enabled in Settings > Show Download. Then, navigate to any movie detail page and tap the Download button. Choose your preferred resolution and server. Downloads will appear in the Download Manager where you can track progress, pause, or resume.',
+              appConfig.translate('faq_download_q'),
+              appConfig.translate('faq_download_a'),
             ),
             _buildFaqTile(
               theme,
               isDark,
-              'How do I switch between dark and light mode?',
-              'Go to Settings from the bottom navigation bar. Under the Theme section, toggle the Dark Mode switch on or off. Your preference is saved automatically and will persist across app restarts.',
+              appConfig.translate('faq_theme_q'),
+              appConfig.translate('faq_theme_a'),
             ),
             _buildFaqTile(
               theme,
               isDark,
-              'How do I change the app language?',
-              'Navigate to Settings and find the Language section. You can choose between Myanmar and English. The entire app interface will update immediately to reflect your selected language preference.',
+              appConfig.translate('faq_language_q'),
+              appConfig.translate('faq_language_a'),
             ),
             _buildFaqTile(
               theme,
               isDark,
-              'How do I add movies to my watchlist?',
-              'On any movie or series detail page, tap the watchlist icon (clock with a plus sign). This adds the content to your personal watchlist, which you can access from the Watchlist tab. Watchlist items are synced across devices through your account.',
+              appConfig.translate('faq_watchlist_q'),
+              appConfig.translate('faq_watchlist_a'),
             ),
             const SizedBox(height: 24),
 
@@ -96,40 +106,40 @@ class HelpSupportPage extends StatelessWidget {
               theme,
               isDark,
               Icons.wifi_off_rounded,
-              'Video not loading or buffering',
-              'Check your internet connection and try switching to a different server. If the issue persists, clear the app cache from your device settings and restart the app. Slow connections may require lowering the streaming quality.',
+              appConfig.translate('troubleshoot_video_title'),
+              appConfig.translate('troubleshoot_video_desc'),
             ),
             const SizedBox(height: 10),
             _buildTipCard(
               theme,
               isDark,
               Icons.sync_problem_rounded,
-              'Bookmarks not syncing across devices',
-              'Make sure you are logged into the same account on all devices. Check your internet connection and try pulling down to refresh. If the issue continues, log out and log back in to force a sync.',
+              appConfig.translate('troubleshoot_sync_title'),
+              appConfig.translate('troubleshoot_sync_desc'),
             ),
             const SizedBox(height: 10),
             _buildTipCard(
               theme,
               isDark,
               Icons.download_rounded,
-              'Downloads failing or not starting',
-              'Ensure the download feature is enabled in Settings. Check available storage on your device. Try switching to a different server or resolution. If downloads continue to fail, restart the app and try again.',
+              appConfig.translate('troubleshoot_download_title'),
+              appConfig.translate('troubleshoot_download_desc'),
             ),
             const SizedBox(height: 10),
             _buildTipCard(
               theme,
               isDark,
               Icons.login_rounded,
-              'Unable to log in to my account',
-              'Double-check your username and password. Make sure Caps Lock is off. If you have forgotten your password, you can reset it from the login screen. If your account was recently created, wait a few moments and try again.',
+              appConfig.translate('troubleshoot_login_title'),
+              appConfig.translate('troubleshoot_login_desc'),
             ),
             const SizedBox(height: 10),
             _buildTipCard(
               theme,
               isDark,
               Icons.refresh_rounded,
-              'App crashing or freezing',
-              'Try closing and reopening the app. If the issue persists, clear the app cache from your device settings. Make sure you are using the latest version of KMM. If crashes continue, uninstall and reinstall the app.',
+              appConfig.translate('troubleshoot_crash_title'),
+              appConfig.translate('troubleshoot_crash_desc'),
             ),
             const SizedBox(height: 24),
 
@@ -166,7 +176,7 @@ class HelpSupportPage extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Email Support',
+                              appConfig.translate('contact_email_support'),
                               style: theme.textTheme.bodyLarge?.copyWith(
                                 fontWeight: FontWeight.bold,
                               ),
@@ -185,7 +195,7 @@ class HelpSupportPage extends StatelessWidget {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'We typically respond within 24–48 hours. Please include your app version (2.0.0), device model, and a detailed description of the issue when contacting us so we can assist you more efficiently.',
+                    appConfig.translate('contact_response_note'),
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurface.withOpacity(0.7),
                       height: 1.6,
@@ -215,11 +225,18 @@ class HelpSupportPage extends StatelessWidget {
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Text(
-                      '${appConfig.translate("app_version")}: 2.0.0 • Build 2026.06',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurface.withOpacity(0.5),
-                      ),
+                    child: FutureBuilder<PackageInfo>(
+                      future: PackageInfo.fromPlatform(),
+                      builder: (context, snapshot) {
+                        final version = snapshot.data?.version ?? '2.0.2';
+                        final build = snapshot.data?.buildNumber ?? '22';
+                        return Text(
+                          '${appConfig.translate("app_version")}: $version • Build $build',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurface.withOpacity(0.5),
+                          ),
+                        );
+                      },
                     ),
                   ),
                 ],
