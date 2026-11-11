@@ -5856,3 +5856,24 @@ Stage Summary:
 - Bro does NOT need to translate anything by hand; wording tweaks go straight into assets/lang/my.json (translator-friendly JSON by design)
 - Push auto-triggers: Flutter Build APK (2.0.2+22 artifact) + Translation Parity Check; Bro installs the new APK after the build goes green
 - Token hygiene reminder: Bro should revoke/rotate the PAT shared in chat after this session; prefer fine-grained, repo-scoped, short-expiry tokens going forward
+
+---
+Task ID: 5-poster-sync-weekly-schedule
+Agent: Z User (owner agent, second task after ownership handover)
+Task: Bro saw red "Sync & Deploy Poster Mirror" runs piling up in the Actions tab (thought 4-5 ran simultaneously) and worried about GitHub limits; asked whether manual runs beat the nightly auto-run. Implemented owner-approved Option A: nightly cron → weekly, manual dispatch kept, chronically-failing Hosting backup step retired
+
+Work Log:
+- Diagnosis from GitHub Actions API (676 total runs): the workflow ran exactly ONCE per night (cron 19:30 UTC), never 4-5 at once — what Bro saw was the accumulated history list plus the 2 push-triggered runs (Flutter Build APK #475, Translation Parity Check #9) from the Nov 10 localization push landing adjacent in the tab
+- Real problem uncovered: every nightly run from 2026-10-21 to 2026-11-11 (#47–#67, 21 consecutive) failed at ONLY the "Deploy to Firebase Hosting" step — "Sync posters" and "Commit posters" kept succeeding (poster-sync-bot commits on main are the proof, latest 047508a 2026-11-11 00:15 UTC). Cause: Firebase Hosting storage hit the 10GB free-plan cap (8.1GB of historical releases vs ~267MB live tree) — exactly what the workflow header had predicted would happen ("consider Blaze or release cleanup if the deploy step starts failing"). Posters kept working throughout: primary serving is jsDelivr
+- Limit check for Bro: repo is PUBLIC → GitHub Actions minutes are free/unlimited for public repos — scheduled runs cannot burn any quota; the real annoyance was only the daily red X
+- Option A implemented: cron '30 19 * * *' (nightly) → '30 18 * * 6' (Sat 18:30 UTC = Sunday 01:00 MMT, weekly) with a dated comment block; workflow_dispatch (manual "Run workflow" button) kept — the workflow's own docs already said "run after adding new movies!" and a manual run on 2026-10-16 (#41) succeeded under this same dispatch trigger
+- "Deploy to Firebase Hosting" step REMOVED with a dated CHANGE comment at the site: 10GB quota cap + web.app ISP-blocked from Myanmar since 2026-09-19 (useless as a real-user backup) + it was the only failing step. Serving paths remaining: jsDelivr (primary — CDN probe re-verifies before writing Firestore app_settings/tmdb_image_proxy.baseUrl every run) + GCS bucket backup (synced every run). Restore path documented in-place: free Hosting space (delete old releases / Blaze) then re-add the one deploy step
+- Consistency edits: header serving-URL table marks web.app as STALE; limits table entry for Hosting marked RETIRED 2026-11-11; "nightly cadence" wording → weekly; Summary step backup line now shows GCS only
+- VALIDATION: python3 yaml.safe_load → YAML OK, triggers = [workflow_dispatch, schedule, push]; git diff scoped to .github/workflows/sync-posters.yml only (31+/16-)
+- Push to main intentionally self-triggers the workflow (paths filter matches this yml) → live green-run verification expected within ~10 min; Flutter Build APK also auto-triggers on the same push (harmless — no app code change, still 2.0.2+22, no reinstall needed)
+
+Stage Summary:
+- Actions tab goes quiet and green: 1 poster-sync run per WEEK (Sunday 01:00 MMT safety net) + manual runs whenever Bro adds movies; the only chronically-failing step is gone so future runs should end in success
+- Bro's post-add-movies routine: GitHub → Actions → Sync & Deploy Poster Mirror → Run workflow → wait ~2-3 min → new posters appear in the app (new poster URLs are cold cache so they surface fast; already-seen URLs may lag up to ~12h on jsDelivr edges)
+- Each removed Hosting deploy also stops further release accumulation, so the 8.1GB/10GB figure stops growing
+- Rollback: git revert of this single commit restores the nightly schedule and the Hosting step verbatim (CHANGE comment documents the exact step YAML to paste back)

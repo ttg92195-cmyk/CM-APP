@@ -16,7 +16,7 @@ name: Sync & Deploy Poster Mirror
 # Firebase default GCS bucket, so the app can load posters from EITHER of:
 #   https://cdn.jsdelivr.net/gh/ttg92195-cmyk/CM-APP@main/hosting/t/p/w500/<f>.jpg  ← primary
 #   https://storage.googleapis.com/cm-movies-dabab.firebasestorage.app/t/p/w500/<f>.jpg ← backup
-#   https://cm-movies-dabab.web.app/t/p/w500/<f>.jpg                               ← backup
+#   https://cm-movies-dabab.web.app/t/p/w500/<f>.jpg                               ← backup (STALE — no longer deployed, see CHANGE 2026-11-11)
 # with ZERO app changes — the sync script sets the Firestore remote config:
 #   app_settings/tmdb_image_proxy.baseUrl
 #     → jsDelivr (when the CDN probe passes; else GCS → hosting fallback)
@@ -29,7 +29,9 @@ name: Sync & Deploy Poster Mirror
 #
 # WHEN:
 #   - Manually (Actions → Run workflow) — run after adding new movies!
-#   - Nightly at 01:00 Myanmar time (19:30 UTC) — picks up new content
+#   - WEEKLY on Sunday 01:00 Myanmar time (Sat 18:30 UTC) — safety net that
+#     picks up new content (downgraded from nightly on 2026-11-11, see the
+#     CHANGE note where the Hosting deploy step used to be)
 #   - On push that changes this workflow or the sync script
 #
 # PREREQUISITE (same secret the functions workflow needs):
@@ -46,20 +48,27 @@ name: Sync & Deploy Poster Mirror
 #   jsDelivr (primary): free public CDN for GitHub repos — 20MB max/file
 #                   (largest mirror file < 2MB), no request/bandwidth cap,
 #                   @main branch URLs cached ~12h at the edges (fits the
-#                   nightly cadence; new posters appear within ~12h of the
+#                   weekly cadence; new posters appear within ~12h of the
 #                   bot commit), repo must stay public. Community service,
 #                   no SLA — if it ever degrades, flip baseUrl to a backup.
 #   GCS (backup):   5GB storage (current mirror ≈ 267MB), 1GB egress,
 #                   50k anonymous object GETs/month.
-#   Hosting (backup): 10GB storage — 80.7% ALREADY USED (8.1GB of old
-#                   releases); consider Blaze or release cleanup if the
-#                   deploy step starts failing.
+#   Hosting (backup): RETIRED 2026-11-11 — 10GB free cap hit (8.1GB of old
+#                   releases vs ~267MB live tree) and *.web.app is
+#                   ISP-blocked from Myanmar, so the deploy step is gone and
+#                   runs stay green. Restore = free Hosting space (release
+#                   cleanup or Blaze) then re-add the one deploy step.
 # =============================================================================
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '30 19 * * *' # 19:30 UTC = 01:00 MMT daily
+    # Downgraded nightly → WEEKLY (2026-11-11, owner's Option A): posters
+    # only change when new movies are added, and the owner runs this
+    # workflow manually right after adding content. The nightly run just
+    # re-synced the same ~267MB every night — and kept failing at the (now
+    # removed) Hosting backup step, adding a red X to the Actions tab daily.
+    - cron: '30 18 * * 6' # Sat 18:30 UTC = Sunday 01:00 MMT, weekly
   push:
     branches: [main]
     paths:
@@ -164,14 +173,20 @@ jobs:
             fi
           fi
 
-      - name: Deploy to Firebase Hosting
-        if: env.FIREBASE_SERVICE_ACCOUNT != '' && success()
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/poster-sa.json
-        run: |
-          echo "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/poster-sa.json"
-          npx -y firebase-tools deploy --only hosting --non-interactive \
-            --project "$FIREBASE_PROJECT_ID"
+      # CHANGE 2026-11-11 — the "Deploy to Firebase Hosting" backup step was
+      # REMOVED. Why: Firebase Hosting storage hit the 10GB free-plan cap
+      # (8.1GB of historical releases vs ~267MB live tree), so this step
+      # failed on EVERY run from 2026-10-21 to 2026-11-11 while the sync and
+      # commit steps (the parts that matter) kept succeeding — 21 red X's in
+      # the Actions tab for nothing. The web.app domain is also ISP-blocked
+      # from Myanmar since 2026-09-19, so this backup added nothing for real
+      # users. Serving paths that remain: jsDelivr (primary — the CDN probe
+      # in the sync step re-verifies it before writing the Firestore baseUrl)
+      # and the GCS bucket backup (uploaded every run). To restore the
+      # web.app backup: free Hosting space (delete old releases in the
+      # Firebase Console, or Blaze) and re-add:
+      #   npx -y firebase-tools deploy --only hosting --non-interactive \
+      #     --project "$FIREBASE_PROJECT_ID"
 
       - name: Summary
         if: env.FIREBASE_SERVICE_ACCOUNT != ''
@@ -179,7 +194,7 @@ jobs:
           echo "### Poster mirror synced :cinema:" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "- Primary (Myanmar-reachable, user-verified 2026-10-16): https://cdn.jsdelivr.net/gh/ttg92195-cmyk/CM-APP@main/hosting/t/p/w500/yihdXomYb5kTeSivtFndMy5iDmf.jpg" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Backups: https://cm-movies-dabab.web.app/ · GCS bucket ${POSTER_BUCKET:-cm-movies-dabab.firebasestorage.app}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Backup: GCS bucket ${POSTER_BUCKET:-cm-movies-dabab.firebasestorage.app} (web.app Hosting backup retired 2026-11-11 — quota cap + ISP block)" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "The sync sets the app config automatically (app_settings/" >> "$GITHUB_STEP_SUMMARY"
           echo "tmdb_image_proxy: baseUrl=https://cdn.jsdelivr.net/gh/ttg92195-cmyk/CM-APP@main/hosting when the CDN probe passes)." >> "$GITHUB_STEP_SUMMARY"
