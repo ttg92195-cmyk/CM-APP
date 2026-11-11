@@ -5877,3 +5877,23 @@ Stage Summary:
 - Bro's post-add-movies routine: GitHub → Actions → Sync & Deploy Poster Mirror → Run workflow → wait ~2-3 min → new posters appear in the app (new poster URLs are cold cache so they surface fast; already-seen URLs may lag up to ~12h on jsDelivr edges)
 - Each removed Hosting deploy also stops further release accumulation, so the 8.1GB/10GB figure stops growing
 - Rollback: git revert of this single commit restores the nightly schedule and the Hosting step verbatim (CHANGE comment documents the exact step YAML to paste back)
+
+---
+Task ID: 6-help-privacy-localization
+Agent: Z User (owner agent, third task after ownership handover)
+Task: Bro asked for the same About-KMM treatment on Settings → About → Help & Support and Privacy & Policy tabs, one page at a time. Implemented in two sequential commits (6a help, 6b privacy), pushed together
+
+Work Log:
+- Sandbox was recycled between sessions (clone + /tmp both wiped) — re-cloned fresh at d952169 (poster-bot head on top of 33bfd7e); local clone now lives at /home/z/my-project/cm-app again
+- Diagnosis: help_support_page.dart used translate() only for section headers (help_support, faq, troubleshooting, contact_us, app_version) while all 6 FAQ Q&As, 5 troubleshooting cards (title+desc), 'Email Support' and the response-time note were hardcoded English — AND it repeated the stale '2.0.0 / Build 2026.06' literals (twice) that Task 4 had fixed on About KMM. privacy_policy_page.dart used translate() for its 8 section titles but ALL 35 body paragraphs (intro, 7 sections × bullets, footer) were hardcoded
+- Task 6a — help_support_page.dart: 24 new keys (faq_{create_account,bookmark,download,theme,language,watchlist}_{q,a}, troubleshoot_{video,sync,download,login,crash}_{title,desc}, contact_email_support, contact_response_note). Stale version literals in BOTH spots replaced with FutureBuilder<PackageInfo> (package_info_plus already in deps from Task 4) — fallback literals '2.0.2' / '22' match pubspec. Response-note EN text dropped the inline '(2.0.0)' since the version card right below now shows the live number. _meta 1.1.0 → 1.2.0
+- Task 6b — privacy_policy_page.dart: 43 new keys (privacy_last_updated, privacy_intro, data_collection_* ×6, data_usage_* ×8, third_party_* ×6, data_security_* ×8, children_privacy_* ×3, changes_policy_* ×3, contact_privacy_* ×5, privacy_footer_* ×2). Bullet paragraphs keep the leading '• ' — _buildSectionCard styles bullets via p.startsWith('•'), so the contract is documented in the file header comment. Static policy dates (March 2026) translated as content, not made dynamic — they describe the policy text itself. _meta → 1.3.0
+- Key insertion via /home/z/my-project/scripts/help_privacy_add_keys.py (workspace script, NOT committed — same convention as Task 4's about_kmm_add_keys.py): order-preserving alphabetical insertion, en/my updated in lock-step, ensure_ascii=False. Note: its per-file "+N keys" log line prints a cumulative counter (help run printed +24 then +48) — cosmetic only, actual per-file adds are 24/24 and 43/43 (verified by final counts)
+- VALIDATION: scripts/verify_translations.py PASS after each batch (277 → 320 keys both files, parity + no empty values + placeholder parity) · dart_balance_check.py PASS on both pages · grep for leftover English literals: none on either page (emails/URLs intentionally stay raw)
+- NOT touched: pubspec.yaml (no new deps), version stays 2.0.2+22 — language-only change
+
+Stage Summary:
+- Settings → မြန်မာ now fully translates Help & Support (FAQ questions + answers, troubleshooting tips, contact block) and the entire Privacy Policy (all 7 sections, intro, footer) — English mode unchanged
+- Help page version rows now live-read 2.0.2 / build 22 like the About KMM page — the last two stale '2.0.0' literals in the settings screens are gone
+- Bro's workflow unchanged: after this push, Actions → Flutter Build APK → install the new artifact to see both pages in Myanmar
+- lang pack now 320 keys per file (_meta 1.3.0, lastUpdated 2026-11-11); CI parity check guards future additions
