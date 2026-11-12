@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cm_movies/more_libs/setting/app_config.dart';
 import 'package:cm_movies/app/core/models/movie.dart';
 import 'package:cm_movies/app/core/models/tag_and_genres.dart';
@@ -108,11 +110,14 @@ class _SearchScreenState extends State<SearchScreen>
     });
     _searchController.addListener(() {
       setState(() {}); // Rebuild to show/hide clear button + history panel
-      // Debounced auto-search: wait 400ms after user stops typing
+      // Debounced auto-search: wait 300ms after user stops typing
+      // (Phase 4.43 — was 400ms. With the local catalog cache making
+      // repeat short queries nearly free, we can afford a snappier
+      // response without meaningfully increasing Firestore reads.)
       _debounceTimer?.cancel();
       final query = _searchController.text.trim();
       if (query.isNotEmpty || _hasActiveFilters) {
-        _debounceTimer = Timer(const Duration(milliseconds: 400), () {
+        _debounceTimer = Timer(const Duration(milliseconds: 300), () {
           _search();
         });
       } else if (query.isEmpty && !_hasActiveFilters) {
@@ -135,7 +140,59 @@ class _SearchScreenState extends State<SearchScreen>
     super.dispose();
   }
 
+  // Phase 4.43 — filter options (genres + years) cached in
+  // SharedPreferences so re-opening the Search screen doesn't re-read
+  // ~110 Firestore docs (100 for years + all genres) every single time.
+  // TTL 24 h: fresh cache renders instantly and skips the network;
+  // stale cache renders instantly AND refreshes silently in background.
+  static const String _filterCacheKey = 'search_filter_options_v1';
+  static const Duration _filterCacheTtl = Duration(hours: 24);
+
   Future<void> _loadFilterOptions() async {
+    // Phase 4.43 — cache-first. Old code always awaited
+    // getGenres() + getAvailableYears() (≈110 doc reads) before the
+    // filter chips were usable, competing with the first search query
+    // for bandwidth on slow lines.
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_filterCacheKey);
+      if (raw != null) {
+        final map = jsonDecode(raw) as Map<String, dynamic>;
+        final savedAt = map['savedAt'] as int? ?? 0;
+        final genres = <TagAndGenres>[];
+        for (final g in (map['genres'] as List? ?? const [])) {
+          if (g is Map) {
+            genres.add(TagAndGenres.fromMap(Map<String, dynamic>.from(g)));
+          }
+        }
+        final years = (map['years'] as List? ?? const [])
+            .map((y) => y.toString())
+            .toList();
+        if (genres.isNotEmpty || years.isNotEmpty) {
+          final isFresh = DateTime.now().millisecondsSinceEpoch -
+                  savedAt <
+              _filterCacheTtl.inMilliseconds;
+          if (mounted) {
+            setState(() {
+              _genres = genres;
+              _years = years;
+              _isLoadingFilters = false;
+            });
+          }
+          if (isFresh) return;
+          // Stale — keep showing it, refresh silently below.
+          await _refreshFilterOptions(prefs);
+          return;
+        }
+      }
+    } catch (e) {
+      debugPrint('Filter cache read failed: $e');
+    }
+    // No usable cache — fetch from Firestore (old behavior).
+    await _refreshFilterOptions(null);
+  }
+
+  Future<void> _refreshFilterOptions(SharedPreferences? prefs) async {
     try {
       final results = await Future.wait([
         _contentService.getGenres(),
@@ -147,6 +204,21 @@ class _SearchScreenState extends State<SearchScreen>
           _years = results[1] as List<String>;
           _isLoadingFilters = false;
         });
+      }
+      // Persist for the next 24 h so re-opening Search is instant + free.
+      try {
+        prefs ??= await SharedPreferences.getInstance();
+        await prefs.setString(
+          _filterCacheKey,
+          jsonEncode(<String, dynamic>{
+            'savedAt': DateTime.now().millisecondsSinceEpoch,
+            'genres':
+                (results[0] as List<TagAndGenres>).map((g) => g.toMap()).toList(),
+            'years': results[1],
+          }),
+        );
+      } catch (e) {
+        debugPrint('Filter cache write failed: $e');
       }
     } catch (e) {
       debugPrint('Error loading filter options: $e');

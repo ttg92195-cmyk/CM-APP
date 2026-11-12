@@ -7,6 +7,7 @@ import 'package:cm_movies/app/core/models/movie_detail.dart';
 import 'package:cm_movies/app/core/models/tag_and_genres.dart';
 import 'package:cm_movies/app/core/services/admin_audit_service.dart';
 import 'package:cm_movies/app/core/services/rate_limiter_service.dart';
+import 'package:cm_movies/app/core/services/short_query_catalog_cache.dart';
 
 class FirestoreContentService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -1340,6 +1341,13 @@ class FirestoreContentService {
     final upperKeyword = lowerKeyword + '\uf8ff';
     final isFirstPage = startAfter == null;
 
+    // Phase 4.43 — filled in by the short-query (1-2 char) path below when
+    // the local catalog cache was used. The hydration step after pageMovies
+    // then fetches FULL docs for these locally-matched IDs (cache entries
+    // are lightweight projections without poster/description).
+    Set<String> substringHydrationIds = const <String>{};
+    bool substringUsedCache = false;
+
     try {
       // =========================================================================
       // Phase 4.7 — STRATEGY 1: PREFIX QUERY (the ONLY paginated strategy)
@@ -1362,13 +1370,59 @@ class FirestoreContentService {
       if (startAfter != null) {
         prefixQuery = prefixQuery.startAfterDocument(startAfter);
       }
-      final prefixSnapshot = await prefixQuery.get();
-      final prefixMovies = prefixSnapshot.docs
-          .map((doc) => Movie.fromMap(
-                doc.data() as Map<String, dynamic>,
-                docId: doc.id,
-              ))
-          .toList();
+
+      // =========================================================================
+      // Phase 4.43 — STRATEGIES 1 + 2 now run IN PARALLEL.
+      // =========================================================================
+      // OLD flow: await prefix query → THEN await one search_keywords query
+      // per token, all SEQUENTIAL. On a slow Myanmar mobile line each round
+      // trip costs 200-600 ms, so a simple 1-token search paid 2 round trips
+      // back-to-back (~0.5-1.5 s of pure waiting) before posters even
+      // started loading. Now every independent network call fires at once
+      // and the page is as fast as the SLOWEST single call instead of the
+      // SUM of all calls.
+      //
+      // Each branch is wrapped in `safeGet` so one failing branch (e.g. the
+      // search_keywords field missing on old docs) degrades exactly like
+      // the old per-branch try/catch — it can no longer poison the others.
+      Future<QuerySnapshot<Map<String, dynamic>>?> safeGet(
+        Future<QuerySnapshot<Map<String, dynamic>>> query,
+      ) async {
+        try {
+          return await query;
+        } catch (e) {
+          debugPrint('_searchWithKeyword parallel branch failed: $e');
+          return null;
+        }
+      }
+
+      // Strategy 2 futures: search_keywords array-contains per name token.
+      // Only on the FIRST page (see pagination trade-off comment below).
+      final keywordFutures = <Future<QuerySnapshot<Map<String, dynamic>>?>>[
+        if (isFirstPage)
+          for (final token in nameTokens)
+            safeGet(_moviesRef
+                .where('search_keywords', arrayContains: token)
+                .limit(fetchLimit)
+                .get()),
+      ];
+
+      final snapshots = await Future.wait<QuerySnapshot<Map<String, dynamic>>?>([
+        safeGet(prefixQuery.get()),
+        ...keywordFutures,
+      ]);
+      final prefixSnapshot = snapshots[0];
+      final kwSnapshots = snapshots.sublist(1);
+
+      final prefixMovies = <Movie>[];
+      if (prefixSnapshot != null) {
+        prefixMovies.addAll(prefixSnapshot.docs
+            .map((doc) => Movie.fromMap(
+                  doc.data() as Map<String, dynamic>,
+                  docId: doc.id,
+                ))
+            .toList());
+      }
 
       // =========================================================================
       // STRATEGY 2 + SUBSTRING FALLBACK: only on the FIRST page
@@ -1381,27 +1435,19 @@ class FirestoreContentService {
       // appear on page 1's merged result set anyway.
       final keywordResults = <Movie>[];
       final substringResults = <Movie>[];
-      if (isFirstPage) {
-        // Strategy 2: search_keywords array-contains for each name token
-        final keywordSeenIds = <String>{};
-        for (final token in nameTokens) {
-          try {
-            final kwSnapshot = await _moviesRef
-                .where('search_keywords', arrayContains: token)
-                .limit(fetchLimit)
-                .get();
-            for (final doc in kwSnapshot.docs) {
-              final movie = Movie.fromMap(doc.data() as Map<String, dynamic>, docId: doc.id);
-              if (!keywordSeenIds.contains(movie.id)) {
-                keywordSeenIds.add(movie.id);
-                keywordResults.add(movie);
-              }
-            }
-          } catch (_) {
-            // search_keywords field may not exist yet, skip gracefully
+      final keywordSeenIds = <String>{};
+      for (final kwSnapshot in kwSnapshots) {
+        if (kwSnapshot == null) continue; // branch failed — skip gracefully
+        for (final doc in kwSnapshot.docs) {
+          final movie =
+              Movie.fromMap(doc.data() as Map<String, dynamic>, docId: doc.id);
+          if (!keywordSeenIds.contains(movie.id)) {
+            keywordSeenIds.add(movie.id);
+            keywordResults.add(movie);
           }
         }
-
+      }
+      if (isFirstPage) {
         // Substring fallback for short queries (1-2 chars) — see Strategy 1.5
         // comment in the git history (Task 25). Lets "o" match "Thor",
         // "Iron Man 2", "Doctor Strange" too, not just prefix matches.
@@ -1412,47 +1458,90 @@ class FirestoreContentService {
         // missed — even though its title contains "o". This is the root cause
         // of Bro's bug report: "o" search was returning incomplete results.
         //
-        // FIX: Paginated full-collection scan using `startAfterDocument`.
-        // Batch size 500, safety cap 5000 docs (10 batches). Catalog of
-        // 5000 movies is rare for an indie app; if exceeded, the user gets
-        // the first 5000-doc subset which is still far better than 100.
+        // Phase 4.43 — CACHE-FIRST REWRITE. The Phase 4.22 fix scanned the
+        // whole collection on EVERY short query: batches of 500 docs,
+        // cap 5000, all SEQUENTIAL round trips. On a slow line that is
+        // 2-10+ seconds AND up to 5000 document reads PER short query —
+        // the exact "Firebase usage spike" Bro worried about. Now:
+        //   1. If the local catalog cache (ShortQueryCatalogCache) is
+        //      fresh, we filter it LOCALLY — 0 reads, 0 round trips — and
+        //      hydrate only the ≤20 winning docs by ID (see below).
+        //   2. Otherwise the old scan runs ONCE, and its result is
+        //      snapshotted to the local cache so future short queries take
+        //      path 1. Results are byte-for-byte identical to the scan.
+        final localSubstringIds = <String>{};
+        var substringFromCache = false;
         if (lowerKeyword.length <= 2) {
-          try {
-            const int batchSize = 500;
-            const int maxTotalDocs = 5000;
-            QuerySnapshot? batchSnapshot;
-            int totalScanned = 0;
-            bool more = true;
-            while (more && totalScanned < maxTotalDocs) {
-              Query batchQuery = _moviesRef.limit(batchSize);
-              if (batchSnapshot != null && batchSnapshot.docs.isNotEmpty) {
-                batchQuery = batchQuery.startAfterDocument(batchSnapshot.docs.last);
-              }
-              batchSnapshot = await batchQuery.get();
-              if (batchSnapshot.docs.isEmpty) break;
-              totalScanned += batchSnapshot.docs.length;
-              for (final doc in batchSnapshot.docs) {
-                final movie = Movie.fromMap(
-                  doc.data() as Map<String, dynamic>,
-                  docId: doc.id,
-                );
+          final cachedEntries =
+              await ShortQueryCatalogCache.instance.load();
+          if (cachedEntries != null) {
+            try {
+              for (final entry in cachedEntries) {
+                final movie = Movie.fromMap(entry);
+                if (movie.id.isEmpty) continue;
                 if (movie.titleLowercase.contains(lowerKeyword)) {
                   substringResults.add(movie);
+                  localSubstringIds.add(movie.id);
                 }
               }
-              more = batchSnapshot.docs.length >= batchSize;
+              substringFromCache = true;
+            } catch (e) {
+              debugPrint('ShortQueryCatalogCache local filter failed: $e');
+              substringResults.clear();
+              localSubstringIds.clear();
             }
-            if (totalScanned >= maxTotalDocs) {
-              debugPrint(
-                '_searchWithKeyword substring fallback hit safety cap '
-                '($maxTotalDocs docs scanned for "$lowerKeyword"). '
-                'Catalog may be larger — consider backfilling search_keywords '
-                'with character n-grams for true server-side search.',
-              );
-            }
-          } catch (e) {
-            debugPrint('_searchWithKeyword substring fallback failed: $e');
           }
+          if (!substringFromCache) {
+            try {
+              const int batchSize = 500;
+              const int maxTotalDocs = 5000;
+              final scannedForCache = <Movie>[];
+              QuerySnapshot? batchSnapshot;
+              int totalScanned = 0;
+              bool more = true;
+              while (more && totalScanned < maxTotalDocs) {
+                Query batchQuery = _moviesRef.limit(batchSize);
+                if (batchSnapshot != null && batchSnapshot.docs.isNotEmpty) {
+                  batchQuery =
+                      batchQuery.startAfterDocument(batchSnapshot.docs.last);
+                }
+                batchSnapshot = await batchQuery.get();
+                if (batchSnapshot.docs.isEmpty) break;
+                totalScanned += batchSnapshot.docs.length;
+                for (final doc in batchSnapshot.docs) {
+                  final movie = Movie.fromMap(
+                    doc.data() as Map<String, dynamic>,
+                    docId: doc.id,
+                  );
+                  scannedForCache.add(movie);
+                  if (movie.titleLowercase.contains(lowerKeyword)) {
+                    substringResults.add(movie);
+                  }
+                }
+                more = batchSnapshot.docs.length >= batchSize;
+              }
+              if (totalScanned >= maxTotalDocs) {
+                debugPrint(
+                  '_searchWithKeyword substring fallback hit safety cap '
+                  '($maxTotalDocs docs scanned for "$lowerKeyword"). '
+                  'Catalog may be larger — consider backfilling search_keywords '
+                  'with character n-grams for true server-side search.',
+                );
+              }
+              // Phase 4.43 — snapshot the scan so the NEXT short query is
+              // local + free. Fire-and-forget: never block the search.
+              if (scannedForCache.isNotEmpty) {
+                unawaited(ShortQueryCatalogCache.instance
+                    .rebuildFromMovies(scannedForCache));
+              }
+            } catch (e) {
+              debugPrint(
+                  '_searchWithKeyword substring fallback failed: $e');
+            }
+          }
+          // Expose cache state to the hydration step below.
+          substringHydrationIds = localSubstringIds;
+          substringUsedCache = substringFromCache;
         }
       }
 
@@ -1460,6 +1549,13 @@ class FirestoreContentService {
       // Strategy 1 results come FIRST so cursor-based pagination stays
       // stable across pages (we always return the last prefixSnapshot doc
       // as the next cursor).
+      // Phase 4.43 — IDs that already arrived as FULL docs from the server
+      // (prefix/keyword). Substring partials sharing these IDs are dropped
+      // by the dedup below, so hydration must not re-fetch them.
+      final fullDocIds = <String>{
+        for (final m in prefixMovies) m.id,
+        for (final m in keywordResults) m.id,
+      };
       final seenIds = <String>{};
       final allMovies = <Movie>[];
       for (final m in [...prefixMovies, ...keywordResults, ...substringResults]) {
@@ -1527,6 +1623,42 @@ class FirestoreContentService {
       // Take only `limit` results for this page.
       final pageMovies = filtered.take(limit).toList();
 
+      // =========================================================================
+      // Phase 4.43 — HYDRATE locally-cached partials.
+      // =========================================================================
+      // Entries that came from ShortQueryCatalogCache are lightweight
+      // projections (no poster/description/resolution). Fetch their FULL
+      // docs by ID (whereIn, parallel chunks of 10) and swap them in so the
+      // UI receives complete data exactly like the old scan path. If the
+      // fetch fails we keep the partials — titles still render, just
+      // without artwork — instead of failing the whole search.
+      if (substringUsedCache && pageMovies.isNotEmpty) {
+        final partialIds = <String>{};
+        for (final m in pageMovies) {
+          if (substringHydrationIds.contains(m.id) &&
+              !fullDocIds.contains(m.id)) {
+            partialIds.add(m.id);
+          }
+        }
+        if (partialIds.isNotEmpty) {
+          try {
+            final fullDocs = await _fetchMoviesByIds(partialIds);
+            final byId = <String, Movie>{for (final m in fullDocs) m.id: m};
+            for (var i = 0; i < pageMovies.length; i++) {
+              final replacement = byId[pageMovies[i].id];
+              if (replacement != null) pageMovies[i] = replacement;
+            }
+          } catch (e) {
+            debugPrint('ShortQueryCatalogCache hydration failed: $e');
+          }
+        }
+        // Keep the cache fresh for posts created after the last rebuild:
+        // prefix/keyword results are full docs, merge them in (no-op write
+        // when nothing is new). Fire-and-forget.
+        unawaited(ShortQueryCatalogCache.instance
+            .upsertMovies([...prefixMovies, ...keywordResults]));
+      }
+
       // Phase 4.7 — Return a REAL cursor (last doc from Strategy 1).
       // Since Strategy 1 is the only paginated query and its results come
       // first in the merge, the last doc of prefixSnapshot is a valid
@@ -1534,14 +1666,17 @@ class FirestoreContentService {
       // prefixMovies from this page (rare edge case), we still return
       // the last prefixSnapshot doc — the next page will continue from
       // there with fresh prefix matches.
-      final lastDoc = prefixSnapshot.docs.isNotEmpty
+      // Phase 4.43 — prefixSnapshot is nullable now (parallel safeGet can
+      // return null if that branch failed); a failed branch means no
+      // prefix results and no cursor, exactly like an empty snapshot.
+      final lastDoc = (prefixSnapshot != null && prefixSnapshot.docs.isNotEmpty)
           ? prefixSnapshot.docs.last
           : null;
 
       // hasMore: true if Strategy 1 returned a full batch (more pages
       // likely available). If Strategy 1 returned fewer than fetchLimit,
       // there are no more prefix matches — pagination stops.
-      final hasMore = prefixSnapshot.docs.length >= fetchLimit;
+      final hasMore = (prefixSnapshot?.docs.length ?? 0) >= fetchLimit;
 
       return {
         'movies': pageMovies,
@@ -1556,6 +1691,38 @@ class FirestoreContentService {
         'lastDoc': null,
       };
     }
+  }
+
+  /// Phase 4.43 — fetch full movie docs by document ID in parallel chunks.
+  /// Firestore `whereIn` accepts a bounded number of values (30 on current
+  /// SDKs, historically 10) — we chunk at 10 for safety and run all chunks
+  /// in parallel via Future.wait. Used by the short-query search path to
+  /// hydrate lightweight entries from ShortQueryCatalogCache.
+  Future<List<Movie>> _fetchMoviesByIds(Set<String> ids) async {
+    final idList = ids.where((id) => id.isNotEmpty).toList();
+    if (idList.isEmpty) return <Movie>[];
+    final chunks = <List<String>>[];
+    for (var i = 0; i < idList.length; i += 10) {
+      final end = (i + 10 > idList.length) ? idList.length : i + 10;
+      chunks.add(idList.sublist(i, end));
+    }
+    final snapshots = await Future.wait(
+      chunks.map((c) =>
+          _moviesRef.where(FieldPath.documentId, whereIn: c).get()),
+    );
+    final movies = <Movie>[];
+    final seen = <String>{};
+    for (final snap in snapshots) {
+      for (final doc in snap.docs) {
+        if (seen.add(doc.id)) {
+          movies.add(Movie.fromMap(
+            doc.data() as Map<String, dynamic>,
+            docId: doc.id,
+          ));
+        }
+      }
+    }
+    return movies;
   }
 
   /// Get available years from movies collection
