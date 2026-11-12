@@ -1385,8 +1385,8 @@ class FirestoreContentService {
       // Each branch is wrapped in `safeGet` so one failing branch (e.g. the
       // search_keywords field missing on old docs) degrades exactly like
       // the old per-branch try/catch — it can no longer poison the others.
-      Future<QuerySnapshot<Map<String, dynamic>>?> safeGet(
-        Future<QuerySnapshot<Map<String, dynamic>>> query,
+      Future<QuerySnapshot<Object?>?> safeGet(
+        Future<QuerySnapshot<Object?>> query,
       ) async {
         try {
           return await query;
@@ -1398,7 +1398,7 @@ class FirestoreContentService {
 
       // Strategy 2 futures: search_keywords array-contains per name token.
       // Only on the FIRST page (see pagination trade-off comment below).
-      final keywordFutures = <Future<QuerySnapshot<Map<String, dynamic>>?>>[
+      final keywordFutures = <Future<QuerySnapshot<Object?>?>>[
         if (isFirstPage)
           for (final token in nameTokens)
             safeGet(_moviesRef
@@ -1407,7 +1407,7 @@ class FirestoreContentService {
                 .get()),
       ];
 
-      final snapshots = await Future.wait<QuerySnapshot<Map<String, dynamic>>?>([
+      final snapshots = await Future.wait<QuerySnapshot<Object?>?>([
         safeGet(prefixQuery.get()),
         ...keywordFutures,
       ]);
